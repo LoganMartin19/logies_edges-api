@@ -9,3 +9,4 @@ pydantic
 alembic
 python-dotenv
 jinja2
+python-multipart
