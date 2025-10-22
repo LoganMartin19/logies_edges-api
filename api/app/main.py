@@ -63,8 +63,9 @@ app.add_middleware(
 
 # --- Startup ---
 @app.on_event("startup")
-def startup() -> None:
-    Base.metadata.create_all(bind=engine)
+def startup():
+    if os.getenv("ENV") != "production":
+        Base.metadata.create_all(bind=engine)
 
 # --- Optional compute route ---
 @app.post("/compute")
