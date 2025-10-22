@@ -23,7 +23,6 @@ from .routers import fixtures as fixtures_router
 from .routers import basketball as basketball_router
 from .routers.football_admin import admin as football_admin_router
 
-# Split route groups
 from .routes import (
     pages as pages_router,
     admin_ops as admin_ops_router,
@@ -41,7 +40,7 @@ from .routes import (
     tennis as tennis_router,
     picks as picks_router,
     public as public_router,
-    preview as preview_router,   # ✅ AI previews
+    preview as preview_router,  # ✅ AI previews
 )
 from .services import league_strength
 
@@ -54,17 +53,25 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://logies-edges-site.vercel.app",  # ✅ your live site
+        "https://logies-edges-site.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- Health Check ---
+@app.get("/health")
+def health():
+    """Lightweight health check for Render."""
+    return {"ok": True}
+
 # --- Startup ---
 @app.on_event("startup")
 def startup():
-    if os.getenv("ENV") != "production":
+    # Only auto-create tables locally; use Alembic in production
+    env = os.getenv("ENV", "local")
+    if env != "production":
         Base.metadata.create_all(bind=engine)
 
 # --- Optional compute route ---
