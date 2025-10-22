@@ -1,10 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+env/
+venv/
+
+# Env files
 .env
 .env.*
 *.env
-__pycache__/
-*.pyc
+
+# OS / IDE
+.DS_Store
 .vscode/
 .idea/
-venv/
-.envrc
 
+# DB / local state
+*.sqlite
+*.db
+instance/
+
+# Node (if any)
+node_modules/
+
+# Media – keep big clips out of the backend
+*.mov
+*.mp4
+Football Clips Tiktok/
+NFL Clips Tiktok/
