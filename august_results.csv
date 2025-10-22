@@ -1,0 +1,685 @@
+fixture_id,provider_id,comp,country,home,away,kickoff_utc,ft_home,ft_away
+2951,1390845,La Liga,Spain,Rayo Vallecano,Barcelona,2025-08-31T19:30:00+00:00,1,1
+2949,1419607,Serie B,Italy,Modena,Avellino,2025-08-31T19:00:00+00:00,1,1
+2950,1419610,Serie B,Italy,Bari,Monza,2025-08-31T19:00:00+00:00,1,1
+2947,1377878,Serie A,Italy,Lazio,Verona,2025-08-31T18:45:00+00:00,4,0
+2946,1377877,Serie A,Italy,Inter,Udinese,2025-08-31T18:45:00+00:00,1,2
+2948,1387720,Ligue 1,France,Lyon,Marseille,2025-08-31T18:45:00+00:00,1,0
+2945,1378989,Premier League,England,Aston Villa,Crystal Palace,2025-08-31T18:00:00+00:00,0,3
+2943,1388319,Bundesliga,Germany,1.FC Köln,SC Freiburg,2025-08-31T17:30:00+00:00,4,1
+2944,1390843,La Liga,Spain,Espanyol,Osasuna,2025-08-31T17:30:00+00:00,1,0
+2940,1390840,La Liga,Spain,Real Betis,Athletic Club,2025-08-31T17:00:00+00:00,1,2
+2942,1419609,Serie B,Italy,Sudtirol,Sampdoria,2025-08-31T17:00:00+00:00,3,1
+2941,1419608,Serie B,Italy,Carrarese,Padova,2025-08-31T17:00:00+00:00,0,0
+2938,1377876,Serie A,Italy,Genoa,Juventus,2025-08-31T16:30:00+00:00,0,1
+2939,1377883,Serie A,Italy,Torino,Fiorentina,2025-08-31T16:30:00+00:00,0,0
+2936,1378993,Premier League,England,Liverpool,Arsenal,2025-08-31T15:30:00+00:00,1,0
+2937,1388318,Bundesliga,Germany,Borussia Dortmund,Union Berlin,2025-08-31T15:30:00+00:00,3,0
+2933,1387717,Ligue 1,France,Le Havre,Nice,2025-08-31T15:15:00+00:00,3,1
+2934,1387721,Ligue 1,France,Monaco,Strasbourg,2025-08-31T15:15:00+00:00,3,2
+2935,1387723,Ligue 1,France,Paris FC,Metz,2025-08-31T15:15:00+00:00,3,2
+2932,1390841,La Liga,Spain,Celta Vigo,Villarreal,2025-08-31T15:00:00+00:00,1,1
+2931,1382686,Premiership,Scotland,Hibernian,ST Mirren,2025-08-31T14:00:00+00:00,1,1
+2930,1382684,Premiership,Scotland,Aberdeen,Falkirk,2025-08-31T14:00:00+00:00,0,1
+2929,1435816,Ligue A,Burundi,Vital'O,Olympic Star,2025-08-31T13:45:00+00:00,1,2
+2928,1388325,Bundesliga,Germany,VfL Wolfsburg,FSV Mainz 05,2025-08-31T13:30:00+00:00,1,1
+2926,1435814,Ligue A,Burundi,Flambeau du Centre,Kayanza United,2025-08-31T13:00:00+00:00,2,0
+2922,1378990,Premier League,England,Brighton,Manchester City,2025-08-31T13:00:00+00:00,2,1
+2923,1378995,Premier League,England,Nottingham Forest,West Ham,2025-08-31T13:00:00+00:00,0,3
+2924,1382685,Premiership,Scotland,Dundee,Dundee Utd,2025-08-31T13:00:00+00:00,0,2
+2925,1387716,Ligue 1,France,Angers,Rennes,2025-08-31T13:00:00+00:00,1,1
+2927,1435815,Ligue A,Burundi,Ngozi City,Rukinzo,2025-08-31T13:00:00+00:00,0,3
+2921,1388648,2. Bundesliga,Germany,Dynamo Dresden,FC Schalke 04,2025-08-31T11:30:00+00:00,0,1
+2919,1388645,2. Bundesliga,Germany,1. FC Kaiserslautern,SV Darmstadt 98,2025-08-31T11:30:00+00:00,3,1
+2920,1388646,2. Bundesliga,Germany,1. FC Magdeburg,SpVgg Greuther Fürth,2025-08-31T11:30:00+00:00,4,5
+2917,1382689,Premiership,Scotland,Rangers,Celtic,2025-08-31T11:00:00+00:00,0,0
+2918,1435813,Ligue A,Burundi,Royal Vision,Le Messager Ngozi,2025-08-31T11:00:00+00:00,3,1
+2916,1390846,La Liga,Spain,Real Madrid,Mallorca,2025-08-30T19:30:00+00:00,2,1
+2915,1387724,Ligue 1,France,Toulouse,Paris Saint Germain,2025-08-30T19:05:00+00:00,3,6
+2913,1419606,Serie B,Italy,Palermo,Frosinone,2025-08-30T19:00:00+00:00,0,0
+2912,1419604,Serie B,Italy,Spezia,Catanzaro,2025-08-30T19:00:00+00:00,0,0
+2914,1419611,Serie B,Italy,Cesena,Virtus Entella,2025-08-30T19:00:00+00:00,1,1
+2910,1377882,Serie A,Italy,Pisa,AS Roma,2025-08-30T18:45:00+00:00,0,1
+2911,1419516,FA Cup,Scotland,Bo'ness Athletic,Creetown,2025-08-30T18:45:00+00:00,7,0
+2909,1377880,Serie A,Italy,Napoli,Cagliari,2025-08-30T18:45:00+00:00,1,0
+2908,1388643,2. Bundesliga,Germany,Fortuna Düsseldorf,Karlsruher SC,2025-08-30T18:30:00+00:00,0,0
+2907,1390844,La Liga,Spain,Girona,Sevilla,2025-08-30T17:30:00+00:00,0,2
+2905,1419602,Serie B,Italy,Mantova,Pescara,2025-08-30T17:00:00+00:00,2,1
+2906,1419603,Serie B,Italy,Juve Stabia,Venezia,2025-08-30T17:00:00+00:00,0,0
+2903,1387722,Ligue 1,France,Nantes,Auxerre,2025-08-30T17:00:00+00:00,1,0
+2904,1390847,La Liga,Spain,Oviedo,Real Sociedad,2025-08-30T17:00:00+00:00,1,0
+2899,1377874,Serie A,Italy,Bologna,Como,2025-08-30T16:30:00+00:00,1,0
+2901,1378992,Premier League,England,Leeds,Newcastle,2025-08-30T16:30:00+00:00,0,0
+2900,1377881,Serie A,Italy,Parma,Atalanta,2025-08-30T16:30:00+00:00,1,1
+2902,1388317,Bundesliga,Germany,FC Augsburg,Bayern München,2025-08-30T16:30:00+00:00,2,3
+2898,1390839,La Liga,Spain,Alaves,Atletico Madrid,2025-08-30T15:00:00+00:00,1,1
+2897,1387719,Ligue 1,France,Lorient,Lille,2025-08-30T15:00:00+00:00,1,7
+2896,1387170,League One,England,Lincoln,Mansfield Town,2025-08-30T14:15:00+00:00,1,1
+2880,1419515,FA Cup,Scotland,Hill Of Beath Hawthorn,St Andrews United,2025-08-30T14:00:00+00:00,4,2
+2895,1452505,FA Cup,Scotland,Invergordon,Dunipace,2025-08-30T14:00:00+00:00,3,1
+2894,1419536,FA Cup,Scotland,Tweedmouth,Lochee United,2025-08-30T14:00:00+00:00,1,3
+2893,1419534,FA Cup,Scotland,Benburb,Easthouses Lily,2025-08-30T14:00:00+00:00,2,0
+2892,1419533,FA Cup,Scotland,Auchinleck Talbot,Haddington Athletic,2025-08-30T14:00:00+00:00,4,0
+2891,1419532,FA Cup,Scotland,Blackburn United,Darvel,2025-08-30T14:00:00+00:00,1,3
+2890,1419530,FA Cup,Scotland,St. Cuthbert Wanderers,Burntisland Shipyard,2025-08-30T14:00:00+00:00,0,2
+2889,1419529,FA Cup,Scotland,Bonnyton Thistle,Girvan,2025-08-30T14:00:00+00:00,2,1
+2888,1419527,FA Cup,Scotland,Dunbar United,Cumnock Juniors,2025-08-30T14:00:00+00:00,2,4
+2887,1419526,FA Cup,Scotland,Glasgow University,Newton Stewart,2025-08-30T14:00:00+00:00,3,1
+2886,1419525,FA Cup,Scotland,Glenafton Athletic,Dalkeith Thistle,2025-08-30T14:00:00+00:00,3,0
+2885,1419524,FA Cup,Scotland,Hawick Royal Albert,Threave Rovers,2025-08-30T14:00:00+00:00,1,4
+2884,1419520,FA Cup,Scotland,Penicuik Athletic,Kilwinning Rangers,2025-08-30T14:00:00+00:00,2,4
+2883,1419519,FA Cup,Scotland,Tayport,Dalbeattie Star,2025-08-30T14:00:00+00:00,4,1
+2882,1419518,FA Cup,Scotland,Golspie Sutherland,Coldstream,2025-08-30T14:00:00+00:00,0,3
+2881,1419517,FA Cup,Scotland,Vale of Leithen,Musselburgh Athletic,2025-08-30T14:00:00+00:00,1,6
+2867,1386596,Championship,England,Watford,Southampton,2025-08-30T14:00:00+00:00,2,2
+2879,1419514,FA Cup,Scotland,Sauchie Juniors,Lothian Hutchison,2025-08-30T14:00:00+00:00,2,0
+2878,1387173,League One,England,Wigan,Stockport County,2025-08-30T14:00:00+00:00,1,1
+2877,1387172,League One,England,Stevenage,Wycombe,2025-08-30T14:00:00+00:00,1,0
+2876,1387171,League One,England,Reading,Port Vale,2025-08-30T14:00:00+00:00,1,0
+2875,1387169,League One,England,Leyton Orient,Northampton,2025-08-30T14:00:00+00:00,0,1
+2874,1387168,League One,England,Exeter City,Peterborough,2025-08-30T14:00:00+00:00,3,0
+2873,1387166,League One,England,Burton Albion,Luton,2025-08-30T14:00:00+00:00,0,3
+2872,1387165,League One,England,Bradford,AFC Wimbledon,2025-08-30T14:00:00+00:00,3,2
+2871,1387164,League One,England,Blackpool,Bolton,2025-08-30T14:00:00+00:00,1,1
+2870,1387163,League One,England,Barnsley,Huddersfield,2025-08-30T14:00:00+00:00,3,1
+2869,1386598,Championship,England,Sheffield Wednesday,Swansea,2025-08-30T14:00:00+00:00,0,2
+2868,1386597,Championship,England,Ipswich,Derby,2025-08-30T14:00:00+00:00,2,2
+2842,1378994,Premier League,England,Manchester United,Burnley,2025-08-30T14:00:00+00:00,3,2
+2843,1378996,Premier League,England,Sunderland,Brentford,2025-08-30T14:00:00+00:00,2,1
+2844,1378997,Premier League,England,Tottenham,Bournemouth,2025-08-30T14:00:00+00:00,0,1
+2845,1378998,Premier League,England,Wolves,Everton,2025-08-30T14:00:00+00:00,2,3
+2846,1382687,Premiership,Scotland,Livingston,Heart Of Midlothian,2025-08-30T14:00:00+00:00,1,2
+2847,1382688,Premiership,Scotland,Motherwell,Kilmarnock,2025-08-30T14:00:00+00:00,2,2
+2848,1382879,Championship,Scotland,Arbroath,Airdrie United,2025-08-30T14:00:00+00:00,1,0
+2849,1382880,Championship,Scotland,Ayr Utd,Queen's Park,2025-08-30T14:00:00+00:00,1,1
+2850,1382881,Championship,Scotland,Dunfermline,Ross County,2025-08-30T14:00:00+00:00,2,2
+2851,1382882,Championship,Scotland,Partick,Raith Rovers,2025-08-30T14:00:00+00:00,3,2
+2852,1382883,Championship,Scotland,ST Johnstone,Morton,2025-08-30T14:00:00+00:00,1,1
+2853,1386056,League Two,England,Barnet,Colchester,2025-08-30T14:00:00+00:00,1,1
+2854,1386058,League Two,England,Bromley,Harrogate Town,2025-08-30T14:00:00+00:00,2,0
+2855,1386059,League Two,England,Chesterfield,Crawley Town,2025-08-30T14:00:00+00:00,2,2
+2856,1386061,League Two,England,Grimsby,Bristol Rovers,2025-08-30T14:00:00+00:00,0,1
+2857,1386062,League Two,England,Milton Keynes Dons,Walsall,2025-08-30T14:00:00+00:00,0,1
+2858,1386063,League Two,England,Oldham,Gillingham,2025-08-30T14:00:00+00:00,0,1
+2859,1386065,League Two,England,Shrewsbury,Accrington ST,2025-08-30T14:00:00+00:00,0,0
+2860,1386066,League Two,England,Tranmere,Notts County,2025-08-30T14:00:00+00:00,1,2
+2861,1386067,League Two,England,Cambridge United,Newport County,2025-08-30T14:00:00+00:00,2,0
+2862,1386588,Championship,England,Millwall,Wrexham,2025-08-30T14:00:00+00:00,0,2
+2863,1386589,Championship,England,Oxford United,Coventry,2025-08-30T14:00:00+00:00,2,2
+2864,1386590,Championship,England,Portsmouth,Preston,2025-08-30T14:00:00+00:00,1,0
+2865,1386591,Championship,England,Bristol City,Hull City,2025-08-30T14:00:00+00:00,4,2
+2866,1386593,Championship,England,Blackburn,Norwich,2025-08-30T14:00:00+00:00,0,2
+2835,1388323,Bundesliga,Germany,VfB Stuttgart,Borussia Mönchengladbach,2025-08-30T13:30:00+00:00,1,0
+2840,1452504,FA Cup,Scotland,Dundee North End,Whitehill Welfare,2025-08-30T13:30:00+00:00,1,0
+2834,1388322,Bundesliga,Germany,RB Leipzig,1. FC Heidenheim,2025-08-30T13:30:00+00:00,2,0
+2836,1388324,Bundesliga,Germany,Werder Bremen,Bayer Leverkusen,2025-08-30T13:30:00+00:00,3,3
+2833,1388321,Bundesliga,Germany,1899 Hoffenheim,Eintracht Frankfurt,2025-08-30T13:30:00+00:00,1,3
+2837,1419521,FA Cup,Scotland,Jeanfield Swifts,Preston Athletic,2025-08-30T13:30:00+00:00,3,1
+2838,1419523,FA Cup,Scotland,Tynecastle,Carluke Rovers,2025-08-30T13:30:00+00:00,0,3
+2839,1419528,FA Cup,Scotland,Dundonald Bluebell,Edinburgh University,2025-08-30T13:30:00+00:00,3,2
+2832,1435811,Ligue A,Burundi,Muzinga,Garage Express,2025-08-30T13:00:00+00:00,1,0
+2831,1419522,FA Cup,Scotland,Rutherglen Glencairn,Newtongrange Star,2025-08-30T13:00:00+00:00,2,4
+2825,1386060,League Two,England,Crewe,Swindon Town,2025-08-30T11:30:00+00:00,0,3
+2829,1387167,League One,England,Doncaster,Rotherham,2025-08-30T11:30:00+00:00,1,0
+2828,1386595,Championship,England,Middlesbrough,Sheffield Utd,2025-08-30T11:30:00+00:00,1,0
+2827,1386594,Championship,England,Stoke City,West Brom,2025-08-30T11:30:00+00:00,0,1
+2826,1386592,Championship,England,QPR,Charlton,2025-08-30T11:30:00+00:00,3,1
+2823,1378991,Premier League,England,Chelsea,Fulham,2025-08-30T11:30:00+00:00,2,0
+2824,1386057,League Two,England,Barrow,Fleetwood Town,2025-08-30T11:30:00+00:00,0,1
+2830,1387174,League One,England,Cardiff,Plymouth,2025-08-30T11:30:00+00:00,4,0
+2822,1388649,2. Bundesliga,Germany,Holstein Kiel,Hannover 96,2025-08-30T11:00:00+00:00,1,2
+2820,1388641,2. Bundesliga,Germany,VfL Bochum,Preußen Münster,2025-08-30T11:00:00+00:00,1,2
+2821,1388642,2. Bundesliga,Germany,Eintracht Braunschweig,Arminia Bielefeld,2025-08-30T11:00:00+00:00,1,1
+2819,1390848,La Liga,Spain,Valencia,Getafe,2025-08-29T19:30:00+00:00,3,0
+2818,1386587,Championship,England,Leicester,Birmingham,2025-08-29T19:00:00+00:00,2,0
+2817,1387718,Ligue 1,France,Lens,Stade Brestois 29,2025-08-29T18:45:00+00:00,3,1
+2815,1377879,Serie A,Italy,Lecce,AC Milan,2025-08-29T18:45:00+00:00,0,2
+2816,1386064,League Two,England,Salford City,Cheltenham,2025-08-29T18:45:00+00:00,1,1
+2813,1388320,Bundesliga,Germany,Hamburger SV,FC St. Pauli,2025-08-29T18:30:00+00:00,0,2
+2814,1419605,Serie B,Italy,Reggiana,Empoli,2025-08-29T18:30:00+00:00,3,1
+2812,1419535,FA Cup,Scotland,St Cadoc's,Pollok,2025-08-29T18:00:00+00:00,0,1
+2811,1390842,La Liga,Spain,Elche,Levante,2025-08-29T17:30:00+00:00,2,0
+2808,1377875,Serie A,Italy,Cremonese,Sassuolo,2025-08-29T16:30:00+00:00,3,2
+2809,1388644,2. Bundesliga,Germany,Hertha BSC,SV Elversberg,2025-08-29T16:30:00+00:00,0,2
+2810,1388647,2. Bundesliga,Germany,1. FC Nürnberg,SC Paderborn 07,2025-08-29T16:30:00+00:00,0,0
+2807,1435810,Ligue A,Burundi,Inter Star,Musongati,2025-08-29T13:45:00+00:00,1,3
+2806,1435809,Ligue A,Burundi,Dynamik,Aigle Noir,2025-08-29T11:00:00+00:00,1,7
+2804,1438831,UEFA Europa Conference League,World,Shamrock Rovers,Santa Clara,2025-08-28T19:00:00+00:00,0,0
+2802,1438829,UEFA Europa Conference League,World,FSV Mainz 05,Rosenborg,2025-08-28T19:00:00+00:00,4,1
+2803,1438830,UEFA Europa Conference League,World,Legia Warszawa,Hibernian,2025-08-28T19:00:00+00:00,3,3
+2805,1438832,UEFA Europa Conference League,World,Virtus,Breidablik,2025-08-28T19:00:00+00:00,1,3
+2800,1437236,UEFA Europa League,World,SC Braga,Lincoln Red Imps FC,2025-08-28T19:00:00+00:00,5,1
+2801,1438828,UEFA Europa Conference League,World,Servette FC,Shakhtar Donetsk,2025-08-28T19:00:00+00:00,1,2
+2799,1438827,UEFA Europa Conference League,World,Linfield,Shelbourne,2025-08-28T18:45:00+00:00,0,2
+2798,1438826,UEFA Europa Conference League,World,Dinamo Tirana,Jagiellonia,2025-08-28T18:45:00+00:00,1,1
+2797,1436782,UEFA Europa League,World,FCSB,Aberdeen,2025-08-28T18:30:00+00:00,3,0
+2791,1438820,UEFA Europa Conference League,World,AEK Athens FC,Anderlecht,2025-08-28T18:00:00+00:00,2,0
+2796,1438825,UEFA Europa Conference League,World,FC Differdange 03,Drita,2025-08-28T18:00:00+00:00,0,1
+2795,1438824,UEFA Europa Conference League,World,Baník Ostrava,Celje,2025-08-28T18:00:00+00:00,0,2
+2794,1438823,UEFA Europa Conference League,World,Arda Kardzhali,Raków Częstochowa,2025-08-28T18:00:00+00:00,1,2
+2793,1438822,UEFA Europa Conference League,World,Brondby,Strasbourg,2025-08-28T18:00:00+00:00,2,3
+2792,1438821,UEFA Europa Conference League,World,Rayo Vallecano,Neman,2025-08-28T18:00:00+00:00,4,0
+2790,1438819,UEFA Europa Conference League,World,Fiorentina,Polessya,2025-08-28T18:00:00+00:00,3,2
+2789,1437232,UEFA Europa League,World,Utrecht,Zrinjski,2025-08-28T18:00:00+00:00,0,0
+2788,1436785,UEFA Europa League,World,BSC Young Boys,Slovan Bratislava,2025-08-28T18:00:00+00:00,3,2
+2787,1436784,UEFA Europa League,World,Dynamo Kyiv,Maccabi Tel Aviv,2025-08-28T18:00:00+00:00,1,0
+2786,1436781,UEFA Europa League,World,Genk,Lech Poznan,2025-08-28T18:00:00+00:00,1,2
+2782,1437235,UEFA Europa League,World,PAOK,HNK Rijeka,2025-08-28T17:30:00+00:00,5,0
+2781,1436783,UEFA Europa League,World,Ludogorets,Shkendija,2025-08-28T17:30:00+00:00,4,1
+2783,1438816,UEFA Europa Conference League,World,AZ Alkmaar,Levski Sofia,2025-08-28T17:30:00+00:00,4,1
+2784,1438817,UEFA Europa Conference League,World,CFR 1907 Cluj,BK Hacken,2025-08-28T17:30:00+00:00,1,0
+2785,1438818,UEFA Europa Conference League,World,Universitatea Craiova,Istanbul Basaksehir,2025-08-28T17:30:00+00:00,3,1
+2777,1437234,UEFA Europa League,World,Samsunspor,Panathinaikos,2025-08-28T17:00:00+00:00,0,0
+2780,1438815,UEFA Europa Conference League,World,Rapid Vienna,Gyori ETO FC,2025-08-28T17:00:00+00:00,2,0
+2779,1438715,UEFA Europa Conference League,World,Rīgas FS,Hamrun Spartans,2025-08-28T17:00:00+00:00,2,2
+2778,1438714,UEFA Europa Conference League,World,Besiktas,Lausanne,2025-08-28T17:00:00+00:00,0,1
+2776,1436780,UEFA Europa League,World,Sigma Olomouc,Malmo FF,2025-08-28T16:30:00+00:00,0,2
+2773,1438711,UEFA Europa Conference League,World,Fredrikstad,Crystal Palace,2025-08-28T16:00:00+00:00,0,0
+2775,1438713,UEFA Europa Conference League,World,Omonia Nicosia,Wolfsberger AC,2025-08-28T16:00:00+00:00,1,0
+2774,1438712,UEFA Europa Conference League,World,FC Noah,Olimpija Ljubljana,2025-08-28T16:00:00+00:00,3,2
+2772,1437233,UEFA Europa League,World,KuPS,FC Midtjylland,2025-08-28T15:00:00+00:00,0,2
+2768,1390871,La Liga,Spain,Celta Vigo,Real Betis,2025-08-27T19:00:00+00:00,1,1
+2769,1435554,UEFA Champions League,World,FC Copenhagen,FC Basel 1893,2025-08-27T19:00:00+00:00,2,0
+2771,1435556,UEFA Champions League,World,Benfica,Fenerbahce,2025-08-27T19:00:00+00:00,1,0
+2770,1435555,UEFA Champions League,World,Club Brugge KV,Rangers,2025-08-27T19:00:00+00:00,6,0
+2767,1416990,Challenge Cup,Scotland,Hamilton Academical,Edinburgh City,2025-08-27T18:45:00+00:00,2,3
+2765,1435553,UEFA Champions League,World,Qarabag,Ferencvarosi TC,2025-08-27T16:45:00+00:00,2,3
+2766,1438710,UEFA Europa Conference League,World,Riga,Sparta Praha,2025-08-27T16:45:00+00:00,1,0
+2764,1437231,UEFA Europa League,World,AEK Larnaca,Brann,2025-08-27T16:30:00+00:00,0,4
+2762,1424398,UEFA Champions League,World,Sturm Graz,Bodo/Glimt,2025-08-26T19:00:00+00:00,2,1
+2763,1435552,UEFA Champions League,World,Pafos,FK Crvena Zvezda,2025-08-26T19:00:00+00:00,1,1
+2758,1416993,Challenge Cup,Scotland,Montrose,Forfar Athletic,2025-08-26T18:45:00+00:00,1,0
+2757,1416992,Challenge Cup,Scotland,Kelty Hearts,Celtic II,2025-08-26T18:45:00+00:00,0,1
+2756,1416991,Challenge Cup,Scotland,Inverness CT,Aberdeen U21,2025-08-26T18:45:00+00:00,4,1
+2755,1416989,Challenge Cup,Scotland,Elgin City,Dundee United II,2025-08-26T18:45:00+00:00,3,1
+2754,1416988,Challenge Cup,Scotland,East Kilbride,Motherwell U21,2025-08-26T18:45:00+00:00,3,1
+2760,1416995,Challenge Cup,Scotland,Stirling Albion,Hibernian U21,2025-08-26T18:45:00+00:00,3,1
+2752,1416986,Challenge Cup,Scotland,Dumbarton,Hearts U21,2025-08-26T18:45:00+00:00,1,0
+2751,1416985,Challenge Cup,Scotland,Cove Rangers,Dundee II,2025-08-26T18:45:00+00:00,1,0
+2750,1416984,Challenge Cup,Scotland,Annan Athletic,Stenhousemuir,2025-08-26T18:45:00+00:00,1,3
+2749,1416983,Challenge Cup,Scotland,Alloa Athletic,St. Mirren U21,2025-08-26T18:45:00+00:00,2,3
+2761,1416997,Challenge Cup,Scotland,Spartans,Peterhead,2025-08-26T18:45:00+00:00,1,1
+2753,1416987,Challenge Cup,Scotland,East Fife,Kilmarnock II,2025-08-26T18:45:00+00:00,3,2
+2759,1416994,Challenge Cup,Scotland,Queen of the South,Clyde,2025-08-26T18:45:00+00:00,3,1
+2748,1416996,Challenge Cup,Scotland,Stranraer,Rangers U21,2025-08-26T18:30:00+00:00,4,1
+2747,1435551,UEFA Champions League,World,Kairat Almaty,Celtic,2025-08-26T16:45:00+00:00,0,0
+2746,1390837,La Liga,Spain,Sevilla,Getafe,2025-08-25T19:30:00+00:00,1,2
+2745,1378987,Premier League,England,Newcastle,Liverpool,2025-08-25T19:00:00+00:00,2,3
+2744,1377868,Serie A,Italy,Inter,Torino,2025-08-25T18:45:00+00:00,5,0
+2743,1419597,Serie B,Italy,Sampdoria,Modena,2025-08-25T18:30:00+00:00,0,2
+2742,1390829,La Liga,Spain,Athletic Club,Rayo Vallecano,2025-08-25T17:30:00+00:00,1,0
+2741,1377873,Serie A,Italy,Udinese,Verona,2025-08-25T16:30:00+00:00,1,1
+2740,1390836,La Liga,Spain,Oviedo,Real Madrid,2025-08-24T19:30:00+00:00,0,3
+2739,1419599,Serie B,Italy,Frosinone,Avellino,2025-08-24T19:00:00+00:00,2,0
+2738,1419593,Serie B,Italy,Catanzaro,Sudtirol,2025-08-24T19:00:00+00:00,1,1
+2736,1377869,Serie A,Italy,Juventus,Parma,2025-08-24T18:45:00+00:00,2,0
+2737,1387708,Ligue 1,France,Lille,Monaco,2025-08-24T18:45:00+00:00,1,0
+2735,1377864,Serie A,Italy,Atalanta,Pisa,2025-08-24T18:45:00+00:00,1,1
+2733,1390835,La Liga,Spain,Real Sociedad,Espanyol,2025-08-24T17:30:00+00:00,2,2
+2734,1390838,La Liga,Spain,Villarreal,Girona,2025-08-24T17:30:00+00:00,5,0
+2732,1419601,Serie B,Italy,Venezia,Bari,2025-08-24T17:00:00+00:00,2,1
+2731,1419592,Serie B,Italy,Spezia,Carrarese,2025-08-24T17:00:00+00:00,0,2
+2730,1377866,Serie A,Italy,Como,Lazio,2025-08-24T16:30:00+00:00,2,0
+2729,1377865,Serie A,Italy,Cagliari,Fiorentina,2025-08-24T16:30:00+00:00,1,1
+2728,1388310,Bundesliga,Germany,Borussia Mönchengladbach,Hamburger SV,2025-08-24T15:30:00+00:00,0,0
+2727,1378985,Premier League,England,Fulham,Manchester United,2025-08-24T15:30:00+00:00,1,1
+2724,1387707,Ligue 1,France,Le Havre,Lens,2025-08-24T15:15:00+00:00,1,2
+2726,1387715,Ligue 1,France,Toulouse,Stade Brestois 29,2025-08-24T15:15:00+00:00,2,0
+2725,1387714,Ligue 1,France,Strasbourg,Nantes,2025-08-24T15:15:00+00:00,1,0
+2723,1390834,La Liga,Spain,Osasuna,Valencia,2025-08-24T15:00:00+00:00,1,0
+2722,1388314,Bundesliga,Germany,FSV Mainz 05,1.FC Köln,2025-08-24T13:30:00+00:00,0,1
+2716,1387709,Ligue 1,France,Lorient,Rennes,2025-08-24T13:00:00+00:00,4,0
+2715,1378984,Premier League,England,Everton,Brighton,2025-08-24T13:00:00+00:00,2,0
+2714,1378983,Premier League,England,Crystal Palace,Nottingham Forest,2025-08-24T13:00:00+00:00,1,1
+2718,1435805,Ligue A,Burundi,Le Messager Ngozi,Vital'O,2025-08-24T13:00:00+00:00,1,0
+2719,1435806,Ligue A,Burundi,Musongati,Ngozi City,2025-08-24T13:00:00+00:00,1,0
+2720,1435807,Ligue A,Burundi,Olympic Star,Inter Star,2025-08-24T13:00:00+00:00,1,0
+2721,1435808,Ligue A,Burundi,Rukinzo,Bumamuru,2025-08-24T13:00:00+00:00,0,1
+2717,1435804,Ligue A,Burundi,Aigle Noir,Royal Vision,2025-08-24T13:00:00+00:00,2,0
+2713,1388640,2. Bundesliga,Germany,SpVgg Greuther Fürth,Holstein Kiel,2025-08-24T11:30:00+00:00,0,2
+2712,1388633,2. Bundesliga,Germany,SV Darmstadt 98,Hertha BSC,2025-08-24T11:30:00+00:00,0,0
+2711,1388632,2. Bundesliga,Germany,Arminia Bielefeld,Dynamo Dresden,2025-08-24T11:30:00+00:00,1,2
+2710,1382683,Premiership,Scotland,ST Mirren,Rangers,2025-08-24T11:00:00+00:00,1,1
+2709,1390832,La Liga,Spain,Levante,Barcelona,2025-08-23T19:30:00+00:00,2,3
+2708,1387710,Ligue 1,France,Lyon,Metz,2025-08-23T19:05:00+00:00,3,0
+2706,1419596,Serie B,Italy,Monza,Mantova,2025-08-23T19:00:00+00:00,1,0
+2707,1419600,Serie B,Italy,Palermo,Reggiana,2025-08-23T19:00:00+00:00,2,1
+2704,1377870,Serie A,Italy,AC Milan,Cremonese,2025-08-23T18:45:00+00:00,1,2
+2705,1377871,Serie A,Italy,AS Roma,Bologna,2025-08-23T18:45:00+00:00,1,0
+2703,1388639,2. Bundesliga,Germany,FC Schalke 04,VfL Bochum,2025-08-23T18:30:00+00:00,2,1
+2702,1390830,La Liga,Spain,Atletico Madrid,Elche,2025-08-23T17:30:00+00:00,1,1
+2701,1419598,Serie B,Italy,Empoli,Padova,2025-08-23T17:00:00+00:00,3,1
+2699,1387712,Ligue 1,France,Nice,Auxerre,2025-08-23T17:00:00+00:00,3,1
+2700,1419595,Serie B,Italy,Virtus Entella,Juve Stabia,2025-08-23T17:00:00+00:00,1,1
+2698,1388315,Bundesliga,Germany,FC St. Pauli,Borussia Dortmund,2025-08-23T16:30:00+00:00,3,3
+2695,1377867,Serie A,Italy,Genoa,Lecce,2025-08-23T16:30:00+00:00,0,0
+2696,1377872,Serie A,Italy,Sassuolo,Napoli,2025-08-23T16:30:00+00:00,0,2
+2697,1378979,Premier League,England,Arsenal,Leeds,2025-08-23T16:30:00+00:00,5,0
+2694,1390833,La Liga,Spain,Mallorca,Celta Vigo,2025-08-23T15:00:00+00:00,1,1
+2693,1387711,Ligue 1,France,Marseille,Paris FC,2025-08-23T15:00:00+00:00,5,2
+2664,1382878,Championship,Scotland,ST Johnstone,Arbroath,2025-08-23T14:00:00+00:00,3,0
+2662,1382875,Championship,Scotland,Morton,Ayr Utd,2025-08-23T14:00:00+00:00,2,2
+2661,1382874,Championship,Scotland,Airdrie United,Queen's Park,2025-08-23T14:00:00+00:00,1,1
+2660,1382682,Premiership,Scotland,Kilmarnock,Dundee,2025-08-23T14:00:00+00:00,0,0
+2659,1382681,Premiership,Scotland,Heart Of Midlothian,Motherwell,2025-08-23T14:00:00+00:00,3,3
+2657,1382678,Premiership,Scotland,Celtic,Livingston,2025-08-23T14:00:00+00:00,3,0
+2656,1378982,Premier League,England,Burnley,Sunderland,2025-08-23T14:00:00+00:00,2,0
+2655,1378981,Premier League,England,Brentford,Aston Villa,2025-08-23T14:00:00+00:00,1,0
+2654,1378980,Premier League,England,Bournemouth,Wolves,2025-08-23T14:00:00+00:00,1,0
+2671,1386050,League Two,England,Gillingham,Crewe,2025-08-23T14:00:00+00:00,1,0
+2670,1386049,League Two,England,Fleetwood Town,Oldham,2025-08-23T14:00:00+00:00,1,1
+2690,1387158,League One,England,Port Vale,Doncaster,2025-08-23T14:00:00+00:00,0,1
+2691,1387160,League One,England,Stockport County,Burton Albion,2025-08-23T14:00:00+00:00,2,1
+2692,1387161,League One,England,Wycombe,Reading,2025-08-23T14:00:00+00:00,2,2
+2673,1386052,League Two,England,Notts County,Bromley,2025-08-23T14:00:00+00:00,2,2
+2669,1386048,League Two,England,Crawley Town,Tranmere,2025-08-23T14:00:00+00:00,0,2
+2672,1386051,League Two,England,Harrogate Town,Chesterfield,2025-08-23T14:00:00+00:00,1,2
+2668,1386047,League Two,England,Colchester,Barrow,2025-08-23T14:00:00+00:00,0,2
+2667,1386046,League Two,England,Cheltenham,Barnet,2025-08-23T14:00:00+00:00,0,1
+2689,1387157,League One,England,Plymouth,Blackpool,2025-08-23T14:00:00+00:00,1,0
+2688,1387156,League One,England,Peterborough,Bradford,2025-08-23T14:00:00+00:00,1,1
+2687,1387155,League One,England,Northampton,Exeter City,2025-08-23T14:00:00+00:00,2,0
+2686,1387154,League One,England,Mansfield Town,Leyton Orient,2025-08-23T14:00:00+00:00,4,1
+2685,1387153,League One,England,Huddersfield,Stevenage,2025-08-23T14:00:00+00:00,1,0
+2684,1387152,League One,England,Bolton,Lincoln,2025-08-23T14:00:00+00:00,1,1
+2683,1387151,League One,England,AFC Wimbledon,Barnsley,2025-08-23T14:00:00+00:00,2,0
+2682,1386586,Championship,England,Coventry,QPR,2025-08-23T14:00:00+00:00,7,1
+2681,1386585,Championship,England,Wrexham,Sheffield Wednesday,2025-08-23T14:00:00+00:00,2,2
+2680,1386584,Championship,England,Birmingham,Oxford United,2025-08-23T14:00:00+00:00,1,0
+2679,1386583,Championship,England,Norwich,Middlesbrough,2025-08-23T14:00:00+00:00,1,2
+2678,1386582,Championship,England,Sheffield Utd,Millwall,2025-08-23T14:00:00+00:00,0,1
+2677,1386581,Championship,England,Preston,Ipswich,2025-08-23T14:00:00+00:00,1,0
+2676,1386578,Championship,England,Southampton,Stoke City,2025-08-23T14:00:00+00:00,1,2
+2675,1386576,Championship,England,West Brom,Portsmouth,2025-08-23T14:00:00+00:00,1,1
+2674,1386053,League Two,England,Swindon Town,Shrewsbury,2025-08-23T14:00:00+00:00,2,1
+2666,1386045,League Two,England,Bristol Rovers,Cambridge United,2025-08-23T14:00:00+00:00,1,0
+2665,1386044,League Two,England,Accrington ST,Grimsby,2025-08-23T14:00:00+00:00,1,1
+2663,1382877,Championship,Scotland,Ross County,Partick,2025-08-23T14:00:00+00:00,1,3
+2651,1388312,Bundesliga,Germany,SC Freiburg,FC Augsburg,2025-08-23T13:30:00+00:00,1,3
+2650,1388311,Bundesliga,Germany,Eintracht Frankfurt,Werder Bremen,2025-08-23T13:30:00+00:00,4,1
+2649,1388309,Bundesliga,Germany,Bayer Leverkusen,1899 Hoffenheim,2025-08-23T13:30:00+00:00,1,2
+2652,1388313,Bundesliga,Germany,1. FC Heidenheim,VfL Wolfsburg,2025-08-23T13:30:00+00:00,1,3
+2653,1388316,Bundesliga,Germany,Union Berlin,VfB Stuttgart,2025-08-23T13:30:00+00:00,2,1
+2647,1435802,Ligue A,Burundi,Kayanza United,Muzinga,2025-08-23T13:00:00+00:00,1,1
+2648,1435803,Ligue A,Burundi,Garage Express,Dynamik,2025-08-23T13:00:00+00:00,2,0
+2646,1435801,Ligue A,Burundi,Green Farmers FC,Flambeau du Centre,2025-08-23T13:00:00+00:00,0,2
+2644,1387159,League One,England,Rotherham,Wigan,2025-08-23T11:30:00+00:00,2,2
+2640,1386054,League Two,England,Walsall,Salford City,2025-08-23T11:30:00+00:00,1,0
+2641,1386055,League Two,England,Newport County,Milton Keynes Dons,2025-08-23T11:30:00+00:00,1,2
+2642,1386577,Championship,England,Charlton,Leicester,2025-08-23T11:30:00+00:00,0,1
+2643,1386579,Championship,England,Hull City,Blackburn,2025-08-23T11:30:00+00:00,0,3
+2645,1387162,League One,England,Luton,Cardiff,2025-08-23T11:30:00+00:00,0,1
+88,1386575,Championship,England,Swansea,Watford,2025-08-23T11:30:00+00:00,1,1
+85,1378986,Premier League,England,Manchester City,Tottenham,2025-08-23T11:30:00+00:00,0,2
+2638,1388636,2. Bundesliga,Germany,Karlsruher SC,Eintracht Braunschweig,2025-08-23T11:00:00+00:00,2,0
+2639,1388637,2. Bundesliga,Germany,SC Paderborn 07,Fortuna Düsseldorf,2025-08-23T11:00:00+00:00,1,2
+2637,1388635,2. Bundesliga,Germany,Hannover 96,1. FC Magdeburg,2025-08-23T11:00:00+00:00,3,1
+2636,1390831,La Liga,Spain,Real Betis,Alaves,2025-08-22T19:30:00+00:00,1,0
+128,1386580,Championship,England,Derby,Bristol City,2025-08-22T19:00:00+00:00,1,1
+127,1378988,Premier League,England,West Ham,Chelsea,2025-08-22T19:00:00+00:00,1,5
+2634,1382876,Championship,Scotland,Raith Rovers,Dunfermline,2025-08-22T18:45:00+00:00,2,0
+2635,1387713,Ligue 1,France,Paris Saint Germain,Angers,2025-08-22T18:45:00+00:00,1,0
+2633,1419594,Serie B,Italy,Pescara,Cesena,2025-08-22T18:30:00+00:00,1,3
+123,1388308,Bundesliga,Germany,Bayern München,RB Leipzig,2025-08-22T18:30:00+00:00,6,0
+2631,1388634,2. Bundesliga,Germany,SV Elversberg,1. FC Kaiserslautern,2025-08-22T16:30:00+00:00,2,1
+2632,1388638,2. Bundesliga,Germany,Preußen Münster,1. FC Nürnberg,2025-08-22T16:30:00+00:00,2,1
+2627,1438706,UEFA Europa Conference League,World,Crystal Palace,Fredrikstad,2025-08-21T19:00:00+00:00,1,0
+2628,1438707,UEFA Europa Conference League,World,Hibernian,Legia Warszawa,2025-08-21T19:00:00+00:00,1,2
+2629,1438708,UEFA Europa Conference League,World,Santa Clara,Shamrock Rovers,2025-08-21T19:00:00+00:00,1,2
+2630,1438709,UEFA Europa Conference League,World,Raków Częstochowa,Arda Kardzhali,2025-08-21T19:00:00+00:00,1,0
+2626,1437230,UEFA Europa League,World,Lincoln Red Imps FC,SC Braga,2025-08-21T19:00:00+00:00,0,4
+2624,1436774,UEFA Europa League,World,Aberdeen,FCSB,2025-08-21T18:45:00+00:00,2,2
+2623,1436773,UEFA Europa League,World,HNK Rijeka,PAOK,2025-08-21T18:45:00+00:00,1,0
+2625,1438705,UEFA Europa Conference League,World,Shelbourne,Linfield,2025-08-21T18:45:00+00:00,3,1
+2622,1436775,UEFA Europa League,World,Lech Poznan,Genk,2025-08-21T18:30:00+00:00,1,5
+2620,1438703,UEFA Europa Conference League,World,Lausanne,Besiktas,2025-08-21T18:15:00+00:00,1,1
+2619,1436777,UEFA Europa League,World,Slovan Bratislava,BSC Young Boys,2025-08-21T18:15:00+00:00,0,1
+2621,1438704,UEFA Europa Conference League,World,Jagiellonia,Dinamo Tirana,2025-08-21T18:15:00+00:00,3,0
+2618,1436776,UEFA Europa League,World,Maccabi Tel Aviv,Dynamo Kyiv,2025-08-21T18:10:00+00:00,3,1
+2608,1438693,UEFA Europa Conference League,World,Anderlecht,AEK Athens FC,2025-08-21T18:00:00+00:00,1,1
+2607,1438692,UEFA Europa Conference League,World,Polessya,Fiorentina,2025-08-21T18:00:00+00:00,0,3
+2610,1438695,UEFA Europa Conference League,World,Shakhtar Donetsk,Servette FC,2025-08-21T18:00:00+00:00,1,1
+2611,1438696,UEFA Europa Conference League,World,Neman,Rayo Vallecano,2025-08-21T18:00:00+00:00,0,1
+2612,1438697,UEFA Europa Conference League,World,Sparta Praha,Riga,2025-08-21T18:00:00+00:00,2,0
+2614,1438699,UEFA Europa Conference League,World,Olimpija Ljubljana,FC Noah,2025-08-21T18:00:00+00:00,1,4
+2617,1438702,UEFA Europa Conference League,World,Drita,FC Differdange 03,2025-08-21T18:00:00+00:00,2,1
+2616,1438701,UEFA Europa Conference League,World,Breidablik,Virtus,2025-08-21T18:00:00+00:00,2,1
+2606,1437229,UEFA Europa League,World,Zrinjski,Utrecht,2025-08-21T18:00:00+00:00,0,2
+2605,1436779,UEFA Europa League,World,Panathinaikos,Samsunspor,2025-08-21T18:00:00+00:00,2,1
+2604,1436778,UEFA Europa League,World,Shkendija,Ludogorets,2025-08-21T18:00:00+00:00,2,1
+2613,1438698,UEFA Europa Conference League,World,Strasbourg,Brondby,2025-08-21T18:00:00+00:00,0,0
+2609,1438694,UEFA Europa Conference League,World,Levski Sofia,AZ Alkmaar,2025-08-21T18:00:00+00:00,0,2
+2615,1438700,UEFA Europa Conference League,World,Celje,Baník Ostrava,2025-08-21T18:00:00+00:00,1,0
+2603,1438691,UEFA Europa Conference League,World,Istanbul Basaksehir,Universitatea Craiova,2025-08-21T17:45:00+00:00,1,2
+2599,1438687,UEFA Europa Conference League,World,BK Hacken,CFR 1907 Cluj,2025-08-21T17:00:00+00:00,7,2
+2597,1437227,UEFA Europa League,World,Malmo FF,Sigma Olomouc,2025-08-21T17:00:00+00:00,3,0
+2598,1437228,UEFA Europa League,World,Brann,AEK Larnaca,2025-08-21T17:00:00+00:00,2,1
+2602,1438690,UEFA Europa Conference League,World,Gyori ETO FC,Rapid Vienna,2025-08-21T17:00:00+00:00,2,1
+2601,1438689,UEFA Europa Conference League,World,Hamrun Spartans,Rīgas FS,2025-08-21T17:00:00+00:00,1,0
+2600,1438688,UEFA Europa Conference League,World,Wolfsberger AC,Omonia Nicosia,2025-08-21T17:00:00+00:00,2,1
+2596,1437226,UEFA Europa League,World,FC Midtjylland,KuPS,2025-08-21T16:30:00+00:00,4,0
+2595,1438686,UEFA Europa Conference League,World,Rosenborg,FSV Mainz 05,2025-08-21T16:00:00+00:00,2,1
+2594,1435550,UEFA Champions League,World,Fenerbahce,Benfica,2025-08-20T19:00:00+00:00,0,0
+2593,1435549,UEFA Champions League,World,Celtic,Kairat Almaty,2025-08-20T19:00:00+00:00,0,0
+2590,1387139,League One,England,Bolton,Reading,2025-08-20T19:00:00+00:00,1,1
+2592,1435548,UEFA Champions League,World,FC Basel 1893,FC Copenhagen,2025-08-20T19:00:00+00:00,1,1
+2591,1424397,UEFA Champions League,World,Bodo/Glimt,Sturm Graz,2025-08-20T19:00:00+00:00,5,0
+2589,1386041,League Two,England,Notts County,Shrewsbury,2025-08-20T18:45:00+00:00,4,1
+2585,1390826,La Liga,Spain,Real Madrid,Osasuna,2025-08-19T19:00:00+00:00,1,0
+2588,1435547,UEFA Champions League,World,Rangers,Club Brugge KV,2025-08-19T19:00:00+00:00,1,3
+2587,1435546,UEFA Champions League,World,FK Crvena Zvezda,Pafos,2025-08-19T19:00:00+00:00,1,2
+2586,1435545,UEFA Champions League,World,Ferencvarosi TC,Qarabag,2025-08-19T19:00:00+00:00,1,3
+2584,1386043,League Two,England,Walsall,Grimsby,2025-08-19T19:00:00+00:00,0,1
+2575,1387141,League One,England,Luton,Wigan,2025-08-19T18:45:00+00:00,1,0
+2566,1386034,League Two,England,Bristol Rovers,Oldham,2025-08-19T18:45:00+00:00,0,0
+2567,1386035,League Two,England,Cheltenham,Bromley,2025-08-19T18:45:00+00:00,1,2
+2568,1386036,League Two,England,Colchester,Cambridge United,2025-08-19T18:45:00+00:00,1,2
+2569,1386037,League Two,England,Crawley Town,Milton Keynes Dons,2025-08-19T18:45:00+00:00,1,1
+2570,1386038,League Two,England,Fleetwood Town,Crewe,2025-08-19T18:45:00+00:00,1,4
+2571,1386039,League Two,England,Gillingham,Chesterfield,2025-08-19T18:45:00+00:00,4,1
+2572,1386040,League Two,England,Harrogate Town,Barrow,2025-08-19T18:45:00+00:00,1,0
+2573,1386042,League Two,England,Swindon Town,Barnet,2025-08-19T18:45:00+00:00,0,2
+2574,1387140,League One,England,Huddersfield,Doncaster,2025-08-19T18:45:00+00:00,2,0
+2576,1387142,League One,England,Mansfield Town,Blackpool,2025-08-19T18:45:00+00:00,2,0
+2577,1387143,League One,England,Northampton,Lincoln,2025-08-19T18:45:00+00:00,0,1
+2578,1387144,League One,England,Peterborough,Barnsley,2025-08-19T18:45:00+00:00,0,1
+2579,1387145,League One,England,Plymouth,Leyton Orient,2025-08-19T18:45:00+00:00,0,1
+2580,1387146,League One,England,Port Vale,Stevenage,2025-08-19T18:45:00+00:00,1,2
+2581,1387148,League One,England,Stockport County,Bradford,2025-08-19T18:45:00+00:00,1,2
+2582,1387149,League One,England,Wycombe,Exeter City,2025-08-19T18:45:00+00:00,0,1
+2583,1387150,League One,England,AFC Wimbledon,Cardiff,2025-08-19T18:45:00+00:00,0,1
+2564,1386032,League Two,England,Newport County,Salford City,2025-08-19T18:30:00+00:00,0,1
+2563,1390822,La Liga,Spain,Elche,Real Betis,2025-08-18T19:00:00+00:00,1,1
+2562,1378978,Premier League,England,Leeds,Everton,2025-08-18T19:00:00+00:00,1,0
+2561,1390823,La Liga,Spain,Espanyol,Atletico Madrid,2025-08-17T19:30:00+00:00,2,1
+2560,1387704,Ligue 1,France,Nantes,Paris Saint Germain,2025-08-17T18:45:00+00:00,0,1
+2559,1390820,La Liga,Spain,Athletic Club,Sevilla,2025-08-17T17:30:00+00:00,3,2
+2558,1378977,Premier League,England,Manchester United,Arsenal,2025-08-17T15:30:00+00:00,0,1
+2555,1387698,Ligue 1,France,Angers,Paris FC,2025-08-17T15:15:00+00:00,1,0
+2556,1387699,Ligue 1,France,Auxerre,Lorient,2025-08-17T15:15:00+00:00,1,0
+2557,1387702,Ligue 1,France,Metz,Strasbourg,2025-08-17T15:15:00+00:00,0,1
+2554,1390821,La Liga,Spain,Celta Vigo,Getafe,2025-08-17T15:00:00+00:00,0,2
+2553,1386570,Championship,England,Hull City,Oxford United,2025-08-17T14:00:00+00:00,3,2
+2550,1434194,Ligue A,Burundi,Bumamuru,Musongati,2025-08-17T13:00:00+00:00,2,1
+2549,1387700,Ligue 1,France,Stade Brestois 29,Lille,2025-08-17T13:00:00+00:00,3,3
+2547,1378972,Premier League,England,Nottingham Forest,Brentford,2025-08-17T13:00:00+00:00,3,1
+2551,1434195,Ligue A,Burundi,Flambeau du Centre,Rukinzo,2025-08-17T13:00:00+00:00,2,1
+2552,1434196,Ligue A,Burundi,Ngozi City,Olympic Star,2025-08-17T13:00:00+00:00,1,1
+2548,1378976,Premier League,England,Chelsea,Crystal Palace,2025-08-17T13:00:00+00:00,0,0
+2546,1386572,Championship,England,Ipswich,Southampton,2025-08-17T11:00:00+00:00,1,1
+2544,1390819,La Liga,Spain,Alaves,Levante,2025-08-16T19:30:00+00:00,2,1
+2545,1390827,La Liga,Spain,Valencia,Real Sociedad,2025-08-16T19:30:00+00:00,1,1
+2543,1387705,Ligue 1,France,Nice,Toulouse,2025-08-16T19:05:00+00:00,0,1
+2542,1390825,La Liga,Spain,Mallorca,Barcelona,2025-08-16T17:30:00+00:00,0,3
+2541,1387703,Ligue 1,France,Monaco,Le Havre,2025-08-16T17:00:00+00:00,3,1
+2540,1378975,Premier League,England,Wolves,Manchester City,2025-08-16T16:30:00+00:00,0,4
+2539,1387701,Ligue 1,France,Lens,Lyon,2025-08-16T15:00:00+00:00,0,1
+2523,1386566,Championship,England,Bristol City,Charlton,2025-08-16T14:00:00+00:00,0,0
+2509,1378971,Premier League,England,Brighton,Fulham,2025-08-16T14:00:00+00:00,1,1
+2510,1378973,Premier League,England,Sunderland,West Ham,2025-08-16T14:00:00+00:00,3,0
+2511,1378974,Premier League,England,Tottenham,Burnley,2025-08-16T14:00:00+00:00,3,0
+2512,1386020,League Two,England,Barnet,Walsall,2025-08-16T14:00:00+00:00,1,2
+2513,1386021,League Two,England,Barrow,Notts County,2025-08-16T14:00:00+00:00,2,1
+2514,1386022,League Two,England,Bromley,Fleetwood Town,2025-08-16T14:00:00+00:00,2,2
+2515,1386023,League Two,England,Cambridge United,Harrogate Town,2025-08-16T14:00:00+00:00,1,1
+2516,1386025,League Two,England,Crewe,Crawley Town,2025-08-16T14:00:00+00:00,1,0
+2517,1386026,League Two,England,Milton Keynes Dons,Cheltenham,2025-08-16T14:00:00+00:00,5,0
+2518,1386028,League Two,England,Salford City,Accrington ST,2025-08-16T14:00:00+00:00,2,1
+2519,1386029,League Two,England,Shrewsbury,Colchester,2025-08-16T14:00:00+00:00,0,2
+2520,1386030,League Two,England,Tranmere,Gillingham,2025-08-16T14:00:00+00:00,1,1
+2521,1386031,League Two,England,Grimsby,Newport County,2025-08-16T14:00:00+00:00,2,1
+2522,1386563,Championship,England,Millwall,Middlesbrough,2025-08-16T14:00:00+00:00,0,3
+2524,1386567,Championship,England,Preston,Leicester,2025-08-16T14:00:00+00:00,2,1
+2525,1386569,Championship,England,Blackburn,Birmingham,2025-08-16T14:00:00+00:00,1,2
+2526,1386571,Championship,England,Watford,QPR,2025-08-16T14:00:00+00:00,2,1
+2527,1386573,Championship,England,Sheffield Wednesday,Stoke City,2025-08-16T14:00:00+00:00,0,3
+2528,1386574,Championship,England,Swansea,Sheffield Utd,2025-08-16T14:00:00+00:00,1,0
+2529,1387127,League One,England,Barnsley,Bolton,2025-08-16T14:00:00+00:00,1,1
+2530,1387128,League One,England,Blackpool,Huddersfield,2025-08-16T14:00:00+00:00,3,2
+2531,1387129,League One,England,Bradford,Luton,2025-08-16T14:00:00+00:00,2,1
+2532,1387131,League One,England,Doncaster,Wycombe,2025-08-16T14:00:00+00:00,1,1
+2533,1387133,League One,England,Leyton Orient,Stockport County,2025-08-16T14:00:00+00:00,2,2
+2534,1387134,League One,England,Lincoln,Plymouth,2025-08-16T14:00:00+00:00,3,2
+2535,1387135,League One,England,Reading,AFC Wimbledon,2025-08-16T14:00:00+00:00,1,2
+2536,1387136,League One,England,Stevenage,Northampton,2025-08-16T14:00:00+00:00,2,0
+2537,1387137,League One,England,Wigan,Peterborough,2025-08-16T14:00:00+00:00,2,0
+2538,1387138,League One,England,Cardiff,Rotherham,2025-08-16T14:00:00+00:00,3,0
+2508,1434193,Ligue A,Burundi,Vital'O,Royal Vision,2025-08-16T13:45:00+00:00,0,1
+2507,1387132,League One,England,Exeter City,Mansfield Town,2025-08-16T11:30:00+00:00,1,2
+2504,1386565,Championship,England,Portsmouth,Norwich,2025-08-16T11:30:00+00:00,1,2
+2505,1386568,Championship,England,Derby,Coventry,2025-08-16T11:30:00+00:00,3,5
+2506,1387130,League One,England,Burton Albion,Port Vale,2025-08-16T11:30:00+00:00,0,0
+2500,1378970,Premier League,England,Aston Villa,Newcastle,2025-08-16T11:30:00+00:00,0,0
+2501,1386024,League Two,England,Chesterfield,Bristol Rovers,2025-08-16T11:30:00+00:00,3,1
+2502,1386027,League Two,England,Oldham,Swindon Town,2025-08-16T11:30:00+00:00,1,2
+2503,1386564,Championship,England,Wrexham,West Brom,2025-08-16T11:30:00+00:00,2,3
+2499,1434192,Ligue A,Burundi,Inter Star,Le Messager Ngozi,2025-08-16T11:00:00+00:00,1,1
+2498,1390828,La Liga,Spain,Villarreal,Oviedo,2025-08-15T19:30:00+00:00,2,0
+2497,1378969,Premier League,England,Liverpool,Bournemouth,2025-08-15T19:00:00+00:00,4,2
+2496,1387706,Ligue 1,France,Rennes,Marseille,2025-08-15T18:45:00+00:00,1,0
+2495,1390824,La Liga,Spain,Girona,Rayo Vallecano,2025-08-15T17:00:00+00:00,1,3
+2494,1435800,Ligue A,Burundi,Muzinga,Green Farmers FC,2025-08-15T13:45:00+00:00,2,1
+2493,1435799,Ligue A,Burundi,Garage Express,Aigle Noir,2025-08-15T13:00:00+00:00,0,2
+2492,1434191,Ligue A,Burundi,Dynamik,Kayanza United,2025-08-15T11:00:00+00:00,0,2
+2488,1421194,UEFA Europa Conference League,World,Virtus,Milsami Orhei,2025-08-14T19:00:00+00:00,3,0
+2485,1421190,UEFA Europa Conference League,World,Shamrock Rovers,Ballkani,2025-08-14T19:00:00+00:00,4,0
+2486,1421191,UEFA Europa Conference League,World,Santa Clara,Larne,2025-08-14T19:00:00+00:00,0,0
+2487,1421193,UEFA Europa Conference League,World,Austria Vienna,Baník Ostrava,2025-08-14T19:00:00+00:00,1,1
+2489,1421200,UEFA Europa Conference League,World,Hibernian,FK Partizan,2025-08-14T19:00:00+00:00,2,3
+2490,1421206,UEFA Europa Conference League,World,Egnatia Rrogozhinë,Olimpija Ljubljana,2025-08-14T19:00:00+00:00,2,4
+2491,1421231,UEFA Europa League,World,Legia Warszawa,AEK Larnaca,2025-08-14T19:00:00+00:00,2,1
+2483,1421205,UEFA Europa Conference League,World,Dinamo Tirana,HNK Hajduk Split,2025-08-14T18:45:00+00:00,3,1
+2484,1423751,UEFA Europa Conference League,World,Linfield,Vikingur Gota,2025-08-14T18:45:00+00:00,2,0
+2482,1421195,UEFA Europa Conference League,World,Dundee Utd,Rapid Vienna,2025-08-14T18:45:00+00:00,2,2
+2480,1421199,UEFA Europa Conference League,World,Spartak Trnava,Universitatea Craiova,2025-08-14T18:30:00+00:00,4,3
+2481,1421223,UEFA Europa League,World,SC Braga,CFR 1907 Cluj,2025-08-14T18:30:00+00:00,2,0
+2479,1421183,UEFA Europa Conference League,World,Jagiellonia,Silkeborg,2025-08-14T18:15:00+00:00,2,2
+2477,1421227,UEFA Europa League,World,Shakhtar Donetsk,Panathinaikos,2025-08-14T18:00:00+00:00,0,0
+2478,1421230,UEFA Europa League,World,Utrecht,Servette FC,2025-08-14T18:00:00+00:00,2,1
+2472,1421184,UEFA Europa Conference League,World,Besiktas,St Patrick's Athl.,2025-08-14T18:00:00+00:00,3,2
+2473,1421189,UEFA Europa Conference League,World,Neman,KI Klaksvik,2025-08-14T18:00:00+00:00,2,0
+2474,1421203,UEFA Europa Conference League,World,AEK Athens FC,Aris,2025-08-14T18:00:00+00:00,3,1
+2470,1421181,UEFA Europa Conference League,World,Celje,FC Lugano,2025-08-14T18:00:00+00:00,2,4
+2471,1421182,UEFA Europa Conference League,World,Maccabi Haifa,Raków Częstochowa,2025-08-14T18:00:00+00:00,0,2
+2475,1421221,UEFA Europa League,World,Drita,FCSB,2025-08-14T18:00:00+00:00,1,3
+2476,1421226,UEFA Europa League,World,Maccabi Tel Aviv,Hamrun Spartans,2025-08-14T18:00:00+00:00,3,1
+2467,1421192,UEFA Europa Conference League,World,Arda Kardzhali,Kauno Žalgiris,2025-08-14T17:30:00+00:00,2,0
+2466,1421187,UEFA Europa Conference League,World,Brondby,Vikingur Reykjavik,2025-08-14T17:30:00+00:00,4,0
+2465,1421186,UEFA Europa Conference League,World,FC Vaduz,AZ Alkmaar,2025-08-14T17:30:00+00:00,0,1
+2468,1421196,UEFA Europa Conference League,World,Beitar Jerusalem,Riga,2025-08-14T17:30:00+00:00,3,1
+2469,1421229,UEFA Europa League,World,Breidablik,Zrinjski,2025-08-14T17:30:00+00:00,1,2
+2459,1421198,UEFA Europa Conference League,World,Sheriff Tiraspol,Anderlecht,2025-08-14T17:00:00+00:00,1,1
+2457,1413128,UEFA Europa League,World,Wolfsberger AC,PAOK,2025-08-14T17:00:00+00:00,0,1
+2458,1421185,UEFA Europa Conference League,World,Paks,Polessya,2025-08-14T17:00:00+00:00,2,1
+2464,1421225,UEFA Europa League,World,Brann,BK Hacken,2025-08-14T17:00:00+00:00,0,1
+2463,1421224,UEFA Europa League,World,FC Noah,Lincoln Red Imps FC,2025-08-14T17:00:00+00:00,0,0
+2462,1421204,UEFA Europa Conference League,World,Hammarby FF,Rosenborg,2025-08-14T17:00:00+00:00,0,1
+2461,1421202,UEFA Europa Conference League,World,Omonia Nicosia,Araz,2025-08-14T17:00:00+00:00,5,0
+2460,1421201,UEFA Europa Conference League,World,Gyori ETO FC,AIK Stockholm,2025-08-14T17:00:00+00:00,2,0
+2456,1419571,UEFA Europa Conference League,World,FC Levadia Tallinn,FC Differdange 03,2025-08-14T16:30:00+00:00,1,3
+2455,1423465,UEFA Europa League,World,FC Midtjylland,Fredrikstad,2025-08-14T16:00:00+00:00,2,0
+2453,1421197,UEFA Europa Conference League,World,Ararat-Armenia,Sparta Praha,2025-08-14T16:00:00+00:00,1,2
+2454,1421207,UEFA Europa Conference League,World,Sabah FA,Levski Sofia,2025-08-14T16:00:00+00:00,0,2
+2452,1421228,UEFA Europa League,World,KuPS,Rīgas FS,2025-08-14T15:00:00+00:00,1,0
+2451,1421188,UEFA Europa Conference League,World,FC Astana,Lausanne,2025-08-14T14:00:00+00:00,0,2
+2450,1416982,Challenge Cup,Scotland,Edinburgh City,Kilmarnock II,2025-08-13T18:45:00+00:00,1,0
+2449,1416975,Challenge Cup,Scotland,Hamilton Academical,Motherwell U21,2025-08-13T18:45:00+00:00,0,0
+2448,1421208,UEFA Europa Conference League,World,Istanbul Basaksehir,Viking,2025-08-13T16:00:00+00:00,1,1
+2447,1421150,UEFA Champions League,World,FK Crvena Zvezda,Lech Poznan,2025-08-12T19:00:00+00:00,1,1
+2446,1414145,UEFA Champions League,World,Benfica,Nice,2025-08-12T19:00:00+00:00,2,0
+2444,1416981,Challenge Cup,Scotland,Stranraer,Alloa Athletic,2025-08-12T18:45:00+00:00,2,1
+2445,1421222,UEFA Europa League,World,Shelbourne,HNK Rijeka,2025-08-12T18:45:00+00:00,1,3
+2443,1416980,Challenge Cup,Scotland,Stirling Albion,Dundee United II,2025-08-12T18:45:00+00:00,0,3
+2442,1416979,Challenge Cup,Scotland,Stenhousemuir,Rangers U21,2025-08-12T18:45:00+00:00,2,1
+2441,1416978,Challenge Cup,Scotland,Peterhead,Aberdeen U21,2025-08-12T18:45:00+00:00,4,2
+2440,1416977,Challenge Cup,Scotland,Montrose,Dundee II,2025-08-12T18:45:00+00:00,5,2
+2439,1416976,Challenge Cup,Scotland,Kelty Hearts,Annan Athletic,2025-08-12T18:45:00+00:00,1,0
+2438,1416974,Challenge Cup,Scotland,Forfar Athletic,Hibernian U21,2025-08-12T18:45:00+00:00,1,0
+2437,1416973,Challenge Cup,Scotland,Elgin City,Inverness CT,2025-08-12T18:45:00+00:00,1,4
+2436,1416972,Challenge Cup,Scotland,East Kilbride,Queen of the South,2025-08-12T18:45:00+00:00,3,1
+2435,1416971,Challenge Cup,Scotland,East Fife,Hearts U21,2025-08-12T18:45:00+00:00,4,1
+2434,1416970,Challenge Cup,Scotland,Dumbarton,St. Mirren U21,2025-08-12T18:45:00+00:00,4,2
+2433,1416969,Challenge Cup,Scotland,Cove Rangers,Spartans,2025-08-12T18:45:00+00:00,1,1
+2432,1416968,Challenge Cup,Scotland,Clyde,Celtic II,2025-08-12T18:45:00+00:00,1,3
+2430,1419569,UEFA Champions League,World,Slovan Bratislava,Kairat Almaty,2025-08-12T18:15:00+00:00,1,0
+2431,1421149,UEFA Champions League,World,Ferencvarosi TC,Ludogorets,2025-08-12T18:15:00+00:00,3,0
+2429,1421147,UEFA Champions League,World,Club Brugge KV,Red Bull Salzburg,2025-08-12T17:30:00+00:00,3,2
+2425,1414144,UEFA Champions League,World,Fenerbahce,Feyenoord,2025-08-12T17:00:00+00:00,5,2
+2428,1421148,UEFA Champions League,World,FC Copenhagen,Malmo FF,2025-08-12T17:00:00+00:00,5,0
+2427,1421146,UEFA Champions League,World,Plzen,Rangers,2025-08-12T17:00:00+00:00,2,1
+2426,1421145,UEFA Champions League,World,Pafos,Dynamo Kyiv,2025-08-12T17:00:00+00:00,2,0
+2424,1421144,UEFA Champions League,World,Qarabag,Shkendija,2025-08-12T16:00:00+00:00,5,1
+2423,1386562,Championship,England,Leicester,Sheffield Wednesday,2025-08-10T15:30:00+00:00,2,1
+2422,1382673,Premiership,Scotland,Hibernian,Kilmarnock,2025-08-10T14:00:00+00:00,2,2
+2421,1382672,Premiership,Scotland,Dundee Utd,Heart Of Midlothian,2025-08-10T14:00:00+00:00,2,3
+2417,1382677,Premiership,Scotland,Aberdeen,Celtic,2025-08-10T11:30:00+00:00,0,2
+2420,1388631,2. Bundesliga,Germany,Holstein Kiel,Arminia Bielefeld,2025-08-10T11:30:00+00:00,0,2
+2419,1388626,2. Bundesliga,Germany,Hertha BSC,Karlsruher SC,2025-08-10T11:30:00+00:00,0,0
+2418,1388623,2. Bundesliga,Germany,VfL Bochum,SV Elversberg,2025-08-10T11:30:00+00:00,2,0
+2416,1388627,2. Bundesliga,Germany,1. FC Kaiserslautern,FC Schalke 04,2025-08-09T18:30:00+00:00,1,0
+2415,1382676,Premiership,Scotland,Rangers,Dundee,2025-08-09T16:45:00+00:00,1,1
+2414,1386561,Championship,England,Sheffield Utd,Bristol City,2025-08-09T16:30:00+00:00,1,4
+2391,1386010,League Two,England,Cheltenham,Chesterfield,2025-08-09T14:00:00+00:00,0,2
+2396,1386016,League Two,England,Oldham,Colchester,2025-08-09T14:00:00+00:00,1,1
+2390,1386009,League Two,England,Bromley,Barnet,2025-08-09T14:00:00+00:00,2,0
+2404,1386560,Championship,England,Norwich,Millwall,2025-08-09T14:00:00+00:00,1,2
+2402,1386558,Championship,England,QPR,Preston,2025-08-09T14:00:00+00:00,1,1
+2401,1386557,Championship,England,Middlesbrough,Swansea,2025-08-09T14:00:00+00:00,1,0
+2400,1386556,Championship,England,Stoke City,Derby,2025-08-09T14:00:00+00:00,3,1
+2399,1386555,Championship,England,West Brom,Blackburn,2025-08-09T14:00:00+00:00,1,0
+2398,1386019,League Two,England,Crawley Town,Newport County,2025-08-09T14:00:00+00:00,1,2
+2397,1386017,League Two,England,Swindon Town,Cambridge United,2025-08-09T14:00:00+00:00,3,2
+2389,1386008,League Two,England,Barrow,Milton Keynes Dons,2025-08-09T14:00:00+00:00,0,2
+2388,1382872,Championship,Scotland,Queen's Park,Arbroath,2025-08-09T14:00:00+00:00,1,3
+2387,1382871,Championship,Scotland,Partick,Morton,2025-08-09T14:00:00+00:00,1,1
+2386,1382870,Championship,Scotland,Dunfermline,Airdrie United,2025-08-09T14:00:00+00:00,2,0
+2385,1382869,Championship,Scotland,Ayr Utd,Raith Rovers,2025-08-09T14:00:00+00:00,0,1
+2384,1382675,Premiership,Scotland,ST Mirren,Motherwell,2025-08-09T14:00:00+00:00,0,0
+2383,1382674,Premiership,Scotland,Livingston,Falkirk,2025-08-09T14:00:00+00:00,3,1
+2395,1386014,League Two,England,Harrogate Town,Grimsby,2025-08-09T14:00:00+00:00,3,3
+2394,1386013,League Two,England,Gillingham,Walsall,2025-08-09T14:00:00+00:00,1,0
+2393,1386012,League Two,England,Fleetwood Town,Bristol Rovers,2025-08-09T14:00:00+00:00,2,1
+2392,1386011,League Two,England,Crewe,Accrington ST,2025-08-09T14:00:00+00:00,2,0
+2403,1386559,Championship,England,Oxford United,Portsmouth,2025-08-09T14:00:00+00:00,0,1
+2413,1387125,League One,England,Wycombe,Stockport County,2025-08-09T14:00:00+00:00,1,2
+2412,1387124,League One,England,Stevenage,Rotherham,2025-08-09T14:00:00+00:00,1,0
+2411,1387121,League One,England,Northampton,Bradford,2025-08-09T14:00:00+00:00,0,0
+2410,1387120,League One,England,Mansfield Town,Doncaster,2025-08-09T14:00:00+00:00,1,2
+2409,1387119,League One,England,Leyton Orient,Wigan,2025-08-09T14:00:00+00:00,2,0
+2408,1387118,League One,England,Exeter City,Blackpool,2025-08-09T14:00:00+00:00,4,1
+2407,1387117,League One,England,Bolton,Plymouth,2025-08-09T14:00:00+00:00,2,0
+2406,1387116,League One,England,Barnsley,Burton Albion,2025-08-09T14:00:00+00:00,3,2
+2405,1387115,League One,England,AFC Wimbledon,Lincoln,2025-08-09T14:00:00+00:00,2,0
+2382,1452503,FA Cup,Scotland,Dundee North End,Culter,2025-08-09T13:30:00+00:00,2,2
+2376,1386018,League Two,England,Tranmere,Shrewsbury,2025-08-09T11:30:00+00:00,4,0
+2381,1387123,League One,England,Reading,Huddersfield,2025-08-09T11:30:00+00:00,0,2
+2380,1387122,League One,England,Peterborough,Luton,2025-08-09T11:30:00+00:00,0,2
+2379,1386554,Championship,England,Charlton,Watford,2025-08-09T11:30:00+00:00,1,0
+2378,1386553,Championship,England,Southampton,Wrexham,2025-08-09T11:30:00+00:00,2,1
+2377,1386552,Championship,England,Coventry,Hull City,2025-08-09T11:30:00+00:00,0,0
+2375,1386015,League Two,England,Notts County,Salford City,2025-08-09T11:30:00+00:00,1,2
+2373,1388625,2. Bundesliga,Germany,Fortuna Düsseldorf,Hannover 96,2025-08-09T11:00:00+00:00,0,2
+2372,1388624,2. Bundesliga,Germany,Eintracht Braunschweig,SpVgg Greuther Fürth,2025-08-09T11:00:00+00:00,3,2
+2374,1388630,2. Bundesliga,Germany,Dynamo Dresden,1. FC Magdeburg,2025-08-09T11:00:00+00:00,1,2
+2371,1386551,Championship,England,Birmingham,Ipswich,2025-08-08T19:00:00+00:00,1,1
+2370,1382873,Championship,Scotland,Ross County,ST Johnstone,2025-08-08T18:45:00+00:00,0,1
+2369,1388629,2. Bundesliga,Germany,Preußen Münster,SC Paderborn 07,2025-08-08T16:30:00+00:00,1,1
+2368,1388628,2. Bundesliga,Germany,1. FC Nürnberg,SV Darmstadt 98,2025-08-08T16:30:00+00:00,0,1
+2363,1421165,UEFA Europa Conference League,World,Larne,Santa Clara,2025-08-07T19:00:00+00:00,0,3
+2362,1387126,League One,England,Port Vale,Cardiff,2025-08-07T19:00:00+00:00,0,0
+2367,1421180,UEFA Europa Conference League,World,HNK Hajduk Split,Dinamo Tirana,2025-08-07T19:00:00+00:00,2,1
+2364,1421166,UEFA Europa Conference League,World,Raków Częstochowa,Maccabi Haifa,2025-08-07T19:00:00+00:00,0,1
+2365,1421171,UEFA Europa Conference League,World,FK Partizan,Hibernian,2025-08-07T19:00:00+00:00,0,2
+2366,1421177,UEFA Europa Conference League,World,Rapid Vienna,Dundee Utd,2025-08-07T19:00:00+00:00,2,2
+2361,1421176,UEFA Europa Conference League,World,St Patrick's Athl.,Besiktas,2025-08-07T18:45:00+00:00,1,4
+2360,1421164,UEFA Europa Conference League,World,Vikingur Reykjavik,Brondby,2025-08-07T18:45:00+00:00,3,0
+2358,1421216,UEFA Europa League,World,Servette FC,Utrecht,2025-08-07T18:30:00+00:00,1,3
+2357,1421161,UEFA Europa Conference League,World,Ballkani,Shamrock Rovers,2025-08-07T18:30:00+00:00,1,0
+2356,1421157,UEFA Europa Conference League,World,FC Lugano,Celje,2025-08-07T18:30:00+00:00,0,5
+2355,1421154,UEFA Europa Conference League,World,Universitatea Craiova,Spartak Trnava,2025-08-07T18:30:00+00:00,3,0
+2359,1421217,UEFA Europa League,World,FCSB,Drita,2025-08-07T18:30:00+00:00,3,2
+2354,1421159,UEFA Europa Conference League,World,Lausanne,FC Astana,2025-08-07T18:15:00+00:00,3,1
+2352,1421218,UEFA Europa League,World,Panathinaikos,Shakhtar Donetsk,2025-08-07T18:00:00+00:00,0,0
+2353,1421220,UEFA Europa League,World,Zrinjski,Breidablik,2025-08-07T18:00:00+00:00,1,1
+2351,1421179,UEFA Europa Conference League,World,Olimpija Ljubljana,Egnatia Rrogozhinë,2025-08-07T18:00:00+00:00,0,0
+2350,1421178,UEFA Europa Conference League,World,Anderlecht,Sheriff Tiraspol,2025-08-07T18:00:00+00:00,3,0
+2349,1421173,UEFA Europa Conference League,World,Levski Sofia,Sabah FA,2025-08-07T18:00:00+00:00,1,0
+2348,1421170,UEFA Europa Conference League,World,Vikingur Gota,Linfield,2025-08-07T18:00:00+00:00,2,1
+2347,1421168,UEFA Europa Conference League,World,Sparta Praha,Ararat-Armenia,2025-08-07T18:00:00+00:00,4,1
+2346,1421158,UEFA Europa Conference League,World,AZ Alkmaar,FC Vaduz,2025-08-07T18:00:00+00:00,3,0
+2345,1421153,UEFA Europa Conference League,World,Polessya,Paks,2025-08-07T18:00:00+00:00,3,0
+2344,1419570,UEFA Europa Conference League,World,FC Differdange 03,FC Levadia Tallinn,2025-08-07T18:00:00+00:00,2,3
+2343,1413127,UEFA Europa League,World,PAOK,Wolfsberger AC,2025-08-07T17:30:00+00:00,0,0
+2339,1421156,UEFA Europa Conference League,World,Riga,Beitar Jerusalem,2025-08-07T17:00:00+00:00,3,0
+2338,1421155,UEFA Europa Conference League,World,AIK Stockholm,Gyori ETO FC,2025-08-07T17:00:00+00:00,2,1
+2340,1421162,UEFA Europa Conference League,World,Silkeborg,Jagiellonia,2025-08-07T17:00:00+00:00,0,1
+2342,1421211,UEFA Europa League,World,BK Hacken,Brann,2025-08-07T17:00:00+00:00,0,2
+2341,1421163,UEFA Europa Conference League,World,Viking,Istanbul Basaksehir,2025-08-07T17:00:00+00:00,1,3
+2335,1421169,UEFA Europa Conference League,World,Baník Ostrava,Austria Vienna,2025-08-07T16:30:00+00:00,4,3
+2336,1421209,UEFA Europa League,World,CFR 1907 Cluj,SC Braga,2025-08-07T16:30:00+00:00,1,2
+2337,1421214,UEFA Europa League,World,AEK Larnaca,Legia Warszawa,2025-08-07T16:30:00+00:00,4,1
+2328,1421160,UEFA Europa Conference League,World,Milsami Orhei,Virtus,2025-08-07T16:00:00+00:00,3,2
+2329,1421167,UEFA Europa Conference League,World,Kauno Žalgiris,Arda Kardzhali,2025-08-07T16:00:00+00:00,0,1
+2330,1421172,UEFA Europa Conference League,World,Aris,AEK Athens FC,2025-08-07T16:00:00+00:00,2,2
+2331,1421175,UEFA Europa Conference League,World,Araz,Omonia Nicosia,2025-08-07T16:00:00+00:00,0,4
+2332,1421210,UEFA Europa League,World,Fredrikstad,FC Midtjylland,2025-08-07T16:00:00+00:00,1,3
+2333,1421219,UEFA Europa League,World,Lincoln Red Imps FC,FC Noah,2025-08-07T16:00:00+00:00,1,1
+2334,1423750,UEFA Europa Conference League,World,Rosenborg,Hammarby FF,2025-08-07T16:00:00+00:00,0,0
+2326,1414142,UEFA Champions League,World,Feyenoord,Fenerbahce,2025-08-06T19:00:00+00:00,2,1
+2327,1414143,UEFA Champions League,World,Nice,Benfica,2025-08-06T19:00:00+00:00,0,2
+2325,1421212,UEFA Europa League,World,HNK Rijeka,Shelbourne,2025-08-06T18:45:00+00:00,1,2
+2324,1421143,UEFA Champions League,World,Lech Poznan,FK Crvena Zvezda,2025-08-06T18:30:00+00:00,1,3
+2323,1421142,UEFA Champions League,World,Ludogorets,Ferencvarosi TC,2025-08-06T17:30:00+00:00,0,0
+2322,1421213,UEFA Europa League,World,Rīgas FS,KuPS,2025-08-06T17:00:00+00:00,1,2
+2321,1421141,UEFA Champions League,World,Red Bull Salzburg,Club Brugge KV,2025-08-06T17:00:00+00:00,0,1
+2320,1419568,UEFA Champions League,World,Kairat Almaty,Slovan Bratislava,2025-08-06T15:00:00+00:00,1,0
+2318,1421140,UEFA Champions League,World,Rangers,Plzen,2025-08-05T18:45:00+00:00,3,0
+2319,1421174,UEFA Europa Conference League,World,KI Klaksvik,Neman,2025-08-05T18:45:00+00:00,2,0
+2317,1421139,UEFA Champions League,World,Shkendija,Qarabag,2025-08-05T18:00:00+00:00,0,1
+2316,1421138,UEFA Champions League,World,Dynamo Kyiv,Pafos,2025-08-05T18:00:00+00:00,0,1
+2315,1421215,UEFA Europa League,World,Hamrun Spartans,Maccabi Tel Aviv,2025-08-05T17:00:00+00:00,1,2
+2314,1421137,UEFA Champions League,World,Malmo FF,FC Copenhagen,2025-08-05T17:00:00+00:00,0,0
+2313,1382671,Premiership,Scotland,Heart Of Midlothian,Aberdeen,2025-08-04T19:00:00+00:00,2,0
+2312,1382670,Premiership,Scotland,Celtic,ST Mirren,2025-08-03T15:30:00+00:00,1,0
+2311,1382669,Premiership,Scotland,Dundee,Hibernian,2025-08-03T14:00:00+00:00,1,2
+2310,1382668,Premiership,Scotland,Falkirk,Dundee Utd,2025-08-03T13:00:00+00:00,2,2
+2309,1388622,2. Bundesliga,Germany,1. FC Magdeburg,Eintracht Braunschweig,2025-08-03T11:30:00+00:00,0,1
+2307,1388619,2. Bundesliga,Germany,SpVgg Greuther Fürth,Dynamo Dresden,2025-08-03T11:30:00+00:00,3,2
+2308,1388620,2. Bundesliga,Germany,Hannover 96,1. FC Kaiserslautern,2025-08-03T11:30:00+00:00,1,0
+2306,1387114,League One,England,Stockport County,Bolton,2025-08-03T11:00:00+00:00,2,0
+2305,1388616,2. Bundesliga,Germany,Arminia Bielefeld,Fortuna Düsseldorf,2025-08-02T18:30:00+00:00,5,1
+2304,1382667,Premiership,Scotland,Motherwell,Rangers,2025-08-02T16:30:00+00:00,1,1
+2303,1386007,League Two,England,Newport County,Notts County,2025-08-02T15:00:00+00:00,1,1
+2290,1386003,League Two,England,Milton Keynes Dons,Oldham,2025-08-02T14:00:00+00:00,0,0
+2302,1387113,League One,England,Wigan,Northampton,2025-08-02T14:00:00+00:00,3,1
+2301,1387112,League One,England,Rotherham,Port Vale,2025-08-02T14:00:00+00:00,2,1
+2289,1386002,League Two,England,Grimsby,Crawley Town,2025-08-02T14:00:00+00:00,3,0
+2288,1386001,League Two,England,Colchester,Tranmere,2025-08-02T14:00:00+00:00,1,1
+2287,1386000,League Two,England,Chesterfield,Barrow,2025-08-02T14:00:00+00:00,1,0
+2286,1385999,League Two,England,Cambridge United,Cheltenham,2025-08-02T14:00:00+00:00,1,0
+2285,1385998,League Two,England,Bristol Rovers,Harrogate Town,2025-08-02T14:00:00+00:00,0,1
+2284,1385997,League Two,England,Barnet,Fleetwood Town,2025-08-02T14:00:00+00:00,0,2
+2283,1385996,League Two,England,Accrington ST,Gillingham,2025-08-02T14:00:00+00:00,1,1
+2282,1382868,Championship,Scotland,ST Johnstone,Partick,2025-08-02T14:00:00+00:00,5,1
+2281,1382867,Championship,Scotland,Raith Rovers,Queen's Park,2025-08-02T14:00:00+00:00,1,1
+2280,1382866,Championship,Scotland,Morton,Dunfermline,2025-08-02T14:00:00+00:00,0,0
+2279,1382865,Championship,Scotland,Airdrie United,Ross County,2025-08-02T14:00:00+00:00,2,2
+2278,1382666,Premiership,Scotland,Kilmarnock,Livingston,2025-08-02T14:00:00+00:00,2,2
+2291,1386004,League Two,England,Salford City,Crewe,2025-08-02T14:00:00+00:00,1,3
+2292,1386005,League Two,England,Shrewsbury,Bromley,2025-08-02T14:00:00+00:00,0,0
+2293,1386006,League Two,England,Walsall,Swindon Town,2025-08-02T14:00:00+00:00,2,1
+2294,1387105,League One,England,Blackpool,Stevenage,2025-08-02T14:00:00+00:00,2,3
+2295,1387106,League One,England,Bradford,Wycombe,2025-08-02T14:00:00+00:00,2,1
+2296,1387107,League One,England,Burton Albion,Mansfield Town,2025-08-02T14:00:00+00:00,2,1
+2297,1387108,League One,England,Doncaster,Exeter City,2025-08-02T14:00:00+00:00,1,0
+2298,1387109,League One,England,Huddersfield,Leyton Orient,2025-08-02T14:00:00+00:00,3,0
+2299,1387110,League One,England,Lincoln,Reading,2025-08-02T14:00:00+00:00,2,0
+2300,1387111,League One,England,Plymouth,Barnsley,2025-08-02T14:00:00+00:00,1,3
+2277,1387104,League One,England,Cardiff,Peterborough,2025-08-02T11:30:00+00:00,2,1
+2274,1388617,2. Bundesliga,Germany,SV Darmstadt 98,VfL Bochum,2025-08-02T11:00:00+00:00,4,1
+2273,1388615,2. Bundesliga,Germany,SC Paderborn 07,Holstein Kiel,2025-08-02T11:00:00+00:00,2,1
+2275,1388618,2. Bundesliga,Germany,SV Elversberg,1. FC Nürnberg,2025-08-02T11:00:00+00:00,1,0
+2276,1388621,2. Bundesliga,Germany,Karlsruher SC,Preußen Münster,2025-08-02T11:00:00+00:00,3,2
+2272,1387103,League One,England,Luton,AFC Wimbledon,2025-08-01T19:00:00+00:00,1,0
+2271,1382864,Championship,Scotland,Arbroath,Ayr Utd,2025-08-01T18:45:00+00:00,1,1
+2270,1388614,2. Bundesliga,Germany,FC Schalke 04,Hertha BSC,2025-08-01T18:30:00+00:00,2,1

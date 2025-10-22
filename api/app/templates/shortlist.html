@@ -1,0 +1,267 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Value Betting — Dashboard</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
+    h1{margin:0 0 12px}
+    .controls{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0 18px}
+    input,select,button{padding:8px 10px;font-size:14px}
+    button{cursor:pointer}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px 10px;border-bottom:1px solid #eee;font-size:14px}
+    th{text-align:left;cursor:pointer}
+    .pill{padding:2px 8px;border-radius:12px;background:#eef;display:inline-block}
+    .muted{opacity:.7}
+    .row{margin:6px 0}
+    .note{font-size:12px;color:#666}
+
+    /* Sorted column arrows */
+    th.sorted-asc::after { content: " ↑"; font-size: 12px; }
+    th.sorted-desc::after { content: " ↓"; font-size: 12px; }
+
+    /* Modal */
+    .modal {
+      display:none;
+      position:fixed;
+      top:0;left:0;width:100%;height:100%;
+      background:rgba(0,0,0,0.5);
+      align-items:center;
+      justify-content:center;
+    }
+    .modal-content {
+      background:#fff;
+      padding:20px;
+      border-radius:6px;
+      width:600px;
+      max-width:90%;
+      max-height:80%;
+      overflow-y:auto;
+      box-shadow:0 4px 10px rgba(0,0,0,0.3);
+    }
+    .modal-close {
+      float:right;
+      cursor:pointer;
+      font-size:18px;
+      font-weight:bold;
+    }
+    .explain-note {
+      margin:6px 0;
+      font-size:14px;
+      color:#444;
+    }
+  </style>
+</head>
+<body
+  hx-get="/_shortlist?min_edge=0.02"
+  hx-trigger="load"
+  hx-target="#rows"
+  hx-swap="innerHTML"
+>
+  <h1>Value Betting — Dashboard</h1>
+
+  <div class="controls">
+    <!-- Ingest form -->
+    <form
+      hx-post="/ingest/fixtures"
+      hx-target="#status"
+      hx-swap="innerHTML"
+      class="row"
+    >
+      <label>Date:
+        <input type="date" name="day" required />
+      </label>
+      <label>Leagues:
+        <select name="leagues" multiple size="5">
+          <option value="EPL">Premier League</option>
+          <option value="CHAMP">Championship</option>
+          <option value="LG1">League One</option>
+          <option value="LG2">League Two</option>
+          <option value="SCO_PREM">Scottish Premiership</option>
+          <option value="SCO_CUP">Scottish League Cup</option>
+          <option value="SCO_CHAMP">Scottish Championship</option>
+          <option value="LA_LIGA">La Liga</option>
+          <option value="BUNDES">Bundesliga</option>
+          <option value="SERIE_A">Serie A</option>
+          <option value="LIGUE1">Ligue 1</option>
+          <option value="UCL">Champions League</option>
+          <option value="UEL">Europa League</option>
+          <option value="UECL">Europa Conf. League</option>
+        </select>
+      </label>
+      <input type="hidden" name="compute_after" value="1" />
+      <button type="submit">Ingest Fixtures + Odds</button>
+    </form>
+
+    <!-- Run compute -->
+    <button
+      hx-post="/compute"
+      hx-target="#status"
+      hx-swap="innerHTML"
+    >Compute Edges</button>
+
+    <!-- One-click morning run -->
+    <button
+      hx-post="/admin/run-daily"
+      hx-target="#status"
+      hx-swap="innerHTML"
+    >Run Daily (today+tomorrow)</button>
+
+    <!-- Filters for shortlist -->
+    <form
+      id="filters"
+      hx-get="/_shortlist"
+      hx-target="#rows"
+      hx-swap="innerHTML"
+      class="row"
+    >
+      <label>Min edge:
+        <input type="number" step="0.01" min="-1" max="1" name="min_edge" value="0.02" />
+      </label>
+      <label>Market:
+        <select name="market">
+          <option value="">All</option>
+          <option value="HOME_WIN">Home Win (1)</option>
+          <option value="DRAW">Draw (X)</option>
+          <option value="AWAY_WIN">Away Win (2)</option>
+          <option value="BTTS_Y">BTTS Yes</option>
+          <option value="BTTS_N">BTTS No</option>
+          <option value="O2.5">Over 2.5</option>
+          <option value="U2.5">Under 2.5</option>
+          <option value="1X">Double Chance 1X</option>
+          <option value="12">Double Chance 12</option>
+          <option value="X2">Double Chance X2</option>
+        </select>
+      </label>
+      <label>Mode:
+        <select name="mode">
+          <option value="fixture" selected>Top per fixture</option>
+          <option value="market">Top per fixture+market</option>
+        </select>
+      </label>
+      <label>Book:
+        <select name="prefer_book" id="book-select"
+                hx-get="/_books"
+                hx-trigger="load"
+                hx-target="#book-select"
+                hx-swap="innerHTML">
+          <option value="">Loading…</option>
+        </select>
+      </label>
+      <label>
+        <input type="checkbox" name="include_negative" value="1" />
+        Include negative edges
+      </label>
+      <label>Model:
+        <select name="model_source">
+          <option value="">All</option>
+          <option value="consensus_v2">Consensus (Raw)</option>
+          <option value="consensus_calib">Consensus (Calibrated)</option>
+          <option value="team_form">Team Form</option>
+        </select>
+      </label>
+      <!-- ✅ Sort dropdown -->
+      <label>Sort by:
+        <select name="sort_by">
+          <option value="edge" selected>Edge %</option>
+          <option value="kickoff">Kickoff Time</option>
+          <option value="comp">Competition</option>
+          <option value="prob">Model Probability</option>
+        </select>
+      </label>
+      <button type="submit">Apply</button>
+      <div class="note">Tip: with “Include negative”, try setting Min edge to a small negative (e.g. -0.05).</div>
+    </form>
+  </div>
+
+  <div id="status" class="muted"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th onclick="sortBy(event, 'comp')">Comp</th>
+        <th>Match</th>
+        <th onclick="sortBy(event, 'kickoff')">Kickoff (UTC)</th>
+        <th>Market</th><th>Book</th><th>Price</th>
+        <th onclick="sortBy(event, 'prob')">Model p (Conf)</th>
+        <th onclick="sortBy(event, 'edge')">Edge</th>
+        <th>Model</th>
+        <th>Explain</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <tr><td colspan="10" class="muted">Loading…</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Modal -->
+  <div id="explainModal" class="modal" onclick="closeModal(event)">
+    <div class="modal-content">
+      <span class="modal-close" onclick="closeModal()">&times;</span>
+      <h3>Model Explanation</h3>
+      <div id="explainBody"></div>
+    </div>
+  </div>
+
+  <script>
+    function showExplain(fixtureId, market) {
+      fetch(`/explain/probability?fixture_id=${fixtureId}&market=${market}`)
+        .then(res => res.json())
+        .then(data => {
+          const body = document.getElementById("explainBody");
+
+          let fairText = "";
+          if (data.fair_price) {
+            fairText = `
+              <p><b>Model probability:</b> ${data.model_probability}% ${data.confidence ? "(" + data.confidence + ")" : ""}</p>
+              <p><b>Fair price (true odds):</b> ${data.fair_price}</p>
+              <p style="color:green"><b>Bet only if odds &gt; ${data.fair_price}</b></p>
+            `;
+          }
+
+          body.innerHTML = `
+            <p><b>${data.fixture}</b> — <i>${data.market}</i></p>
+            ${fairText}
+            <p>Home strength: ${data.home_strength}, Away strength: ${data.away_strength}</p>
+            <p>Strength delta: ${data.strength_delta}</p>
+            <h4>Notes</h4>
+            <ul>${(data.notes || []).map(n => `<li>${n}</li>`).join("")}</ul>
+          `;
+          document.getElementById("explainModal").style.display = "flex";
+        });
+    }
+
+    function closeModal(ev) {
+      if (!ev || ev.target.id === "explainModal" || ev.target.className === "modal-close") {
+        document.getElementById("explainModal").style.display = "none";
+      }
+    }
+
+    // ✅ Clickable header sorting
+    let sortState = { key: 'edge', dir: 'desc' };
+
+    function sortBy(ev, key) {
+      if (sortState.key === key) {
+        sortState.dir = (sortState.dir === 'desc') ? 'asc' : 'desc';
+      } else {
+        sortState.key = key;
+        sortState.dir = 'desc';
+      }
+
+      const url = `/_shortlist?min_edge=0.02&sort_by=${sortState.key}&sort_dir=${sortState.dir}`;
+      htmx.ajax('GET', url, '#rows');
+
+      // Reset header classes
+      document.querySelectorAll('th').forEach(th => {
+        th.classList.remove('sorted-asc', 'sorted-desc');
+      });
+
+      // Highlight clicked header
+      const th = ev.currentTarget;
+      th.classList.add(sortState.dir === 'desc' ? 'sorted-desc' : 'sorted-asc');
+    }
+  </script>
+</body>
+</html>

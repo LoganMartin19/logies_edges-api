@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>All Fixtures</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
+    a{color:#06c;text-decoration:none}
+    a:hover{text-decoration:underline}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{border-bottom:1px solid #eee;padding:8px 10px;font-size:14px;text-align:left}
+    .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .muted{opacity:.7}
+    button{padding:6px 10px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <h1>Upcoming Fixtures</h1>
+  <div class="controls">
+    <form method="get" action="/fixtures">
+      <label>Within (hours):
+        <input type="number" name="hours_ahead" value="{{ hours_ahead }}" min="1" max="168" />
+      </label>
+      <label>Competition:
+        <input type="text" name="comp" value="{{ comp }}" placeholder="e.g. LaLiga, EPL..." />
+      </label>
+      <button type="submit">Filter</button>
+      <a href="/">Back to shortlist</a>
+    </form>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Comp</th>
+        <th>Match</th>
+        <th>Kickoff (UTC)</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if fixtures %}
+        {% for f in fixtures %}
+          <tr>
+            <td>{{ f.comp }}</td>
+            <td><a href="/fixtures/{{ f.id }}">{{ f.home_team }} vs {{ f.away_team }}</a></td>
+            <td>{{ f.kickoff_utc }}</td>
+            <td>
+              <button
+                hx-post="/admin/refresh/{{ f.id }}"
+                hx-target="#st-{{ f.id }}"
+                hx-swap="innerHTML"
+              >Refresh odds + compute</button>
+              <a href="/admin/inspect/{{ f.id }}" target="_blank">Inspect</a>
+              <span id="st-{{ f.id }}" class="muted"></span>
+            </td>
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="4">No fixtures found in this window.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</body>
+</html>

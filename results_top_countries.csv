@@ -1,0 +1,128 @@
+fixture_id,provider_id,comp,home,away,kickoff_utc,ft_home,ft_away
+535,1382888,Championship,Ross County,Arbroath,2025-09-06T14:00:00,1,2
+545,1386079,League Two,Barnet,Shrewsbury,2025-09-06T14:00:00,1,3
+532,1386078,League Two,Newport County,Bristol Rovers,2025-09-06T11:30:00,2,3
+88,1386575,Championship,Swansea,Watford,2025-08-23T11:30:00,1,1
+85,1378986,Premier League,Manchester City,Tottenham,2025-08-23T11:30:00,0,2
+1833,1415241,Primera División,Cusco,Alianza Atletico,2025-08-17T23:30:00,1,0
+1832,1374125,Liga Profesional Argentina,Independ. Rivadavia,Boca Juniors,2025-08-17T23:30:00,0,3
+1831,1351234,Serie A,Botafogo,Palmeiras,2025-08-17T23:30:00,0,1
+1830,1345590,MLS Next Pro,Atlanta United II,Crown Legacy,2025-08-17T23:30:00,1,0
+1829,1405431,Liga Panameña de Fútbol,Independiente de La Chorrera,SD Atletico Nacional,2025-08-17T23:15:00,3,3
+1828,1392410,Primera A,Deportes Tolima,Millonarios,2025-08-17T23:10:00,3,1
+1823,1362689,League 1 Ontario,Simcoe County Rovers,Alliance United,2025-08-17T23:00:00,0,1
+1827,1416449,Liga de Expansión MX,Tapatío,Tepatitlán,2025-08-17T23:00:00,1,3
+1826,1414253,Primera Division,Rancho Santana,H&H Export,2025-08-17T23:00:00,1,2
+1825,1390671,Liga Nacional,Comunicaciones,Marquense,2025-08-17T23:00:00,3,0
+1824,1366197,Northern Super League,AFC Toronto,Vancouver Rise,2025-08-17T23:00:00,0,1
+1822,1350766,Canadian Premier League,Cavalry FC,Vancouver FC,2025-08-17T23:00:00,5,4
+1821,1345589,MLS Next Pro,Huntsville City,New York City II,2025-08-17T23:00:00,2,1
+1820,1338493,Liga Pro,Barcelona SC,Macara,2025-08-17T23:00:00,0,2
+1819,1326735,Major League Soccer,San Jose Earthquakes,San Diego,2025-08-17T23:00:00,1,2
+1818,1403926,Primera División,Real Esppor Club,Deportivo Tachira FC,2025-08-17T22:00:00,3,1
+1817,1379523,Liga MX,Club Queretaro,Atlas,2025-08-17T22:00:00,3,3
+1816,1357735,Serie C,Confiança,Floresta,2025-08-17T22:00:00,1,0
+1815,1357733,Serie C,Nautico Recife,Anápolis,2025-08-17T22:00:00,1,0
+1814,1396861,Division Profesional - Clausura,Sportivo Trinidense,Nacional Asuncion,2025-08-17T21:30:00,0,2
+1813,1374132,Liga Profesional Argentina,River Plate,Godoy Cruz,2025-08-17T21:30:00,4,2
+1812,1353472,Serie B,Atletico Goianiense,Ferroviária,2025-08-17T21:30:00,1,3
+1811,1351239,Serie A,Internacional,Flamengo,2025-08-17T21:30:00,1,3
+1810,1339159,Primera División,Coquimbo Unido,Everton de Vina,2025-08-17T21:30:00,2,1
+1809,1404001,Primera Division,Platense,Cacahuatique,2025-08-17T21:15:00,1,1
+1806,1405370,Liga Panameña de Fútbol,Herrera,Deportivo Universitario,2025-08-17T21:00:00,0,0
+1808,1423548,Primera B,Cucuta,Popayan,2025-08-17T21:00:00,1,0
+1807,1412910,Liga Nacional,Juticalpa,Atlético Choloma,2025-08-17T21:00:00,3,2
+1805,1404004,Primera Division,Águila,Municipal Limeño,2025-08-17T21:00:00,2,1
+1804,1392863,Primera División,Municipal Liberia,Deportivo Saprissa,2025-08-17T21:00:00,2,2
+1803,1390673,Liga Nacional,Mictlán,Mixco,2025-08-17T21:00:00,0,0
+1802,1326604,Major League Soccer,New York City FC,Nashville SC,2025-08-17T21:00:00,2,1
+1801,1424391,Primera División - Clausura,Plaza Colonia,Cerro,2025-08-17T20:30:00,0,2
+1800,1354708,Liga Pro Serie B,Chacaritas,Gualaceo SC,2025-08-17T20:30:00,1,1
+1799,1354706,Liga Pro Serie B,Atlético Vinotinto,Cumbayá,2025-08-17T20:30:00,4,0
+1798,1354704,Liga Pro Serie B,Ind. Juniors,San Antonio,2025-08-17T20:30:00,0,0
+1797,1338489,Liga Pro,Tecnico Universitario,Emelec,2025-08-17T20:30:00,0,1
+1796,1421884,Segunda División,UCV Moquegua,Cesar Vallejo,2025-08-17T20:15:00,1,0
+1795,1331455,Primera Nacional,San Martin Tucuman,Alvarado,2025-08-17T20:10:00,0,0
+1793,1436597,Liga de Ascenso,AD Cofutpa,AD Sarchí,2025-08-17T20:00:00,2,0
+1792,1433491,Segunda División,Aragua FC,Monagas II,2025-08-17T20:00:00,3,0
+1791,1430719,Liga Mayor,Atlántico,Atlético Pantoja,2025-08-17T20:00:00,0,1
+1790,1430718,Liga Mayor,Jarabacoa,Delfines Del Este,2025-08-17T20:00:00,1,1
+1789,1429950,Torneo Federal A,Ben Hur,Crucero Del Norte,2025-08-17T20:00:00,3,1
+1788,1421152,Segunda División,Deportivo Coopsol,Molinos El Pirata,2025-08-17T20:00:00,0,0
+1787,1415240,Primera División,FBC Melgar,Ayacucho FC,2025-08-17T20:00:00,2,1
+1786,1350763,Canadian Premier League,Forge,Atlético Ottawa,2025-08-17T20:00:00,2,0
+1785,1339356,NWSL Women,NJ/NY Gotham FC W,Houston Dash W,2025-08-17T20:00:00,1,2
+1784,1436745,Serie D,Cianorte,Mixto,2025-08-17T19:30:00,1,1
+1783,1433490,Segunda División,Atletico el Vigia FC,Urena SC,2025-08-17T19:30:00,3,1
+1782,1433489,Segunda División,Puerto Cabello II,Héroes de Falcón,2025-08-17T19:30:00,4,2
+1781,1433488,Segunda División,Trujillanos FC,Real Frontera,2025-08-17T19:30:00,2,2
+1780,1429946,Torneo Federal A,Juventud Antoniana,San Martin Formosa,2025-08-17T19:30:00,1,1
+1779,1403925,Primera División,Rayo Zuliano,Puerto Cabello,2025-08-17T19:30:00,0,0
+1778,1396943,Segunda División,Las Palmas,FC Andorra,2025-08-17T19:30:00,1,1
+1777,1396252,Primeira Liga,Sporting CP,Arouca,2025-08-17T19:30:00,6,0
+1776,1391258,Segunda División,Huesca,Leganes,2025-08-17T19:30:00,1,1
+1775,1390823,La Liga,Espanyol,Atletico Madrid,2025-08-17T19:30:00,2,1
+1774,1357740,Serie C,Brusque,Londrina,2025-08-17T19:30:00,1,2
+1773,1357737,Serie C,São Bernardo,Figueirense,2025-08-17T19:30:00,0,3
+1769,1374126,Liga Profesional Argentina,Banfield,Estudiantes L.P.,2025-08-17T19:15:00,3,2
+1768,1332822,Úrvalsdeild,Breidablik,FH hafnarfjordur,2025-08-17T19:15:00,4,5
+1770,1374128,Liga Profesional Argentina,Central Cordoba de Santiago,Barracas Central,2025-08-17T19:15:00,1,1
+1771,1393807,Coppa Italia,AC Milan,Bari,2025-08-17T19:15:00,2,0
+1772,1429944,Torneo Federal A,Douglas Haig,Atletico DE Rafaela,2025-08-17T19:15:00,1,2
+1767,1436826,Coppa Italia Serie C,Union Brescia,Dolomiti Bellunesi,2025-08-17T19:00:00,2,1
+1766,1436825,Super Cup,Lincoln Red Imps FC,Magpies,2025-08-17T19:00:00,3,0
+1765,1436744,Serie D,Goiatuba EC,Aparecidense,2025-08-17T19:00:00,2,3
+1764,1436743,Serie D,Imperatriz,America-RN,2025-08-17T19:00:00,0,1
+1763,1429952,Torneo Federal A,Gimnasia Concepción,Bartolomé Mitre,2025-08-17T19:00:00,1,0
+1762,1429948,Torneo Federal A,Sportivo Las Parejas,Sol de América,2025-08-17T19:00:00,0,0
+1761,1429947,Torneo Federal A,9 de Julio Rafaela,Gimnasia Chivilcoy,2025-08-17T19:00:00,1,1
+1760,1429142,Coppa Italia Serie C,Casarano,Team Altamura,2025-08-17T19:00:00,1,0
+1759,1429141,Coppa Italia Serie C,Athletic Carpi,Trento,2025-08-17T19:00:00,0,0
+1758,1429140,Coppa Italia Serie C,Pineto,Ascoli,2025-08-17T19:00:00,2,2
+1757,1429139,Coppa Italia Serie C,Crotone,Catania,2025-08-17T19:00:00,1,0
+1756,1429138,Coppa Italia Serie C,Salernitana,Sorrento,2025-08-17T19:00:00,1,1
+1755,1424174,Liga 3,CF Os Belenenses,Atlético CP,2025-08-17T19:00:00,1,0
+1754,1400662,First League,Sutjeska,Petrovac,2025-08-17T19:00:00,1,1
+1753,1396859,Division Profesional - Clausura,Olimpia,Libertad Asuncion,2025-08-17T19:00:00,0,0
+1752,1393426,Premier League,Naxxar Lions,Floriana,2025-08-17T19:00:00,1,3
+1751,1388954,Premijer Liga,Zrinjski,Siroki Brijeg,2025-08-17T19:00:00,0,0
+1750,1383929,HNL,HNK Hajduk Split,NK Slaven Belupo,2025-08-17T19:00:00,3,0
+1749,1353474,Serie B,Chapecoense-sc,Paysandu,2025-08-17T19:00:00,2,0
+1748,1352678,Segunda División,D. Melipilla,General Velásquez,2025-08-17T19:00:00,2,1
+1747,1351238,Serie A,Atletico-MG,Gremio,2025-08-17T19:00:00,1,3
+1746,1351236,Serie A,Santos,Vasco DA Gama,2025-08-17T19:00:00,0,6
+1745,1348396,Primera B,Magallanes,Cobreloa,2025-08-17T19:00:00,3,4
+1744,1345588,MLS Next Pro,Columbus Crew II,Orlando City II,2025-08-17T19:00:00,2,1
+1743,1339165,Primera División,Huachipato,Deportes Limache,2025-08-17T19:00:00,4,0
+1742,1331465,Primera Nacional,Estudiantes de Rio Cuarto,CA Estudiantes,2025-08-17T19:00:00,1,0
+1741,1331460,Primera Nacional,Gimnasia Jujuy,Chaco For Ever,2025-08-17T19:00:00,2,0
+1740,1331454,Primera Nacional,Club Atlético Güemes,All Boys,2025-08-17T19:00:00,1,2
+1739,1331453,Primera Nacional,Patronato,Arsenal Sarandi,2025-08-17T19:00:00,1,0
+1738,1331451,Primera Nacional,Almagro,Atlanta,2025-08-17T19:00:00,0,0
+1737,1393806,Coppa Italia,Cesena,Pisa,2025-08-17T18:45:00,0,0
+1736,1387704,Ligue 1,Nantes,Paris Saint Germain,2025-08-17T18:45:00,0,1
+1735,1436837,Paraense U20,Vila Rica SC U20,Pinheirense U20,2025-08-17T18:30:00,3,2
+1734,1436320,Torneo Promocional Amateur,Estrella de Berisso,SAT Moreno,2025-08-17T18:30:00,0,0
+1733,1436319,Torneo Promocional Amateur,Juventud de Bernal,Provincial,2025-08-17T18:30:00,2,1
+1732,1405579,Torneo Federal A,Huracan Las Heras,Circulo Deportivo,2025-08-17T18:30:00,1,0
+1731,1405543,Torneo Federal A,Olimpo Bahia Blanca,Costa Brava,2025-08-17T18:30:00,2,0
+1730,1405542,Torneo Federal A,Argentino Monte Maíz,Deportivo Rincon,2025-08-17T18:30:00,2,0
+1729,1405540,Torneo Federal A,Cipolletti,Villa Mitre,2025-08-17T18:30:00,0,0
+1728,1398330,1. Lig,Sakaryaspor,76 Iğdır Belediyespor,2025-08-17T18:30:00,3,2
+1727,1398328,1. Lig,Manisa BBSK,Hatayspor,2025-08-17T18:30:00,2,1
+1726,1394444,Süper Lig,Besiktas,Eyüpspor,2025-08-17T18:30:00,2,1
+1725,1394443,Süper Lig,Istanbul Basaksehir,Kayserispor,2025-08-17T18:30:00,1,1
+1724,1385798,Liga I,Rapid,FCSB,2025-08-17T18:30:00,2,2
+1723,1385613,Primera B Metropolitana,UAI Urquiza,Midland,2025-08-17T18:30:00,0,2
+1722,1385609,Primera B Metropolitana,Comunicaciones,Fénix,2025-08-17T18:30:00,2,0
+1721,1385606,Primera B Metropolitana,Dock Sud,Brown DE Adrogue,2025-08-17T18:30:00,1,3
+1720,1363039,Primera C,Argentino Rosario,Deportivo Camioneros,2025-08-17T18:30:00,2,0
+1719,1363035,Primera C,Victoriano Arenas,General Lamadrid,2025-08-17T18:30:00,0,4
+1718,1363031,Primera C,Lugano,Mercedes,2025-08-17T18:30:00,0,1
+1717,1331450,Primera Nacional,San Miguel,Racing Cordoba,2025-08-17T18:30:00,1,0
+1716,1405582,Torneo Federal A,Juventud Unida Univ.,Estudiantes S.l.,2025-08-17T18:15:00,0,0
+1715,1399972,1. SNL,Aluminij,Celje,2025-08-17T18:15:00,2,3
+1714,1388038,First League,Botev Vratsa,Levski Sofia,2025-08-17T18:15:00,0,0
+1713,1384254,1. SNL,Olimpija Ljubljana,Koper,2025-08-17T18:15:00,1,3
+1712,1380427,Ekstraklasa,Wisla Plock,Legia Warszawa,2025-08-17T18:15:00,1,0
+1711,1380426,Ekstraklasa,Nieciecza,Raków Częstochowa,2025-08-17T18:15:00,2,3

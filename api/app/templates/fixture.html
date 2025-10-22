@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Fixture</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
+    a{color:#06c;text-decoration:none}
+    a:hover{text-decoration:underline}
+    h1,h2{margin:0 0 8px}
+    .muted{opacity:.7}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{border-bottom:1px solid #eee;padding:8px 10px;font-size:14px;text-align:left}
+    .pill{padding:2px 8px;border-radius:12px;background:#eef;display:inline-block}
+    button{padding:6px 10px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <a href="/fixtures">← All fixtures</a>
+  <h1>{{ fixture.home_team }} vs {{ fixture.away_team }}</h1>
+  <div class="muted">{{ fixture.comp }} — {{ fixture.kickoff_utc }}</div>
+
+  <div style="margin:10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <!-- bet365 only -->
+    <button
+      hx-post="/admin/refresh/{{ fixture.id }}?prefer_book=bet365&fallback=0&recompute=1"
+      hx-target="#refresh-status"
+      hx-swap="innerHTML"
+      hx-on::after-request="
+        htmx.ajax('GET','/fixtures/{{ fixture.id }}/_best',{target:'#best-body'});
+        htmx.ajax('GET','/fixtures/{{ fixture.id }}/_odds',{target:'#odds-body'});
+      "
+    >Refresh bet365 only</button>
+  
+    <!-- ALL books -->
+    <button
+      hx-post="/admin/refresh/{{ fixture.id }}?prefer_book=&fallback=1&recompute=1"
+      hx-target="#refresh-status"
+      hx-swap="innerHTML"
+      hx-on::after-request="
+        htmx.ajax('GET','/fixtures/{{ fixture.id }}/_best',{target:'#best-body'});
+        htmx.ajax('GET','/fixtures/{{ fixture.id }}/_odds',{target:'#odds-body'});
+      "
+    >Refresh ALL books</button>
+  
+    <a href="/admin/inspect/{{ fixture.id }}" target="_blank">Inspect raw odds</a>
+    <span id="refresh-status" class="muted"></span>
+  </div>
+
+  <h2>Best edges (per market)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Market</th><th>Book</th><th>Price</th><th>Model p</th><th>Edge</th><th>Model</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if best %}
+        {% for e in best %}
+          <tr>
+            <td><span class="pill">{{ e.market }}</span></td>
+            <td>{{ e.bookmaker }}</td>
+            <td>{{ "%.2f"|format(e.price) }}</td>
+            <td>{{ "%.1f"|format(e.prob*100) }}%</td>
+            <td><b>{{ "%.1f"|format(e.edge*100) }}%</b></td>
+            <td>{{ e.model_source }}</td>
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="6">No edges yet — click “Refresh odds + compute”.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  <h2>All odds (raw)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Market</th><th>Book</th><th>Price</th><th>Last seen (UTC)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if odds %}
+        {% for o in odds %}
+          <tr>
+            <td>{{ o.market }}</td>
+            <td>{{ o.bookmaker }}</td>
+            <td>{{ "%.2f"|format(o.price) }}</td>
+            <td>{{ o.last_seen }}</td>
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="4">No odds recorded — click “Refresh odds + compute”.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</body>
+</html>

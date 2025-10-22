@@ -1,0 +1,61 @@
+fixture_id,provider_id,comp,home,away,kickoff_utc,ft_home,ft_away
+545,1386079,League Two,Barnet,Shrewsbury,2025-09-06T14:00:00,1,3
+535,1382888,Championship,Ross County,Arbroath,2025-09-06T14:00:00,1,2
+532,1386078,League Two,Newport County,Bristol Rovers,2025-09-06T11:30:00,2,3
+85,1378986,Premier League,Manchester City,Tottenham,2025-08-23T11:30:00,0,2
+88,1386575,Championship,Swansea,Watford,2025-08-23T11:30:00,1,1
+1831,1351234,Serie A,Botafogo,Palmeiras,2025-08-17T23:30:00,0,1
+1811,1351239,Serie A,Internacional,Flamengo,2025-08-17T21:30:00,1,3
+1775,1390823,La Liga,Espanyol,Atletico Madrid,2025-08-17T19:30:00,2,1
+1777,1396252,Primeira Liga,Sporting CP,Arouca,2025-08-17T19:30:00,6,0
+1747,1351238,Serie A,Atletico-MG,Gremio,2025-08-17T19:00:00,1,3
+1752,1393426,Premier League,Naxxar Lions,Floriana,2025-08-17T19:00:00,1,3
+1746,1351236,Serie A,Santos,Vasco DA Gama,2025-08-17T19:00:00,0,6
+1736,1387704,Ligue 1,Nantes,Paris Saint Germain,2025-08-17T18:45:00,0,1
+1710,1436473,Ligue 1,Bouaké,ES Agboville,2025-08-17T18:00:00,0,1
+1692,1380884,Eredivisie,NAC Breda,Fortuna Sittard,2025-08-17T18:00:00,2,1
+1685,1400069,Premier League,FC Krasnodar,FC Sochi,2025-08-17T17:30:00,5,1
+1682,1390820,La Liga,Athletic Club,Sevilla,2025-08-17T17:30:00,3,2
+1665,1396247,Primeira Liga,Alverca,SC Braga,2025-08-17T17:00:00,0,3
+1652,1356951,Premier League,ML Vitebsk,Dinamo Brest,2025-08-17T17:00:00,1,1
+1666,1396251,Primeira Liga,Santa Clara,Moreirense,2025-08-17T17:00:00,0,1
+1659,1393425,Premier League,Tarxien Rainbows,Hamrun Spartans,2025-08-17T17:00:00,1,1
+1646,1393428,Premier League,Marsaxlokk,Mosta,2025-08-17T16:45:00,3,1
+1635,1423825,Premier League,FC Noah,Gandzasar,2025-08-17T16:20:00,4,1
+1546,1378977,Premier League,Manchester United,Arsenal,2025-08-17T15:30:00,0,1
+1575,1436470,Ligue 1,AFAD,Zoman,2025-08-17T15:30:00,3,0
+1576,1436471,Ligue 1,ISCA,Stella,2025-08-17T15:30:00,0,1
+1543,1387702,Ligue 1,Metz,Strasbourg,2025-08-17T15:15:00,0,1
+1541,1387698,Ligue 1,Angers,Paris FC,2025-08-17T15:15:00,1,0
+1542,1387699,Ligue 1,Auxerre,Lorient,2025-08-17T15:15:00,1,0
+1500,1356945,Premier League,FC Minsk,FC Isloch Minsk R.,2025-08-17T15:00:00,0,1
+1496,1351961,Premier League,Zhetysu,Atyrau,2025-08-17T15:00:00,0,0
+1497,1351963,Premier League,Ordabasy,FK Tobol Kostanay,2025-08-17T15:00:00,2,3
+1498,1351964,Premier League,FC Astana,Ulytau,2025-08-17T15:00:00,4,0
+1499,1351967,Premier League,Aktobe,Okzhetpes,2025-08-17T15:00:00,2,1
+1506,1390041,Bundesliga,Rapid Vienna,SCR Altach,2025-08-17T15:00:00,0,0
+1507,1390042,Bundesliga,Lask Linz,Austria Vienna,2025-08-17T15:00:00,2,1
+1508,1390043,Bundesliga,Wolfsberger AC,FC BW Linz,2025-08-17T15:00:00,3,0
+1509,1390821,La Liga,Celta Vigo,Getafe,2025-08-17T15:00:00,0,2
+1511,1391435,Premier League,Polessya,LNZ Cherkasy,2025-08-17T15:00:00,0,2
+1514,1400068,Premier League,Dynamo,CSKA Moscow,2025-08-17T15:00:00,1,3
+1484,1380883,Eredivisie,FC Volendam,AZ Alkmaar,2025-08-17T14:45:00,2,2
+1466,1396250,Primeira Liga,Rio Ave,Nacional,2025-08-17T14:30:00,1,1
+1440,1386570,Championship,Hull City,Oxford United,2025-08-17T14:00:00,3,2
+1405,1413057,Premier League,Ilbirs,Dordoi Bishkek,2025-08-17T13:30:00,2,0
+1347,1387700,Ligue 1,Stade Brestois 29,Lille,2025-08-17T13:00:00,3,3
+1345,1378976,Premier League,Chelsea,Crystal Palace,2025-08-17T13:00:00,0,0
+1344,1378972,Premier League,Nottingham Forest,Brentford,2025-08-17T13:00:00,3,1
+1329,1400067,Premier League,Rubin,FC Rostov,2025-08-17T12:45:00,1,0
+1320,1391436,Premier League,Veres Rivne,Shakhtar Donetsk,2025-08-17T12:30:00,0,2
+1317,1380882,Eredivisie,Twente,PSV Eindhoven,2025-08-17T12:30:00,0,2
+1316,1380881,Eredivisie,Sparta Rotterdam,Utrecht,2025-08-17T12:30:00,2,1
+1303,1430801,Premier League,Transport United,Tensung,2025-08-17T12:00:00,5,2
+1264,1358171,League One,Shenzhen Juniors,Yanbian Longding,2025-08-17T11:30:00,2,1
+1263,1358170,League One,Hebei Kungfu,Shaanxi Union,2025-08-17T11:30:00,1,1
+1262,1358169,League One,Chongqing Tongliang Long,Nanjing City,2025-08-17T11:30:00,1,0
+1247,1386572,Championship,Ipswich,Southampton,2025-08-17T11:00:00,1,1
+1237,1400281,Premier League,Akron,FC Orenburg,2025-08-17T10:30:00,1,2
+1232,1380880,Eredivisie,GO Ahead Eagles,Ajax,2025-08-17T10:15:00,2,2
+1220,1391438,Premier League,Kudrivka,SK Poltava,2025-08-17T10:00:00,3,1
+1103,1351235,Serie A,Corinthians,Bahia,2025-08-17T00:00:00,1,2

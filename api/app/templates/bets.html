@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bets</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px 10px;border-bottom:1px solid #eee;font-size:14px}
+    th{text-align:left}
+    .muted{opacity:.7}
+  </style>
+</head>
+<body>
+  <h1>Bets</h1>
+  <p class="muted">Edit stake inline. Settle to compute return &amp; PnL (WON/LOST/VOID). PENDING clears ret/pnl.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Comp</th>
+        <th>Fixture</th>
+        <th>Market</th>
+        <th>Book</th>
+        <th>Price</th>
+        <th>Stake</th>
+        <th>Return</th>
+        <th>PnL</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for bet, fx in rows %}
+        {{ caller.render_bet_row(bet, fx) if false else "" }}
+      {% endfor %}
+      <!-- We can't call Python here; rows rendered below via server -->
+      <!-- Fallback render (server-side) -->
+      {% for bet, fx in rows %}
+        <tr id="bet-{{ bet.id }}">
+          <td>{{ fx.comp }}</td>
+          <td><a href="/fixtures/{{ fx.id }}">{{ fx.home_team }} vs {{ fx.away_team }}</a></td>
+          <td>{{ bet.market }}</td>
+          <td>{{ bet.bookmaker }}</td>
+          <td>{{ "%.2f"|format(bet.price or 0) }}</td>
+          <td>
+            <form hx-post="/bets/{{ bet.id }}/edit" hx-target="#bet-{{ bet.id }}" hx-swap="outerHTML" style="display:flex;gap:6px">
+              <input type="number" name="stake" step="0.01" min="0" value="{{ "%.2f"|format(bet.stake or 0) }}" style="width:90px"/>
+              <button type="submit">Save</button>
+            </form>
+          </td>
+          <td>{{ "" if bet.ret is none else "%.2f"|format(bet.ret) }}</td>
+          <td>{{ "" if bet.pnl is none else "%.2f"|format(bet.pnl) }}</td>
+          <td>
+            <form hx-post="/bets/{{ bet.id }}/settle" hx-target="#bet-{{ bet.id }}" hx-swap="outerHTML" style="display:flex;gap:6px">
+              <select name="result">
+                {% for opt in ["PENDING","WON","LOST","VOID"] %}
+                  <option value="{{ opt }}" {% if (bet.result or "PENDING") == opt %}selected{% endif %}>{{ opt }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit">Update</button>
+            </form>
+          </td>
+          <td>
+            <form hx-post="/bets/{{ bet.id }}/delete" hx-target="#bet-{{ bet.id }}" hx-swap="outerHTML">
+              <button type="submit" onclick="return confirm('Delete bet?')">🗑</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

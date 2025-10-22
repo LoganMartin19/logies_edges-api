@@ -1,0 +1,8 @@
+provider_fixture_id,comp,home_team,away_team,kickoff_utc,market,bookmaker,price,stake,result,ret
+ENG_2025-08-15_LIV_BOU,EPL,Liverpool,Bournemouth,2025-08-15T14:00:00Z,O2.5,bet365,1.36,7.00,WON,9.52
+SCO_2025-08-15_CEL_FAL,SCOT_CUP,Celtic,Falkirk,2025-08-15T14:00:00Z,U2.5,bet365,3.20,7.00,LOST,0.00
+ESP_2025-08-15_GIR_RAY,LA_LIGA,Girona,Rayo Vallecano,2025-08-15T20:00:00Z,BTTS_Y,bet365,1.90,7.00,WON,13.30
+ESP_2025-08-15_VIL_OVI,LA_LIGA,Villarreal,Real Oviedo,2025-08-15T20:00:00Z,O2.5,bet365,1.90,7.00,LOST,0.00
+FRA_2025-08-15_REN_MAR,LIGUE1,Rennes,Marseille,2025-08-15T20:00:00Z,BTTS_Y,bet365,1.61,7.00,LOST,0.00
+ESP_2025-08-17_ATH_SEV,LA_LIGA,Athletic Bilbao,Sevilla,,BTTS_Y,bet365,2.10,0.94,,1.97
+SCO_2025-08-17_LIV_HIB,SCOT_CUP,Livingston,Hibernian,,O2.5,bet365,2.00,1.50,,3.00
