@@ -54,17 +54,34 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://logies-edges-site.vercel.app",
+        "https://logies-edges-dashboard.vercel.app",  # ✅ added dashboard
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# (Optional) allow all vercel preview domains too:
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origin_regex=r"https://.*\.vercel\.app$",
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
 # --- Health Check ---
 @app.get("/health")
 def health():
     """Lightweight health check for Render."""
     return {"ok": True}
+
+
+@app.get("/api/health")
+def api_health():
+    """Mirror endpoint for dashboard/API checks."""
+    return {"ok": True}
+
 
 # --- Startup ---
 @app.on_event("startup")
@@ -74,6 +91,7 @@ def startup():
     if env != "production":
         Base.metadata.create_all(bind=engine)
 
+
 # --- Optional compute route ---
 @app.post("/compute")
 def compute(db: Session = Depends(get_db)):
@@ -81,6 +99,7 @@ def compute(db: Session = Depends(get_db)):
     ensure_baseline_probs(db, now, source="team_form")
     compute_edges(db, now, settings.EDGE_MIN, source="team_form")
     return {"ok": True}
+
 
 # --- Include routers ---
 app.include_router(bets_router.router)
@@ -116,6 +135,7 @@ app.include_router(preview_router.pub, prefix="/api")
 # --- Debug route for visibility ---
 @app.get("/debug/routes")
 def list_routes():
+    """List all registered API routes."""
     return [
         {
             "path": route.path,
