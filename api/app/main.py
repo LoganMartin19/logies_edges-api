@@ -126,14 +126,17 @@ app.include_router(football_extra_router.router)
 app.include_router(player_props_router.router)
 app.include_router(tennis_router.router)
 app.include_router(picks_router.router)
-app.include_router(picks_router.pub)
+
 app.include_router(accas_router.router)
-app.include_router(accas_router.pub)
+
 
 # ✅ Public + AI Preview routes
 app.include_router(public_router.pub, prefix="/api")
 app.include_router(preview_router.router, prefix="/api")
 app.include_router(preview_router.pub, prefix="/api")
+app.include_router(accas_router.pub, prefix="/api")
+app.include_router(picks_router.pub, prefix="/api")
+
 
 # --- Debug route for visibility ---
 @app.get("/debug/routes")
