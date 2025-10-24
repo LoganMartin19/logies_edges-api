@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict
 
 import requests
@@ -16,29 +16,46 @@ router = APIRouter(prefix="/ai/preview", tags=["AI Preview"])
 pub = APIRouter(prefix="/public/ai/preview", tags=["Public AI Preview"])
 
 # -------------------------------------------------------------------
-# Helpers
+# Config / Helpers
 # -------------------------------------------------------------------
+
+def _api_base() -> str:
+    """
+    Resolve a base URL that works both locally and on Render.
+    Prefer INTERNAL_API_BASE (set this in Render), then PUBLIC_API_BASE/API_BASE,
+    and finally fall back to localhost for dev.
+    """
+    return (
+        os.getenv("INTERNAL_API_BASE")
+        or os.getenv("PUBLIC_API_BASE")
+        or os.getenv("API_BASE")
+        or "http://127.0.0.1:8000"
+    ).rstrip("/")
+
 
 def _fetch_form_summaries(fixture_id: int, n: int = 5) -> Dict[str, Any]:
     """
-    Fetch hybrid form from the working route:
-      GET /form/form/fixture?fixture_id=...&n=...&all_comps=1
-    Returns dict with normalized 'home' and 'away' summaries.
+    Fetch hybrid form JSON from:
+      GET {BASE}/form/fixture/json?fixture_id=...&n=...
+    Expected keys: home_form, away_form
+    Returns dict with normalized 'home' and 'away' summaries (or {} on error).
     """
-    url = "http://127.0.0.1:8000/form/form/fixture"
-    params = {"fixture_id": fixture_id, "n": n, "all_comps": 1}
+    base = _api_base()
+    url = f"{base}/form/fixture/json"
+    params = {"fixture_id": fixture_id, "n": n}
     try:
         r = requests.get(url, params=params, timeout=12)
         if not r.ok:
-            print(f"Form fetch failed {r.status_code}: {r.text[:200]}")
+            print(f"[preview] Form fetch failed {r.status_code} ({url}): {r.text[:200]}")
             return {}
-        j = r.json()
+        j = r.json() or {}
+        # Normalize to { home: {...}, away: {...} }
         return {
             "home": j.get("home_form") or {},
             "away": j.get("away_form") or {},
         }
     except Exception as e:
-        print("Form fetch error:", e)
+        print("[preview] Form fetch error:", e)
         return {}
 
 
@@ -99,7 +116,7 @@ def generate_ai_preview(
 
     today = date.today()
 
-    # Cache check
+    # Cache check for today's preview
     existing = (
         db.query(AIPreview)
         .filter(AIPreview.fixture_id == fixture_id, AIPreview.day == today)
@@ -108,18 +125,18 @@ def generate_ai_preview(
     if existing and not overwrite:
         return {"ok": True, "cached": True, "fixture_id": fixture_id, "preview": existing.preview}
 
-    # Fetch form data
+    # Fetch form data (prod-safe)
     form_data = _fetch_form_summaries(fixture_id, n=n)
-    if not form_data:
-        raise HTTPException(status_code=500, detail="Form data unavailable")
+    if not form_data or (not form_data.get("home") and not form_data.get("away")):
+        raise HTTPException(status_code=500, detail="Form data unavailable (check INTERNAL_API_BASE/env)")
 
     prompt = _build_prompt(fx, form_data, n)
 
-    # --- OpenAI call (Chat Completions, stable today) ---
+    # --- OpenAI call (Chat Completions) ---
     client = _openai_client()
     try:
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",  # stable chat model; supports max_tokens
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a sharp, neutral football analyst who writes concise previews."},
                 {"role": "user", "content": prompt},
@@ -130,7 +147,7 @@ def generate_ai_preview(
         text = (resp.choices[0].message.content or "").strip()
         if not text:
             raise ValueError("Empty content from chat.completions")
-        tokens = getattr(resp, "usage", None).total_tokens if getattr(resp, "usage", None) else None
+        tokens = getattr(getattr(resp, "usage", None), "total_tokens", None)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI call failed: {e}")
 
@@ -185,6 +202,7 @@ def debug_form_data(fixture_id: int, db: Session = Depends(get_db)):
         "away_summary": form.get("away"),
     }
 
+
 @router.post("/generate/daily")
 def generate_daily_ai_previews(
     day: str = Query(date.today().isoformat(), description="YYYY-MM-DD"),
@@ -197,9 +215,6 @@ def generate_daily_ai_previews(
     Generate AI previews for all fixtures on a given day (default = today).
     Uses the same logic as single fixture generation.
     """
-    from datetime import timedelta
-
-    # Determine date range
     start = datetime.fromisoformat(day).replace(tzinfo=timezone.utc)
     end = start + timedelta(days=1)
 
@@ -218,7 +233,7 @@ def generate_daily_ai_previews(
 
     for fx in fixtures:
         try:
-            # Check cache
+            # Check cache for today
             existing = (
                 db.query(AIPreview)
                 .filter(AIPreview.fixture_id == fx.id, AIPreview.day == date.today())
@@ -229,7 +244,7 @@ def generate_daily_ai_previews(
                 continue
 
             form_data = _fetch_form_summaries(fx.id, n=n)
-            if not form_data:
+            if not form_data or (not form_data.get("home") and not form_data.get("away")):
                 skipped += 1
                 continue
 
@@ -247,7 +262,7 @@ def generate_daily_ai_previews(
             )
 
             text = (resp.choices[0].message.content or "").strip()
-            tokens = getattr(resp, "usage", None).total_tokens if getattr(resp, "usage", None) else None
+            tokens = getattr(getattr(resp, "usage", None), "total_tokens", None)
 
             if existing:
                 existing.preview = text
