@@ -348,3 +348,118 @@ def public_preview_by_fixture(
     if not latest:
         raise HTTPException(status_code=404, detail="No preview found")
     return _row_to_payload(latest)
+
+    # --- Expert bettor analysis (JSON for Predictions tab) ----------------------
+
+def _fetch_probs_edges(fixture_id: int) -> Dict[str, Any]:
+    """Fetch model probabilities + edges for the fixture."""
+    base = "http://127.0.0.1:8000"
+    out: Dict[str, Any] = {"probs": {}, "edges": []}
+    try:
+        pr = requests.get(f"{base}/admin/fixture-probs", params={"fixture_id": fixture_id}, timeout=10)
+        if pr.ok:
+            out["probs"] = pr.json() or {}
+    except Exception as e:
+        print("probs fetch error:", e)
+    try:
+        er = requests.get(f"{base}/admin/fixture-edges", params={"fixture_id": fixture_id}, timeout=10)
+        if er.ok:
+            js = er.json() or {}
+            out["edges"] = js.get("edges") or js.get("best_edges") or js or []
+    except Exception as e:
+        print("edges fetch error:", e)
+    return out
+
+@router.get("/expert")
+def expert_prediction(
+    fixture_id: int = Query(...),
+    n: int = Query(5, ge=3, le=10),
+    db: Session = Depends(get_db),
+):
+    """Return JSON: paragraphs + W/D/W probabilities + best bets (from model edges)."""
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
+    if not fx:
+        raise HTTPException(status_code=404, detail="Fixture not found")
+
+    form_data = _fetch_form_summaries(fixture_id, n=n)
+    model = _fetch_probs_edges(fixture_id)
+
+    # pull neat bits
+    probs = model.get("probs") or {}
+    p_home = probs.get("home") or probs.get("home_win")
+    p_draw = probs.get("draw")
+    p_away = probs.get("away") or probs.get("away_win")
+
+    edges = model.get("edges") or []
+    # keep only clearly positive, sort desc
+    pos_edges = [e for e in edges if (e.get("edge") or 0) > 0]
+    pos_edges.sort(key=lambda r: r.get("edge") or 0, reverse=True)
+    top_edges = pos_edges[:5]
+
+    prompt = f"""
+You are a professional sports betting analyst.
+Write a succinct bettor-facing note for **{fx.home_team} vs {fx.away_team}** ({fx.comp or fx.sport}).
+
+Context (last {n}):
+- {fx.home_team}: {form_data.get('home',{})}
+- {fx.away_team}: {form_data.get('away',{})}
+
+Model win probabilities (0..1, any missing = unknown):
+- home: {p_home}
+- draw: {p_draw}
+- away: {p_away}
+
+Edges (candidate bets from model, include only if they look positive):
+{top_edges}
+
+Produce a SINGLE JSON object with:
+- "paragraphs": array of 2–3 short paragraphs in plain text (no Markdown),
+- "probabilities": object {{ "home": number|null, "draw": number|null, "away": number|null }} in PERCENT (0–100, 1 decimal),
+- "best_bets": array of up to 3 objects {{
+    "market": string,
+    "bookmaker": string|null,
+    "price": number|null,
+    "edge_pct": number|null,   // 0–100
+    "why": string              // 1 sentence
+  }},
+- "confidence": one of ["Low","Medium","High"] based on edge quality + price availability,
+- "disclaimer": short string reminding about variance and bankroll discipline.
+
+Keep it grounded in the numbers above. Do not invent players/injuries. If no edges are positive, say so and keep best_bets empty.
+"""
+
+    client = _openai_client()
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Return valid JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_tokens=450,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content or "{}"
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI call failed: {e}")
+
+    # Safety net: parse
+    try:
+        import json
+        data = json.loads(raw)
+    except Exception:
+        data = {
+            "paragraphs": ["Analysis unavailable."],
+            "probabilities": {"home": None, "draw": None, "away": None},
+            "best_bets": [],
+            "confidence": "Low",
+            "disclaimer": "No bet if price/edge isn’t there."
+        }
+
+    return {
+        "fixture_id": fixture_id,
+        "home": fx.home_team,
+        "away": fx.away_team,
+        "analysis": data,
+    }

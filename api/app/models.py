@@ -317,6 +317,10 @@ class FeaturedPick(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
+    stake = Column(Float, nullable=True)          # units risked
+    result = Column(String, nullable=True)        # 'won' | 'lost' | 'void'
+    settled_at = Column(DateTime, nullable=True)
+
     __table_args__ = (
         UniqueConstraint("day", "fixture_id", "market", "bookmaker", name="uq_featuredpicks_day_fx_mkt_book"),
         Index("ix_featuredpicks_day_sport", "day", "sport"),
@@ -398,3 +402,40 @@ class FixturePlayersCache(Base):
     payload = Column(JSON, nullable=False)                             # full response['response'] you use
     updated_at = Column(DateTime, default=datetime.utcnow, index=True)
     __table_args__ = (UniqueConstraint("fixture_provider_id", name="uq_fpc_fixture"),)
+
+# api/app/models.py  (add near FeaturedPick)
+class AccaTicket(Base):
+    __tablename__ = "acca_tickets"
+
+    id = Column(BigInteger, primary_key=True)
+    day = Column(Date, index=True, nullable=False)              # UTC date of tip
+    sport = Column(String, index=True, nullable=False, default="football")
+    title = Column(String, nullable=True)                       # e.g. "Saturday 2-Leg ACCA"
+    note = Column(String, nullable=True)                        # optional blurb
+    stake_units = Column(Float, nullable=False, default=1.0)    # "units" staked
+    is_public = Column(Boolean, nullable=False, default=False)
+
+    # derived fields (optional but handy for fast UI)
+    combined_price = Column(Float, nullable=True)               # product of leg prices (dec odds)
+    est_edge = Column(Float, nullable=True)                     # optional if you compute it
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    legs = relationship("AccaLeg", back_populates="ticket", cascade="all, delete-orphan")
+
+class AccaLeg(Base):
+    __tablename__ = "acca_legs"
+
+    id = Column(BigInteger, primary_key=True)
+    ticket_id = Column(BigInteger, ForeignKey("acca_tickets.id", ondelete="CASCADE"), index=True, nullable=False)
+
+    fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="SET NULL"))
+    market = Column(String, nullable=False)                # "BTTS_N", "HOME_WIN", "O2.5", etc
+    bookmaker = Column(String, nullable=True)
+    price = Column(Float, nullable=False)                  # decimal odds of this leg
+    note = Column(String, nullable=True)
+
+    # settlement (optional for record page)
+    result = Column(String, nullable=True)                 # "WON" | "LOST" | "VOID" | None
+
+    ticket = relationship("AccaTicket", back_populates="legs")

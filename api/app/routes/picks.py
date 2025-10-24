@@ -257,3 +257,63 @@ def public_picks(
             } for p in picks
         ]
     }
+
+# --- Public: featured picks record (W-L-V, ROI, list) -----------------------
+
+@pub.get("/picks/record")
+def public_picks_record(
+    span: str = Query("30d", description="Window: '7d','30d','90d','all'"),
+    db: Session = Depends(get_db),
+):
+    from math import isfinite
+    today = datetime.now(timezone.utc)
+    if span == "all":
+        start_dt = None
+    else:
+        days = int(span.rstrip("d"))
+        start_dt = today - timedelta(days=days)
+
+    q = db.query(FeaturedPick).filter(FeaturedPick.is_public == True)
+    if start_dt: q = q.filter(FeaturedPick.created_at >= start_dt)
+    rows = q.order_by(FeaturedPick.created_at.desc()).limit(1000).all()
+
+    fids = [r.fixture_id for r in rows]
+    fmap = {f.id: f for f in db.query(Fixture).filter(Fixture.id.in_(fids)).all()} if fids else {}
+
+    won = lost = void = 0; staked = returned = 0.0; items = []
+    for r in rows:
+        stake = float(r.stake or 1.0); price = float(r.price or 0.0)
+        res = (r.result or "").lower(); units = 0.0
+        if res == "won": won += 1; units = stake * (price - 1.0); returned += stake * price
+        elif res == "lost": lost += 1; units = -stake
+        elif res == "void": void += 1; returned += stake
+        staked += stake
+        fx = fmap.get(r.fixture_id)
+        items.append({
+            "pick_id": r.id, "fixture_id": r.fixture_id, "sport": r.sport, "comp": r.comp,
+            "home_team": r.home_team, "away_team": r.away_team,
+            "kickoff_utc": r.kickoff_utc.isoformat() if r.kickoff_utc else None,
+            "market": r.market, "bookmaker": r.bookmaker, "price": r.price, "edge": r.edge,
+            "stake": stake, "result": r.result, "units": round(units, 2), "note": r.note,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    pnl = returned - staked; roi = (pnl / staked * 100) if staked else 0.0
+    return {"span": span, "summary": {
+        "record": {"won": won, "lost": lost, "void": void},
+        "staked": round(staked, 2), "returned": round(returned, 2),
+        "pnl": round(pnl, 2), "roi": round(roi, 2)
+    }, "picks": items}
+
+@router.post("/picks/{pick_id}/stake")
+def admin_set_stake(pick_id: int, stake: float = Query(..., ge=0.0), db: Session = Depends(get_db)):
+    r = db.query(FeaturedPick).filter(FeaturedPick.id == pick_id).one_or_none()
+    if not r: raise HTTPException(404, "Pick not found")
+    r.stake = stake; db.commit()
+    return {"ok": True, "id": r.id, "stake": r.stake}
+
+@router.post("/picks/{pick_id}/settle")
+def admin_settle_pick(pick_id: int, result: str = Query(..., pattern="^(won|lost|void)$"), db: Session = Depends(get_db)):
+    r = db.query(FeaturedPick).filter(FeaturedPick.id == pick_id).one_or_none()
+    if not r: raise HTTPException(404, "Pick not found")
+    r.result = result; r.settled_at = datetime.utcnow(); db.commit()
+    return {"ok": True, "id": r.id, "result": r.result}

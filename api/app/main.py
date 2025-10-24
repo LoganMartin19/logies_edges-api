@@ -41,6 +41,7 @@ from .routes import (
     picks as picks_router,
     public as public_router,
     preview as preview_router,  # ✅ AI previews
+    accas as accas_router,
 )
 from .services import league_strength
 
@@ -126,6 +127,8 @@ app.include_router(player_props_router.router)
 app.include_router(tennis_router.router)
 app.include_router(picks_router.router)
 app.include_router(picks_router.pub)
+app.include_router(accas_router.router)
+app.include_router(accas_router.pub)
 
 # ✅ Public + AI Preview routes
 app.include_router(public_router.pub, prefix="/api")
