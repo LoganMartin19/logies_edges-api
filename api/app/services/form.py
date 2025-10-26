@@ -138,6 +138,13 @@ def _recent_from_api(
     limit: int,
     comp: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    """
+    Returns rows from the team's perspective:
+      goals_for / goals_against reflect the team,
+      score is rendered as 'GF-GA',
+      result is derived from GF/GA,
+      is_home indicates whether THIS match was at home for the team.
+    """
     from ..services.apifootball import get_team_recent_results
 
     season = season or _infer_season(as_of)
@@ -176,7 +183,7 @@ def _recent_from_api(
         raw_home = m.get("is_home")
         is_home = raw_home if isinstance(raw_home, bool) else str(raw_home).lower().startswith("h")
 
-        # parse score
+        # parse score (provider home-away)
         score_str = m.get("score")
         if not score_str and "goals" in m:
             gh = int((m["goals"].get("home") or 0))
@@ -190,15 +197,9 @@ def _recent_from_api(
         except Exception:
             home_g, away_g = 0, 0
 
-        # ✅ Ensure goals and perspective are always from the team’s viewpoint
+        # Team perspective
         gf, ga = (home_g, away_g) if is_home else (away_g, home_g)
         score_render = f"{gf}-{ga}"
-
-        # 🔧 Safety: if team perspective was flipped in API, correct it
-        if team_provider_id and m.get("team_id") and m["team_id"] != team_provider_id:
-            gf, ga = (away_g, home_g)
-            score_render = f"{gf}-{ga}"
-
         res = "win" if gf > ga else ("loss" if gf < ga else "draw")
 
         recent.append({
@@ -206,9 +207,9 @@ def _recent_from_api(
             "team": None,
             "opponent": m.get("opponent"),
             "is_home": bool(is_home),
-            "goals_for": gf,
-            "goals_against": ga,
-            "score": score_render,      # ← perspective-safe
+            "goals_for": int(gf),
+            "goals_against": int(ga),
+            "score": score_render,      # perspective-safe
             "result": res,
             "fixture_id": m.get("fixture_id"),
             "comp": league_name,        # provider display name
@@ -242,14 +243,24 @@ def get_recent_form_api_first(
     if not recent:
         recent = get_recent_fixtures(db, team_name, before, n=n, comp=comp)
 
+    # 🔒 Final consistency pass: ensure result matches goals_for/goals_against
+    for r in recent:
+        try:
+            gf = int(r.get("goals_for", 0))
+            ga = int(r.get("goals_against", 0))
+            r["score"] = f"{gf}-{ga}"
+            r["result"] = "win" if gf > ga else "loss" if gf < ga else "draw"
+        except Exception:
+            r["result"] = r.get("result") or "draw"
+
     recent.sort(key=lambda m: m["date"] or "", reverse=True)
     recent = recent[:n]
 
     wins = draws = losses = 0
     gf_total = ga_total = 0
     for m in recent:
-        gf_total += m["goals_for"]
-        ga_total += m["goals_against"]
+        gf_total += int(m["goals_for"])
+        ga_total += int(m["goals_against"])
         if m["goals_for"] > m["goals_against"]:
             wins += 1
         elif m["goals_for"] < m["goals_against"]:
@@ -521,7 +532,7 @@ def get_hybrid_form_for_fixture(
             season=season,
         )["recent"]
 
-    # ---------- SUMMARIES (✅ now always run) ----------
+    # ---------- SUMMARIES ----------
     home_summary = _summarize(home_recent)
     away_summary = _summarize(away_recent)
 
