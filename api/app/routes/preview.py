@@ -225,7 +225,6 @@ def debug_form_data(fixture_id: int, db: Session = Depends(get_db)):
         "away_summary": form.get("away"),
     }
 
-
 @router.post("/generate/daily")
 def generate_daily_ai_previews(
     day: str = Query(date.today().isoformat(), description="YYYY-MM-DD"),
@@ -234,8 +233,19 @@ def generate_daily_ai_previews(
     overwrite: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    """Generate AI previews for all fixtures on a given day."""
-    start = datetime.fromisoformat(day).replace(tzinfo=timezone.utc)
+    """
+    Generate AI previews for all fixtures on a given day (default = today).
+    Uses the same logic as single fixture generation.
+    """
+    # ✅ parse the requested day once and use it consistently
+    from datetime import date as _date
+
+    try:
+        d = _date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid day; use YYYY-MM-DD")
+
+    start = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
     end = start + timedelta(days=1)
 
     fixtures = (
@@ -245,29 +255,32 @@ def generate_daily_ai_previews(
         .order_by(Fixture.kickoff_utc.asc())
         .all()
     )
+
     if not fixtures:
         return {"ok": True, "count": 0, "message": f"No {sport} fixtures for {day}"}
 
     added, skipped, errors = 0, 0, []
-    client = _openai_client()
 
     for fx in fixtures:
         try:
+            # ✅ cache check must use the requested day d (not today)
             existing = (
                 db.query(AIPreview)
-                .filter(AIPreview.fixture_id == fx.id, AIPreview.day == date.today())
+                .filter(AIPreview.fixture_id == fx.id, AIPreview.day == d)
                 .first()
             )
             if existing and not overwrite:
                 skipped += 1
                 continue
 
-            form_data = get_fixture_form_summary(db, fx.id, n=n)
-            if not form_data:
+            form_data = _fetch_form_summaries(fx.id, n=n)
+            if not form_data or (not form_data.get("home") and not form_data.get("away")):
                 skipped += 1
                 continue
 
             prompt = _build_prompt(fx, form_data, n)
+            client = _openai_client()
+
             resp = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -277,17 +290,20 @@ def generate_daily_ai_previews(
                 temperature=0.6,
                 max_tokens=220,
             )
+
             text = (resp.choices[0].message.content or "").strip()
             tokens = getattr(getattr(resp, "usage", None), "total_tokens", None)
 
+            # ✅ persist with the requested day d
             if existing:
                 existing.preview = text
                 existing.tokens = tokens
                 existing.updated_at = datetime.utcnow()
+                db.add(existing)
             else:
                 ai = AIPreview(
                     fixture_id=fx.id,
-                    day=date.today(),
+                    day=d,
                     sport=fx.sport or "football",
                     comp=fx.comp,
                     preview=text,
@@ -302,7 +318,6 @@ def generate_daily_ai_previews(
             errors.append({"fixture": fx.id, "error": str(e)})
 
     return {"ok": True, "added": added, "skipped": skipped, "errors": errors}
-
 
 # --- Expert bettor analysis (JSON for Predictions tab) -----------------------
 
