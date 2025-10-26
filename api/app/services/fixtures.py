@@ -24,7 +24,7 @@ def _as_dot(x: str | None) -> str:
 
 def _val_label(v: dict) -> str:
     # SAFE: value may be int/float/str/missing
-    return str(v.get("value") or "").strip().lower()
+    return str(v.get("value") or "").strip()
 
 def _val_odd(v: dict) -> float | None:
     try:
@@ -51,7 +51,7 @@ def _values_sorted(values: list[dict]) -> list[dict]:
 
 _TOT_PATTERNS = (
     "over/under", "under/over", "total", "goals over/under", "total goals",
-    "goal line", "goals line", "match goals", "goals"
+    "goal line", "goals line", "match goals", "goals", "o/u"
 )
 
 def _is_totals_market(name: str) -> bool:
@@ -62,17 +62,20 @@ def _is_btts_market(name: str) -> bool:
     n = (name or "").strip().lower()
     return n in ("btts",) or ("both teams to score" in n) or ("both teams score" in n)
 
+# Recognize 1X2-ish markets; we decide 3-way vs 2-way from outcomes.
+_ML_NAMES = {
+    "winner", "match winner", "matchwinner", "result", "match result",
+    "full time result", "fulltime result", "ft result",
+    "1x2", "3way", "3 way", "3-way", "3-way result", "match odds", "match betting",
+    "to win", "to win (90 mins)", "regular time result", "result - regular time",
+    "win-draw-win", "w-d-w", "home/draw/away"
+}
 def _is_moneyline_market(name: str) -> bool:
     n = (name or "").strip().lower()
-    # Treat these as "result" markets; we’ll decide 3-way vs 2-way from outcomes.
-    return n in (
-        "winner", "match winner", "matchwinner",
-        "1x2", "3way", "3 way", "3-way", "3-way result",
-        "result", "match result", "full time result", "fulltime result", "ft result"
-    )
+    return n in _ML_NAMES
 
 def _norm_val_label(v: dict) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (_val_label(v) or "").lower())
+    return _norm(_val_label(v))
 
 # ---------- bookmaker filters ----------
 
@@ -102,7 +105,7 @@ def upsert_fixture_from_payload(db: Session, payload: dict) -> Fixture:
 
     # ✅ Canonicalize competition name
     comp = canonicalize_comp(lg)  # pass full league dict (id, name, country)
-    if not comp:  # fallback if canonicalize_comp returns None
+    if not comp:
         comp = lg.get("name") or lg.get("round") or "FOOTBALL"
 
     league_name = (lg.get("name") or "").lower()
@@ -183,7 +186,7 @@ def _write_first_over_under_for_line(
     written = 0
     # Over X.X
     for v in values:
-        if "over" in _val_label(v) and _val_line_ish(v) == line_str:
+        if "over" in _val_label(v).lower() and _val_line_ish(v) == line_str:
             odd = _val_odd(v)
             if odd and odd > 1.01:
                 _upsert_odds(db, fixture_id, book_label, f"O{line_str}", odd)
@@ -191,7 +194,7 @@ def _write_first_over_under_for_line(
                 break
     # Under X.X
     for v in values:
-        if "under" in _val_label(v) and _val_line_ish(v) == line_str:
+        if "under" in _val_label(v).lower() and _val_line_ish(v) == line_str:
             odd = _val_odd(v)
             if odd and odd > 1.01:
                 _upsert_odds(db, fixture_id, book_label, f"U{line_str}", odd)
@@ -211,6 +214,25 @@ def _parse_and_write_markets(
     pref_norm = _norm(prefer_book) if prefer_book else ""
     written_keys: set[tuple[str, str]] = set()
 
+    # Load teams for name-based mapping
+    fx: Fixture | None = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
+    home_norm = _norm(fx.home_team) if fx else ""
+    away_norm = _norm(fx.away_team) if fx else ""
+
+    def is_home_token(lbl_norm: str) -> bool:
+        # '1', 'home', 'team1', explicit team name, or team name + "win"
+        return lbl_norm in {"1", "home", "team1"} or \
+               lbl_norm == home_norm or \
+               lbl_norm.replace("win", "") == home_norm
+
+    def is_away_token(lbl_norm: str) -> bool:
+        return lbl_norm in {"2", "away", "team2"} or \
+               lbl_norm == away_norm or \
+               lbl_norm.replace("win", "") == away_norm
+
+    def is_draw_token(lbl_norm: str) -> bool:
+        return lbl_norm in {"x", "draw", "tie", "3"}
+
     def scan(prefer_only: bool):
         nonlocal written
         for row in odds_rows:
@@ -227,23 +249,20 @@ def _parse_and_write_markets(
                     continue
 
                 book_label = bname_norm
-                ...
+
                 for mk in book.get("bets") or []:
                     key = (mk.get("name") or "").strip().lower()
                     vals = _values_sorted(mk.get("values", []))
-                    print(f"\n--- Market: {mk.get('name')} ---")
-                    for v in vals:
-                        print(f"  Label: {_val_label(v)} → Norm: {_norm_val_label(v)}")
 
-                    # ---- Soccer Over/Under: ONLY 1.5 and 2.5 ----
+                    # ---- Soccer Over/Under: ONLY lines in SOCCER_TOTAL_LINES ----
                     if _is_totals_market(key):
                         for ln in SOCCER_TOTAL_LINES:
-                            if (book_label, f"O{ln}") not in written_keys:
+                            if (book_label, f"O{ln}") not in written_keys or (book_label, f"U{ln}") not in written_keys:
                                 w = _write_first_over_under_for_line(db, fixture_id, book_label, vals, ln)
                                 if w:
-                                    if any("over" in _val_label(v) and _val_line_ish(v) == ln for v in vals):
+                                    if any("over" in _val_label(v).lower() and _val_line_ish(v) == ln for v in vals):
                                         written_keys.add((book_label, f"O{ln}"))
-                                    if any("under" in _val_label(v) and _val_line_ish(v) == ln for v in vals):
+                                    if any("under" in _val_label(v).lower() and _val_line_ish(v) == ln for v in vals):
                                         written_keys.add((book_label, f"U{ln}"))
                                     written += w
 
@@ -251,14 +270,14 @@ def _parse_and_write_markets(
                     if _is_btts_market(key):
                         if (book_label, "BTTS_Y") not in written_keys:
                             for v in vals:
-                                if _norm_val_label(v) in ("yes", "y"):
+                                if _norm_val_label(v) in {"yes", "y"}:
                                     odd = _val_odd(v)
                                     if odd and odd > 1.01:
                                         _upsert_odds(db, fixture_id, book_label, "BTTS_Y", odd)
                                         written_keys.add((book_label, "BTTS_Y")); written += 1; break
                         if (book_label, "BTTS_N") not in written_keys:
                             for v in vals:
-                                if _norm_val_label(v) in ("no", "n"):
+                                if _norm_val_label(v) in {"no", "n"}:
                                     odd = _val_odd(v)
                                     if odd and odd > 1.01:
                                         _upsert_odds(db, fixture_id, book_label, "BTTS_N", odd)
@@ -266,44 +285,46 @@ def _parse_and_write_markets(
 
                     # ---- Result markets (robust 3-way vs 2-way) ----
                     if _is_moneyline_market(key):
-                        labels = [_norm_val_label(v) for v in vals]
-                        has_draw = any(l in ("x", "draw", "tie", "3") for l in labels)
+                        labels_norm = [_norm_val_label(v) for v in vals]
+                        has_home = any(is_home_token(l) for l in labels_norm)
+                        has_away = any(is_away_token(l) for l in labels_norm)
+                        has_draw = any(is_draw_token(l) for l in labels_norm)
 
-                        if has_draw:
+                        if has_home and has_away and has_draw:
                             # 3-way: HOME_WIN / DRAW / AWAY_WIN
                             if (book_label, "HOME_WIN") not in written_keys:
                                 for v in vals:
-                                    if _norm_val_label(v) in ("1", "home", "team1"):
+                                    if is_home_token(_norm_val_label(v)):
                                         odd = _val_odd(v)
                                         if odd and odd > 1.01:
                                             _upsert_odds(db, fixture_id, book_label, "HOME_WIN", odd)
                                             written_keys.add((book_label, "HOME_WIN")); written += 1; break
                             if (book_label, "DRAW") not in written_keys:
                                 for v in vals:
-                                    if _norm_val_label(v) in ("x", "draw", "tie", "3"):
+                                    if is_draw_token(_norm_val_label(v)):
                                         odd = _val_odd(v)
                                         if odd and odd > 1.01:
                                             _upsert_odds(db, fixture_id, book_label, "DRAW", odd)
                                             written_keys.add((book_label, "DRAW")); written += 1; break
                             if (book_label, "AWAY_WIN") not in written_keys:
                                 for v in vals:
-                                    if _norm_val_label(v) in ("2", "away", "team2"):
+                                    if is_away_token(_norm_val_label(v)):
                                         odd = _val_odd(v)
                                         if odd and odd > 1.01:
                                             _upsert_odds(db, fixture_id, book_label, "AWAY_WIN", odd)
                                             written_keys.add((book_label, "AWAY_WIN")); written += 1; break
                         else:
                             # True 2-way: write ML_HOME / ML_AWAY (kept out of soccer 1X2 model)
-                            if (book_label, "ML_HOME") not in written_keys:
+                            if (book_label, "ML_HOME") not in written_keys and has_home:
                                 for v in vals:
-                                    if _norm_val_label(v) in ("1", "home", "team1", "yes"):
+                                    if is_home_token(_norm_val_label(v)):
                                         odd = _val_odd(v)
                                         if odd and odd > 1.01:
                                             _upsert_odds(db, fixture_id, book_label, "ML_HOME", odd)
                                             written_keys.add((book_label, "ML_HOME")); written += 1; break
-                            if (book_label, "ML_AWAY") not in written_keys:
+                            if (book_label, "ML_AWAY") not in written_keys and has_away:
                                 for v in vals:
-                                    if _norm_val_label(v) in ("2", "away", "team2", "no"):
+                                    if is_away_token(_norm_val_label(v)):
                                         odd = _val_odd(v)
                                         if odd and odd > 1.01:
                                             _upsert_odds(db, fixture_id, book_label, "ML_AWAY", odd)
@@ -311,28 +332,28 @@ def _parse_and_write_markets(
 
                     # ---- Double Chance (1X, 12, X2) ----
                     if "double chance" in key or key.strip().lower() in {"doublechance"}:
-                        print(f"--- Market: {key} ---")
                         if (book_label, "1X") not in written_keys:
                             for v in vals:
-                                if _norm_val_label(v) in ("1x", "homeorx", "1orx", "homedraw"):
+                                if _norm_val_label(v) in {"1x", "homeorx", "1orx", "homedraw"}:
                                     odd = _val_odd(v)
                                     if odd and odd > 1.01:
                                         _upsert_odds(db, fixture_id, book_label, "1X", odd)
                                         written_keys.add((book_label, "1X")); written += 1; break
                         if (book_label, "12") not in written_keys:
                             for v in vals:
-                                if _norm_val_label(v) in ("12", "1or2", "homeoraway", "homeaway"):
+                                if _norm_val_label(v) in {"12", "1or2", "homeoraway", "homeaway"}:
                                     odd = _val_odd(v)
                                     if odd and odd > 1.01:
                                         _upsert_odds(db, fixture_id, book_label, "12", odd)
                                         written_keys.add((book_label, "12")); written += 1; break
                         if (book_label, "X2") not in written_keys:
                             for v in vals:
-                                if _norm_val_label(v) in ("x2", "awayorx", "2orx", "drawaway"):
+                                if _norm_val_label(v) in {"x2", "awayorx", "2orx", "drawaway"}:
                                     odd = _val_odd(v)
                                     if odd and odd > 1.01:
                                         _upsert_odds(db, fixture_id, book_label, "X2", odd)
                                         written_keys.add((book_label, "X2")); written += 1; break
+
     if not prefer_book:
         scan(prefer_only=False)
     else:
