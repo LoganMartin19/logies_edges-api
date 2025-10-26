@@ -190,10 +190,14 @@ def _recent_from_api(
         except Exception:
             home_g, away_g = 0, 0
 
-        # 🔧 Make goals_for / goals_against from the team's perspective
+        # ✅ Ensure goals and perspective are always from the team’s viewpoint
         gf, ga = (home_g, away_g) if is_home else (away_g, home_g)
-        # keep score rendered from the team’s perspective too (what the UI expects)
         score_render = f"{gf}-{ga}"
+
+        # 🔧 Safety: if team perspective was flipped in API, correct it
+        if team_provider_id and m.get("team_id") and m["team_id"] != team_provider_id:
+            gf, ga = (away_g, home_g)
+            score_render = f"{gf}-{ga}"
 
         res = "win" if gf > ga else ("loss" if gf < ga else "draw")
 
@@ -526,3 +530,14 @@ def get_hybrid_form_for_fixture(
         "away": {"summary": away_summary, "recent": away_recent},
         "season": season,
     }
+
+def get_fixture_form_summary(db: Session, fixture_id: int, n: int = 5) -> dict:
+    """Convenience wrapper for expert predictions and analytics."""
+    fixture = db.query(Fixture).filter(Fixture.id == fixture_id).first()
+    if not fixture:
+        return {}
+
+    hybrid = get_hybrid_form_for_fixture(db, fixture, n=n)
+    home = hybrid.get("home", {}).get("summary", {})
+    away = hybrid.get("away", {}).get("summary", {})
+    return {"home": home, "away": away}

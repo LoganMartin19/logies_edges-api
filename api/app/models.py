@@ -439,3 +439,28 @@ class AccaLeg(Base):
     result = Column(String, nullable=True)                 # "WON" | "LOST" | "VOID" | None
 
     ticket = relationship("AccaTicket", back_populates="legs")
+
+class ExpertPrediction(Base):
+    __tablename__ = "expert_predictions"
+
+    id = Column(BigInteger, primary_key=True)
+    fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="CASCADE"), index=True, nullable=False)
+    day = Column(Date, index=True, nullable=False)
+
+    # full JSON payload we show on the UI
+    payload = Column(JSON, nullable=False)
+
+    # handy columns for quick filtering / future stats
+    home_prob = Column(Numeric)     # 0..1
+    draw_prob = Column(Numeric)     # 0..1
+    away_prob = Column(Numeric)     # 0..1
+    confidence = Column(String)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    fixture = relationship("Fixture")
+    __table_args__ = (
+        UniqueConstraint("fixture_id", "day", name="uq_expertpred_fixture_day"),
+        Index("ix_expertpred_fixture_day", "fixture_id", "day"),
+    )
