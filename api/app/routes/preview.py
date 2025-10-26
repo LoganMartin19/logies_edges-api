@@ -1,3 +1,4 @@
+# api/app/routes/previews.py
 from __future__ import annotations
 
 import os
@@ -7,10 +8,11 @@ from typing import Any, Dict
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
 from openai import OpenAI
 
 from ..db import get_db
-from ..models import Fixture, AIPreview
+from ..models import Fixture, AIPreview, ModelProb, Edge
 
 router = APIRouter(prefix="/ai/preview", tags=["AI Preview"])
 pub = APIRouter(prefix="/public/ai/preview", tags=["Public AI Preview"])
@@ -49,7 +51,6 @@ def _fetch_form_summaries(fixture_id: int, n: int = 5) -> Dict[str, Any]:
             print(f"[preview] Form fetch failed {r.status_code} ({url}): {r.text[:200]}")
             return {}
         j = r.json() or {}
-        # Normalize to { home: {...}, away: {...} }
         return {
             "home": j.get("home_form") or {},
             "away": j.get("away_form") or {},
@@ -95,6 +96,71 @@ def _openai_client() -> OpenAI:
     if not key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set in environment")
     return OpenAI(api_key=key)
+
+# ---- NEW: DB helper for probs + edges (no HTTP mismatch issues) --------------
+
+def _get_win_probs_and_edges(
+    db: Session,
+    fixture_id: int,
+    source: str = "team_form",
+    top_k_edges: int = 5,
+) -> dict:
+    """
+    Return latest HOME/DRAW/AWAY probabilities for a fixture + top positive edges.
+    """
+    # latest rows for 1X2 markets
+    latest = (
+        db.query(
+            ModelProb.market,
+            func.max(ModelProb.as_of).label("latest"),
+        )
+        .filter(
+            ModelProb.fixture_id == fixture_id,
+            ModelProb.source == source,
+            ModelProb.market.in_(["HOME_WIN", "DRAW", "AWAY_WIN"]),
+        )
+        .group_by(ModelProb.market)
+        .subquery()
+    )
+
+    probs_rows = (
+        db.query(ModelProb)
+        .join(latest, and_(
+            ModelProb.market == latest.c.market,
+            ModelProb.as_of == latest.c.latest
+        ))
+        .all()
+    )
+
+    p_home = p_draw = p_away = None
+    for r in probs_rows:
+        if r.market == "HOME_WIN":
+            p_home = float(r.prob)
+        elif r.market == "DRAW":
+            p_draw = float(r.prob)
+        elif r.market == "AWAY_WIN":
+            p_away = float(r.prob)
+
+    edges_rows = (
+        db.query(Edge)
+        .filter(Edge.fixture_id == fixture_id, Edge.model_source == source)
+        .order_by(Edge.edge.desc(), Edge.created_at.desc())
+        .all()
+    )
+
+    pos_edges = [
+        {
+            "market": e.market,
+            "bookmaker": e.bookmaker,
+            "price": float(e.price) if e.price is not None else None,
+            "prob": float(e.prob) if e.prob is not None else None,
+            "edge": float(e.edge) if e.edge is not None else None,
+        }
+        for e in edges_rows
+        if (e.edge or 0) > 0
+    ][:top_k_edges]
+
+    return {"probs": {"home": p_home, "draw": p_draw, "away": p_away}, "edges": pos_edges}
 
 # -------------------------------------------------------------------
 # Routes
@@ -233,7 +299,6 @@ def generate_daily_ai_previews(
 
     for fx in fixtures:
         try:
-            # Check cache for today
             existing = (
                 db.query(AIPreview)
                 .filter(AIPreview.fixture_id == fx.id, AIPreview.day == date.today())
@@ -312,7 +377,6 @@ def public_preview_by_fixture(
             "updated_at": row.updated_at.isoformat(),
         }
 
-    # specific day?
     if day:
         try:
             d = _date.fromisoformat(day)
@@ -328,7 +392,6 @@ def public_preview_by_fixture(
             raise HTTPException(status_code=404, detail="Preview not found for that day")
         return _row_to_payload(row)
 
-    # default: today then latest
     today = _date.today()
     today_row = (
         db.query(AIPreview)
@@ -349,26 +412,7 @@ def public_preview_by_fixture(
         raise HTTPException(status_code=404, detail="No preview found")
     return _row_to_payload(latest)
 
-    # --- Expert bettor analysis (JSON for Predictions tab) ----------------------
-
-def _fetch_probs_edges(fixture_id: int) -> Dict[str, Any]:
-    """Fetch model probabilities + edges for the fixture."""
-    base = "http://127.0.0.1:8000"
-    out: Dict[str, Any] = {"probs": {}, "edges": []}
-    try:
-        pr = requests.get(f"{base}/admin/fixture-probs", params={"fixture_id": fixture_id}, timeout=10)
-        if pr.ok:
-            out["probs"] = pr.json() or {}
-    except Exception as e:
-        print("probs fetch error:", e)
-    try:
-        er = requests.get(f"{base}/admin/fixture-edges", params={"fixture_id": fixture_id}, timeout=10)
-        if er.ok:
-            js = er.json() or {}
-            out["edges"] = js.get("edges") or js.get("best_edges") or js or []
-    except Exception as e:
-        print("edges fetch error:", e)
-    return out
+# --- Expert bettor analysis (JSON for Predictions tab) -----------------------
 
 @router.get("/expert")
 def expert_prediction(
@@ -382,23 +426,16 @@ def expert_prediction(
         raise HTTPException(status_code=404, detail="Fixture not found")
 
     form_data = _fetch_form_summaries(fixture_id, n=n)
-    model = _fetch_probs_edges(fixture_id)
+    model = _get_win_probs_and_edges(db, fixture_id, source="team_form", top_k_edges=5)
 
-    # pull neat bits
-    probs = model.get("probs") or {}
-    p_home = probs.get("home") or probs.get("home_win")
-    p_draw = probs.get("draw")
-    p_away = probs.get("away") or probs.get("away_win")
-
-    edges = model.get("edges") or []
-    # keep only clearly positive, sort desc
-    pos_edges = [e for e in edges if (e.get("edge") or 0) > 0]
-    pos_edges.sort(key=lambda r: r.get("edge") or 0, reverse=True)
-    top_edges = pos_edges[:5]
+    p_home = model["probs"]["home"]
+    p_draw = model["probs"]["draw"]
+    p_away = model["probs"]["away"]
+    top_edges = model["edges"]
 
     prompt = f"""
 You are a professional sports betting analyst.
-Write a succinct bettor-facing note for **{fx.home_team} vs {fx.away_team}** ({fx.comp or fx.sport}).
+Write a succinct bettor-facing note for {fx.home_team} vs {fx.away_team} ({fx.comp or fx.sport}).
 
 Context (last {n}):
 - {fx.home_team}: {form_data.get('home',{})}
@@ -419,14 +456,14 @@ Produce a SINGLE JSON object with:
     "market": string,
     "bookmaker": string|null,
     "price": number|null,
-    "edge_pct": number|null,   // 0–100
-    "why": string              // 1 sentence
+    "edge_pct": number|null,
+    "why": string
   }},
 - "confidence": one of ["Low","Medium","High"] based on edge quality + price availability,
 - "disclaimer": short string reminding about variance and bankroll discipline.
 
 Keep it grounded in the numbers above. Do not invent players/injuries. If no edges are positive, say so and keep best_bets empty.
-"""
+""".strip()
 
     client = _openai_client()
     try:
@@ -463,3 +500,14 @@ Keep it grounded in the numbers above. Do not invent players/injuries. If no edg
         "away": fx.away_team,
         "analysis": data,
     }
+
+# (Optional) tiny debug helpers for probing via HTTP
+@router.get("/winprobs")
+def admin_win_probs(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
+    data = _get_win_probs_and_edges(db, fixture_id, source=source, top_k_edges=0)
+    return data["probs"]
+
+@router.get("/edges")
+def admin_edges(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
+    data = _get_win_probs_and_edges(db, fixture_id, source=source, top_k_edges=50)
+    return data["edges"]
