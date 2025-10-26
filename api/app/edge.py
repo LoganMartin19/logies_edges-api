@@ -81,6 +81,33 @@ def _is_ice(comp: str | None) -> bool:
     cu = (comp or "").upper()
     return ("NHL" in cu) or ("ICE" in cu) or ("HOCKEY" in cu)
 
+# --- Market canonicalization (single source of truth) ------------------------
+def _canon_market(m: str | None) -> str:
+    if not m:
+        return ""
+    x = m.strip().upper().replace(" ", "").replace("-", "")
+    # Totals like O2.5/U2.5 keep their numeric
+    if x.startswith("O") and x[1:].replace(".", "", 1).isdigit():
+        return x
+    if x.startswith("U") and x[1:].replace(".", "", 1).isdigit():
+        return x
+    SYN = {
+        # 1X2 synonyms
+        "1": "HOME_WIN", "HOME": "HOME_WIN", "HOMEWIN": "HOME_WIN",
+        "MATCHWINNERHOME": "HOME_WIN", "TEAM1": "HOME_WIN",
+        "X": "DRAW", "DRAW": "DRAW",
+        "2": "AWAY_WIN", "AWAY": "AWAY_WIN", "AWAYWIN": "AWAY_WIN",
+        "MATCHWINNERAWAY": "AWAY_WIN", "TEAM2": "AWAY_WIN",
+
+        # Double chance (usually already canonical)
+        "1X": "1X", "12": "12", "X2": "X2",
+
+        # BTTS
+        "BTTSYES": "BTTS_Y", "BTTSY": "BTTS_Y", "BOTHTEAMSTOSCOREYES": "BTTS_Y",
+        "BTTSNO": "BTTS_N",  "BTTSN": "BTTS_N", "BOTHTEAMSTOSCORENO":  "BTTS_N",
+    }
+    return SYN.get(x, x)
+
 # --- SAFE FORM HELPERS -------------------------------------------------------
 
 DEFAULT_SUMMARY: Dict[str, float | int] = {
@@ -267,7 +294,7 @@ def ensure_baseline_probs(
             except Exception:
                 continue
             if _ok_price(price):
-                out[o.market].append(price)
+                out[_canon_market(o.market)].append(price)  # ← normalize key
         return out
 
     def _collect_prices_closing(fx_id: int) -> Dict[str, List[float]]:
@@ -279,7 +306,7 @@ def ensure_baseline_probs(
             except Exception:
                 continue
             if _ok_price(price):
-                out[r.market].append(price)
+                out[_canon_market(r.market)].append(price)  # ← normalize key
         return out
 
     for f in fixtures:
@@ -292,9 +319,9 @@ def ensure_baseline_probs(
         is_grid = _is_gridiron(f.comp)
         is_ice  = _is_ice(f.comp)
 
-        def median_price(market: str) -> Optional[float]:
+        def median_price(market: str, min_books: int = MIN_BOOKS_FOR_MODEL) -> Optional[float]:
             arr = [p for p in prices.get(market, []) if _ok_price(p)]
-            if len(arr) < MIN_BOOKS_FOR_MODEL:
+            if len(arr) < min_books:
                 return None
             return float(median(arr))
 
@@ -318,30 +345,28 @@ def ensure_baseline_probs(
                 continue
 
             try:
-                ln = float(line)
+                float(line)  # parsed but unused (kept for clarity)
             except Exception:
                 continue
 
             cons_over, cons_under = _devig_pair(po, pu)
             form_over = adjust_prob_for_goals(home_form, away_form)  # robust (handles avg vs totals)
-            form_under = 1.0 - form_over
-
             p_over = (0.6 * form_over) + (0.4 * cons_over)
             p_under = 1.0 - p_over
 
-            p_over = _apply_calibration(db, om, CAL_BOOK, p_over)
+            p_over  = _apply_calibration(db, om, CAL_BOOK, p_over)
             p_under = _apply_calibration(db, um, CAL_BOOK, p_under)
 
             if 0.0 < p_over < 1.0 and 0.0 < p_under < 1.0:
-                db.add(ModelProb(fixture_id=f.id, source=source, market=om, prob=p_over, as_of=now))
+                db.add(ModelProb(fixture_id=f.id, source=source, market=om, prob=p_over,  as_of=now))
                 db.add(ModelProb(fixture_id=f.id, source=source, market=um, prob=p_under, as_of=now))
 
-                # ✅ Correct market label for totals Prediction
+                # ✅ Prediction row with clear market label
                 top_side, top_prob = (om, p_over) if p_over >= p_under else (um, p_under)
                 db.add(Prediction(
                     fixture_id=f.id,
                     market=f"TOTALS_{line}",
-                    predicted_side=top_side,  # "O57.5" or "U57.5"
+                    predicted_side=top_side,
                     prob=top_prob,
                     fair_price=(1 / top_prob if top_prob > 0 else None),
                     model_source=source,
@@ -352,8 +377,8 @@ def ensure_baseline_probs(
         # Gridiron & Ice: Moneyline (2-way)
         # -------------------------
         if is_grid or is_ice:
-            ph_price = median_price("HOME_WIN")
-            pa_price = median_price("AWAY_WIN")
+            ph_price = median_price("HOME_WIN", min_books=1)
+            pa_price = median_price("AWAY_WIN", min_books=1)
             if ph_price and pa_price:
                 ph, pa = _devig_pair(ph_price, pa_price)
 
@@ -380,7 +405,6 @@ def ensure_baseline_probs(
             if pa and pb:
                 cons_yes, cons_no = _devig_pair(pa, pb)
 
-                # Use averages if available, else totals/played (already normalized by _coerce_summary)
                 gf_home = float(home_form.get("avg_goals_for", 0.0) or 0.0)
                 ga_home = float(home_form.get("avg_goals_against", 0.0) or 0.0)
                 gf_away = float(away_form.get("avg_goals_for", 0.0) or 0.0)
@@ -392,17 +416,15 @@ def ensure_baseline_probs(
                 goals_factor = max(0.5, min(avg_goals_potential / 2.5, 1.5))
 
                 form_yes = min(0.90, max(0.10, cons_yes * goals_factor))
-                form_no = 1.0 - form_yes
-
                 p_yes = (0.6 * form_yes) + (0.4 * cons_yes)
                 p_no = 1.0 - p_yes
 
                 p_yes = _apply_calibration(db, "BTTS_Y", CAL_BOOK, p_yes)
-                p_no = _apply_calibration(db, "BTTS_N", CAL_BOOK, p_no)
+                p_no  = _apply_calibration(db, "BTTS_N", CAL_BOOK, p_no)
 
                 if 0.0 < p_yes < 1.0 and 0.0 < p_no < 1.0:
                     db.add(ModelProb(fixture_id=f.id, source=source, market="BTTS_Y", prob=p_yes, as_of=now))
-                    db.add(ModelProb(fixture_id=f.id, source=source, market="BTTS_N", prob=p_no, as_of=now))
+                    db.add(ModelProb(fixture_id=f.id, source=source, market="BTTS_N", prob=p_no,  as_of=now))
 
                     top_side, top_prob = ("BTTS_Y", p_yes) if p_yes >= p_no else ("BTTS_N", p_no)
                     db.add(Prediction(
@@ -419,7 +441,10 @@ def ensure_baseline_probs(
         # Soccer 1X2 (3-way)
         # -------------------------
         if not _is_gridiron(f.comp) and not _is_ice(f.comp):
-            p_home, p_draw, p_away = median_price("HOME_WIN"), median_price("DRAW"), median_price("AWAY_WIN")
+            # allow 1 book to avoid missing legs when feeds are sparse
+            p_home = median_price("HOME_WIN", min_books=1)
+            p_draw = median_price("DRAW",     min_books=1)
+            p_away = median_price("AWAY_WIN", min_books=1)
             if p_home and p_draw and p_away:
                 ph, pd, pa = _devig_three(p_home, p_draw, p_away)
 
@@ -516,39 +541,9 @@ def compute_edges(
     staleness_hours: int = STALE_ODDS_HOURS,
     prefer_book: Optional[str] = None,
 ) -> int:
+    # Reuse global canonicalizer
     def normalize_market(m: str) -> str:
-        if not m:
-            return ""
-        # Uppercase and remove spaces/dashes, but KEEP underscores for canonical keys
-        x = m.strip().upper().replace(" ", "").replace("-", "")
-
-        # Explicit synonyms → canonical
-        SYN = {
-            # BTTS
-            "BTTSYES": "BTTS_Y", "BTTSY": "BTTS_Y", "BOTHTEAMSTOSCOREYES": "BTTS_Y",
-            "BTTSNO": "BTTS_N",  "BTTSN": "BTTS_N", "BOTHTEAMSTOSCORENO":  "BTTS_N",
-
-            # Totals
-            "OVER25": "O2.5", "O25": "O2.5", "OVER2.5": "O2.5",
-            "UNDER25": "U2.5", "U25": "U2.5", "UNDER2.5": "U2.5",
-            "OVER15": "O1.5", "O15": "O1.5", "OVER1.5": "O1.5",
-            "UNDER15": "U1.5", "U15": "U1.5", "UNDER1.5": "U1.5",
-
-            # 1X2 (3-way)
-            "HOMEWIN": "HOME_WIN", "HOME_WIN": "HOME_WIN",
-            "AWAYWIN": "AWAY_WIN", "AWAY_WIN": "AWAY_WIN",
-            "DRAW": "DRAW",
-
-            # Double Chance
-            "1X": "1X", "12": "12", "X2": "X2",
-        }
-        # Already canonical like O2.5/U2.5?
-        if x.startswith("O") and x[1:].replace(".", "", 1).isdigit():
-            return x  # e.g., O2.5
-        if x.startswith("U") and x[1:].replace(".", "", 1).isdigit():
-            return x  # e.g., U2.5
-
-        return SYN.get(x, x)
+        return _canon_market(m)
 
     cutoff_ko = now + timedelta(hours=hours_ahead)
     cutoff_seen = now - timedelta(hours=staleness_hours)
