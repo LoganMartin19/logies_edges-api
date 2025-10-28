@@ -1,7 +1,9 @@
 # api/app/routes/preview.py
+# api/app/routes/preview.py
 from __future__ import annotations
 
 import os
+import re  # <-- NEW: for shared-opponents parsing
 import json
 from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict, List
@@ -21,8 +23,7 @@ from ..models import (
     ExpertPrediction,
     LeagueStanding,
 )
-from ..services.form import get_fixture_form_summary  # DB helper for form
-# for shared-opponents context (IDs + recent same-league)
+from ..services.form import get_fixture_form_summary
 from ..services.apifootball import (
     get_fixture as _af_get_fixture,
     get_team_recent_results as _af_recent,
@@ -60,9 +61,6 @@ def _form_from_db(db: Session, fixture_id: int, n: int) -> Dict[str, Any]:
 
 
 def _get_team_stats(fixture_id: int) -> Dict[str, Any]:
-    """
-    Hit our internal richer team-stats endpoint. Safe no-op if missing.
-    """
     base = _api_base()
     try:
         r = requests.get(f"{base}/football/team-stats", params={"fixture_id": fixture_id}, timeout=12)
@@ -96,9 +94,6 @@ def _fixture_ctx_for_shared(fixture: Fixture) -> dict:
 def _shared_opponents_text(
     home_pid: int, away_pid: int, season: int, league_id: int, lookback: int = 8
 ) -> str:
-    """
-    Build 'shared opponents' lines using opponent IDs first; name fallback if needed.
-    """
     if not (home_pid and away_pid and season and league_id):
         return ""
 
@@ -117,9 +112,11 @@ def _shared_opponents_text(
         by_id, by_nm = {}, {}
         for r in rows:
             oid = r.get("opponent_id") or r.get("opponent_team_id")
-            if oid: by_id[int(oid)] = r
+            if oid:
+                by_id[int(oid)] = r
             nm = r.get("opponent")
-            if nm: by_nm[norm(nm)] = r
+            if nm:
+                by_nm[norm(nm)] = r
         return by_id, by_nm
 
     H_id, H_nm = maps(H)
@@ -146,7 +143,7 @@ def _shared_opponents_text(
     return ("Shared Opponents (recent, same league):\n" + "\n".join(take)) if take else ""
 
 
-# ---- ORIGINAL helper (kept for expert route, strict single-source) ----------
+# ---- ORIGINAL helper (used by expert route) --------------------------------
 def _get_win_probs_and_edges(
     db: Session,
     fixture_id: int,
@@ -208,6 +205,19 @@ def _get_win_probs_and_edges(
 
 
 # ---- NEW robust helper (multi-source fallback for previews) -----------------
+
+# clamp + optional renorm (only if we have all three)
+def _fix_probs(p: dict) -> dict:
+    def c(v):
+        return None if v is None else max(0.0, min(1.0, float(v)))
+    out = {"home": c(p.get("home")), "draw": c(p.get("draw")), "away": c(p.get("away"))}
+    vals = [out["home"], out["draw"], out["away"]]
+    if all(v is not None for v in vals):
+        s = sum(vals)
+        if s > 0:
+            out = {k: (v / s) for k, v in out.items()}
+    return out
+
 def _get_win_probs_and_edges_any(
     db: Session,
     fixture_id: int,
@@ -217,11 +227,16 @@ def _get_win_probs_and_edges_any(
     probs = {"home": None, "draw": None, "away": None}
     used_source = None
 
-    # try each source until we find probs
+    HDA_SET = ["HOME_WIN", "DRAW", "AWAY_WIN", "HOME", "AWAY"]  # <-- ensure only win markets
+
     for src in sources:
         latest = (
             db.query(ModelProb.market, func.max(ModelProb.as_of).label("latest"))
-            .filter(ModelProb.fixture_id == fixture_id, ModelProb.source == src)
+            .filter(
+                ModelProb.fixture_id == fixture_id,
+                ModelProb.source == src,
+                ModelProb.market.in_(HDA_SET),  # <-- filter to H/D/A only
+            )
             .group_by(ModelProb.market)
             .subquery()
         )
@@ -230,16 +245,22 @@ def _get_win_probs_and_edges_any(
             .join(latest, and_(ModelProb.market == latest.c.market, ModelProb.as_of == latest.c.latest))
             .all()
         )
-        if rows:
-            for r in rows:
-                m = (r.market or "").upper()
-                if m in ("HOME_WIN", "HOME"): probs["home"] = float(r.prob)
-                elif m == "DRAW": probs["draw"] = float(r.prob)
-                elif m in ("AWAY_WIN", "AWAY"): probs["away"] = float(r.prob)
+
+        found_any = False
+        for r in rows:
+            m = (r.market or "").upper()
+            if m in ("HOME_WIN", "HOME"):
+                probs["home"] = float(r.prob); found_any = True
+            elif m == "DRAW":
+                probs["draw"] = float(r.prob); found_any = True
+            elif m in ("AWAY_WIN", "AWAY"):
+                probs["away"] = float(r.prob); found_any = True
+
+        if found_any:
             used_source = src
             break
 
-    # edges: prefer same source if we found one; else take best-all
+    # edges: align with the source if we found win probs; else take global best
     q = db.query(Edge).filter(Edge.fixture_id == fixture_id)
     if used_source:
         rows = q.filter(Edge.model_source == used_source).order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
@@ -259,10 +280,10 @@ def _get_win_probs_and_edges_any(
         if (e.edge or 0) > 0
     ][:top_k_edges]
 
-    return {"probs": probs, "edges": pos_edges, "source_used": used_source}
+    return {"probs": _fix_probs(probs), "edges": pos_edges, "source_used": used_source}
 
 # -------------------------------------------------------------------
-# Prompt builder (now includes team-stats + shared opponents + probs)
+# Prompt builder (includes team-stats + shared opponents + probs)
 # -------------------------------------------------------------------
 
 def _build_prompt_enriched(
@@ -277,14 +298,12 @@ def _build_prompt_enriched(
     away = fixture.away_team or "Away"
     comp  = fixture.comp or fixture.sport or "match"
 
-    # --- recent form (aggregates) ---
     hf, af = form_data.get("home", {}) or {}, form_data.get("away", {}) or {}
     h_w, h_d, h_l = int(hf.get("wins", 0)), int(hf.get("draws", 0)), int(hf.get("losses", 0))
     a_w, a_d, a_l = int(af.get("wins", 0)), int(af.get("draws", 0)), int(af.get("losses", 0))
     h_gf = float(hf.get("avg_goals_for") or 0.0);   h_ga = float(hf.get("avg_goals_against") or 0.0)
     a_gf = float(af.get("avg_goals_for") or 0.0);   a_ga = float(af.get("avg_goals_against") or 0.0)
 
-    # --- season/comp summary ---
     summary  = team_stats.get("summary") or {}
     home_sum = summary.get("home") or {}
     away_sum = summary.get("away") or {}
@@ -293,19 +312,17 @@ def _build_prompt_enriched(
     h_avg_gf = float(home_sum.get("avg_gf") or 0.0); h_avg_ga = float(home_sum.get("avg_ga") or 0.0)
     a_avg_gf = float(away_sum.get("avg_gf") or 0.0); a_avg_ga = float(away_sum.get("avg_ga") or 0.0)
 
-    # --- probabilities line ---
     p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
     _pct = lambda x: f"{(x*100):.1f}%" if x is not None else "n/a"
     prob_line = f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}." \
                 if any(v is not None for v in (p_home, p_draw, p_away)) else ""
 
-    # --- shared opponents (force a compact sentence) ---
+    # Force a compact shared-opponents sentence
     shared_sentence = ""
     if shared_text:
-        # Expect lines like: "- vs AC Milan: loss 0-2 | loss 2-1"
         bullets = [ln.strip() for ln in shared_text.splitlines() if ln.strip().startswith("- ")]
         parsed = []
-        for ln in bullets[:4]:  # cap to 4
+        for ln in bullets[:4]:
             m = re.match(r"-\s*vs\s*(.+?):\s*(.+?)\s*\|\s*(.+)$", ln)
             if m:
                 opp, home_res, away_res = m.groups()
@@ -313,7 +330,6 @@ def _build_prompt_enriched(
         if parsed:
             shared_sentence = "Shared opponents: " + ", ".join(parsed) + "."
 
-    # --- final prompt (explicitly require the sentence) ---
     return f"""Write a concise {comp} preview (6–8 lines) for {home} vs {away}.
 Use ONLY the factual data below — do not invent lineups or player news.
 Include the shared-opponents sentence exactly once.
@@ -358,7 +374,6 @@ def generate_ai_preview(
     if not form_data or (not form_data.get("home") and not form_data.get("away")):
         raise HTTPException(status_code=500, detail="Form data unavailable")
 
-    # enrich
     team_stats = _get_team_stats(fixture_id)
     ctx = _fixture_ctx_for_shared(fx)
     shared_text = _shared_opponents_text(ctx["home_pid"], ctx["away_pid"], ctx["season"], ctx["league_id"], n)
@@ -458,9 +473,6 @@ def generate_daily_ai_previews(
     overwrite: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    """
-    Generate AI previews for all fixtures on a given day (default = today).
-    """
     try:
         day_obj = date.fromisoformat(day)
     except ValueError:
@@ -528,7 +540,7 @@ def generate_daily_ai_previews(
             else:
                 ai = AIPreview(
                     fixture_id=fx.id,
-                    day=day_obj,                      # save for requested day
+                    day=day_obj,
                     sport=fx.sport or sport,
                     comp=fx.comp,
                     preview=text,
@@ -598,8 +610,7 @@ def public_preview_by_fixture(
         raise HTTPException(status_code=404, detail="No preview found")
     return _row_to_payload(latest)
 
-# --- Expert bettor analysis (JSON for Predictions tab) -----------------------
-# (kept as your working version; still uses single-source team_form)
+# --- Expert bettor analysis (unchanged) --------------------------------------
 
 @router.get("/expert")
 def expert_prediction(
