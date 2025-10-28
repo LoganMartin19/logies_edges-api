@@ -5,12 +5,12 @@ import os
 import re
 import json
 from datetime import datetime, timezone, date, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Optional
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, desc
 from openai import OpenAI
 
 from ..db import get_db
@@ -142,20 +142,57 @@ def _shared_opponents_text(
     return ("Shared Opponents (recent, same league):\n" + "\n".join(take)) if take else ""
 
 # -------------------------------------------------------------------
-# Probability helpers
+# Probability helpers (STRICT H/D/A with same timestamp)
 # -------------------------------------------------------------------
 
-def _fix_probs(p: dict) -> dict:
-    """Clamp + normalize probabilities."""
-    def c(v):
-        return None if v is None else max(0.0, min(1.0, float(v)))
-    out = {"home": c(p.get("home")), "draw": c(p.get("draw")), "away": c(p.get("away"))}
-    vals = [out["home"], out["draw"], out["away"]]
-    if all(v is not None for v in vals):
-        s = sum(vals)
-        if s > 0:
-            out = {k: (v / s) for k, v in out.items()}
-    return out
+HDA_ONLY = ("HOME_WIN", "DRAW", "AWAY_WIN")
+
+def _pick_latest_complete_triplet(
+    rows: List[ModelProb]
+) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[datetime]]:
+    """
+    From a list of ModelProb rows (already filtered to H/D/A), pick the most recent
+    timestamp that has all three markets present. Returns (home, draw, away, as_of).
+    """
+    # Group by as_of (to the second)
+    buckets: Dict[str, Dict[str, ModelProb]] = {}
+    for r in rows:
+        tkey = (r.as_of.replace(microsecond=0)).isoformat()
+        buckets.setdefault(tkey, {})
+        buckets[tkey][(r.market or "").upper()] = r
+
+    # Iterate most recent first
+    for tkey in sorted(buckets.keys(), reverse=True):
+        bucket = buckets[tkey]
+        if all(m in bucket for m in HDA_ONLY):
+            h = float(bucket["HOME_WIN"].prob)
+            d = float(bucket["DRAW"].prob)
+            a = float(bucket["AWAY_WIN"].prob)
+            as_of = bucket["HOME_WIN"].as_of
+            return h, d, a, as_of
+    return None, None, None, None
+
+
+def _get_win_probs_strict(
+    db: Session,
+    fixture_id: int,
+    source: str = "team_form",
+) -> Dict[str, Optional[float]]:
+    """
+    STRICT: pull only HOME_WIN/DRAW/AWAY_WIN from the most-recent timestamp
+    where all three exist together. This prevents mixing markets from different
+    calc runs (the root of your 57.8% issue).
+    """
+    rows: List[ModelProb] = (
+        db.query(ModelProb)
+        .filter(ModelProb.fixture_id == fixture_id)
+        .filter(ModelProb.source == source)
+        .filter(ModelProb.market.in_(HDA_ONLY))
+        .order_by(desc(ModelProb.as_of))
+        .all()
+    )
+    h, d, a, _ = _pick_latest_complete_triplet(rows)
+    return {"home": h, "draw": d, "away": a}
 
 
 def _get_win_probs_and_edges_any(
@@ -164,16 +201,28 @@ def _get_win_probs_and_edges_any(
     sources: List[str] = ["team_form", "consensus_calib", "consensus_v2"],
     top_k_edges: int = 5,
 ) -> dict:
+    """
+    New behavior: for each source in order, try STRICT H/D/A triplet first.
+    If no complete triplet exists, fall back to your old per-market-latest logic
+    but still ignore HOME/AWAY markets.
+    """
     probs = {"home": None, "draw": None, "away": None}
     used_source = None
 
     for src in sources:
+        strict = _get_win_probs_strict(db, fixture_id, source=src)
+        if all(strict[k] is not None for k in ("home", "draw", "away")):
+            probs = strict
+            used_source = src
+            break
+
+        # Fallback: take latest per market among H/D/A only
         latest = (
             db.query(ModelProb.market, func.max(ModelProb.as_of).label("latest"))
             .filter(
                 ModelProb.fixture_id == fixture_id,
                 ModelProb.source == src,
-                ModelProb.market.in_(["HOME_WIN", "DRAW", "AWAY_WIN", "HOME", "AWAY"]),
+                ModelProb.market.in_(HDA_ONLY),
             )
             .group_by(ModelProb.market)
             .subquery()
@@ -183,25 +232,24 @@ def _get_win_probs_and_edges_any(
             .join(latest, and_(ModelProb.market == latest.c.market, ModelProb.as_of == latest.c.latest))
             .all()
         )
-
-        found = False
-        for r in rows:
-            m = (r.market or "").upper()
-            if m in ("HOME_WIN", "HOME"):
-                probs["home"] = float(r.prob); found = True
-            elif m == "DRAW":
-                probs["draw"] = float(r.prob); found = True
-            elif m in ("AWAY_WIN", "AWAY"):
-                probs["away"] = float(r.prob); found = True
-        if found:
+        if rows:
+            for r in rows:
+                m = (r.market or "").upper()
+                if m == "HOME_WIN":
+                    probs["home"] = float(r.prob)
+                elif m == "DRAW":
+                    probs["draw"] = float(r.prob)
+                elif m == "AWAY_WIN":
+                    probs["away"] = float(r.prob)
             used_source = src
             break
 
+    # edges aligned with used_source (if any)
     q = db.query(Edge).filter(Edge.fixture_id == fixture_id)
     if used_source:
-        edges = q.filter(Edge.model_source == used_source).order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
+        edges_rows = q.filter(Edge.model_source == used_source).order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
     else:
-        edges = q.order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
+        edges_rows = q.order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
 
     pos_edges = [
         {
@@ -212,10 +260,10 @@ def _get_win_probs_and_edges_any(
             "edge": float(e.edge) if e.edge is not None else None,
             "model_source": e.model_source,
         }
-        for e in edges if (e.edge or 0) > 0
+        for e in edges_rows if (e.edge or 0) > 0
     ][:top_k_edges]
 
-    return {"probs": _fix_probs(probs), "edges": pos_edges, "source_used": used_source or "unknown"}
+    return {"probs": probs, "edges": pos_edges, "source_used": used_source or "unknown"}
 
 # -------------------------------------------------------------------
 # Prompt builder
@@ -251,7 +299,7 @@ def _build_prompt_enriched(
     a_avg_gf = float(away_sum.get("avg_gf") or 0.0)
     a_avg_ga = float(away_sum.get("avg_ga") or 0.0)
 
-    # --- FIXED probability normalization (works for 2-way or 3-way models)
+    # normalize to percentages with sum ~100
     p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
     vals = [v for v in [p_home, p_draw, p_away] if v is not None]
     if vals and sum(vals) > 0:
@@ -261,16 +309,15 @@ def _build_prompt_enriched(
         if p_draw is not None: p_draw *= scale
         if p_away is not None: p_away *= scale
 
-    def _pct(v):
-        return f"{v:.1f}%" if v is not None else "n/a"
+    def _pct(v): return f"{v:.1f}%" if v is not None else "n/a"
 
-    # Build dynamic probability line
-    if p_draw is None:
-        prob_line = f"Model probabilities — {home}: {_pct(p_home)}, {away}: {_pct(p_away)}."
-    else:
-        prob_line = f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}."
+    prob_line = (
+        f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}."
+        if p_draw is not None
+        else f"Model probabilities — {home}: {_pct(p_home)}, {away}: {_pct(p_away)}."
+    )
 
-    # --- Compact shared-opponents sentence ---
+    # Compact shared-opponents sentence
     shared_sentence = ""
     if shared_text:
         bullets = [ln.strip() for ln in shared_text.splitlines() if ln.strip().startswith("- ")]
@@ -298,8 +345,9 @@ Season stats:
 {prob_line}
 {shared_sentence}
 End with one balanced 'what decides it' line."""
+
 # -------------------------------------------------------------------
-# Routes — Generate Preview (uses multi-source + enrichments)
+# Routes — Generate Preview (team_form + strict probs)
 # -------------------------------------------------------------------
 
 @router.post("/generate")
@@ -330,6 +378,7 @@ def generate_ai_preview(
     team_stats = _get_team_stats(fixture_id)
     ctx = _fixture_ctx_for_shared(fx)
     shared_text = _shared_opponents_text(ctx["home_pid"], ctx["away_pid"], ctx["season"], ctx["league_id"], n)
+
     mdl = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
     probs = mdl["probs"]
 
@@ -337,7 +386,7 @@ def generate_ai_preview(
     client = _openai_client()
 
     try:
-        resp = client.chat_completions.create(  # support both clients; fallback below if needed
+        resp = client.chat_completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a neutral, sharp football analyst."},
@@ -357,11 +406,8 @@ def generate_ai_preview(
             max_tokens=280,
         )
 
-    try:
-        text = (resp.choices[0].message.content or "").strip()
-        tokens = getattr(getattr(resp, "usage", None), "total_tokens", None)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OpenAI call failed: {e}")
+    text = (resp.choices[0].message.content or "").strip()
+    tokens = getattr(getattr(resp, "usage", None), "total_tokens", None)
 
     if existing:
         existing.preview, existing.tokens = text, tokens
@@ -382,55 +428,68 @@ def generate_ai_preview(
 
     return {"ok": True, "fixture_id": fixture_id, "preview": text, "tokens": tokens}
 
+# -------------------------------------------------------------------
+# Debug helpers
+# -------------------------------------------------------------------
 
-@router.get("/get")
-def get_ai_preview(fixture_id: int, db: Session = Depends(get_db)):
-    today = date.today()
-    row = (
-        db.query(AIPreview)
-        .filter(AIPreview.fixture_id == fixture_id, AIPreview.day == today)
-        .first()
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="Preview not found")
-    return {"fixture_id": fixture_id, "preview": row.preview, "model": row.model}
+@router.get("/winprobs")
+def admin_win_probs(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
+    return _get_win_probs_strict(db, fixture_id, source=source)
 
 
-@router.get("/debug/form")
-def debug_form_data(fixture_id: int, db: Session = Depends(get_db)):
-    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
-    if not fx:
-        return {"error": "Fixture not found"}
-    form = _form_from_db(db, fixture_id, n=5)
+@router.get("/edges")
+def admin_edges(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
+    data = _get_win_probs_and_edges_any(db, fixture_id, sources=[source], top_k_edges=50)
+    return data["edges"]
+
+
+@router.get("/debug/probs")
+def debug_preview_probs(fixture_id: int = Query(...), db: Session = Depends(get_db)):
+    mdl = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"])
+    probs = mdl["probs"]
+    p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
+    vals = [v for v in [p_home, p_draw, p_away] if v is not None]
+    if vals and sum(vals) > 0:
+        total = sum(vals)
+        scale = 100.0 / total
+        if p_home is not None: p_home *= scale
+        if p_draw is not None: p_draw *= scale
+        if p_away is not None: p_away *= scale
+
+    def _pct(v): return f"{v:.1f}%" if v is not None else "n/a"
+
     return {
         "fixture_id": fixture_id,
-        "home_team": fx.home_team,
-        "away_team": fx.away_team,
-        "home_summary": form.get("home"),
-        "away_summary": form.get("away"),
+        "source_used": mdl.get("source_used"),
+        "normalized_probs": {"home": _pct(p_home), "draw": _pct(p_draw), "away": _pct(p_away)}
     }
 
-@router.get("/debug/shared")
-def debug_shared(fixture_id: int, db: Session = Depends(get_db)):
-    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
-    if not fx:
-        raise HTTPException(status_code=404, detail="Fixture not found")
 
-    ctx = _fixture_ctx_for_shared(fx)
-    shared = _shared_opponents_text(
-        ctx["home_pid"], ctx["away_pid"], ctx["season"], ctx["league_id"], 8
+@router.get("/debug/winprobs-rows")
+def debug_winprob_rows(
+    fixture_id: int = Query(...),
+    source: str = Query("team_form"),
+    db: Session = Depends(get_db),
+):
+    rows: List[ModelProb] = (
+        db.query(ModelProb)
+        .filter(ModelProb.fixture_id == fixture_id)
+        .filter(ModelProb.source == source)
+        .filter(ModelProb.market.in_(HDA_ONLY))
+        .order_by(desc(ModelProb.as_of))
+        .all()
     )
-    return {
-        "fixture_id": fixture_id,
-        "home_pid": ctx["home_pid"],
-        "away_pid": ctx["away_pid"],
-        "league_id": ctx["league_id"],
-        "season": ctx["season"],
-        "shared_text": shared,
-    }
+    return [
+        {
+            "market": r.market,
+            "prob": float(r.prob),
+            "as_of": r.as_of.isoformat()
+        }
+        for r in rows
+    ]
 
 # -------------------------------------------------------------------
-# Batch (daily) generation
+# Batch (daily) generation  — FIXED fx.id
 # -------------------------------------------------------------------
 
 @router.post("/generate/daily")
@@ -481,7 +540,8 @@ def generate_daily_ai_previews(
             team_stats = _get_team_stats(fx.id)
             ctx = _fixture_ctx_for_shared(fx)
             shared_text = _shared_opponents_text(ctx["home_pid"], ctx["away_pid"], ctx["season"], ctx["league_id"], n)
-            mdl = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
+
+            mdl = _get_win_probs_and_edges_any(db, fx.id, sources=["team_form"], top_k_edges=5)
             probs = mdl["probs"]
 
             prompt = _build_prompt_enriched(fx, form_data, team_stats, shared_text, probs, n)
@@ -592,7 +652,7 @@ def public_preview_by_fixture(
     return _row_to_payload(latest)
 
 # -------------------------------------------------------------------
-# Expert bettor analysis (unchanged logic)
+# Expert bettor analysis (uses same strict probs)
 # -------------------------------------------------------------------
 
 @router.get("/expert")
@@ -622,7 +682,6 @@ def expert_prediction(
             "cached": True,
         }
 
-    # context
     form_data = _form_from_db(db, fixture_id, n=n)
     model = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
     p_home = model["probs"]["home"]
@@ -741,70 +800,4 @@ Produce a SINGLE JSON object with:
         "away": fx.away_team,
         "analysis": data,
         "cached": False,
-    }
-
-
-@router.get("/winprobs")
-def admin_win_probs(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
-    # keep simple admin passthrough (no edges)
-    latest = (
-        db.query(ModelProb.market, func.max(ModelProb.as_of).label("latest"))
-        .filter(
-            ModelProb.fixture_id == fixture_id,
-            ModelProb.source == source,
-            ModelProb.market.in_(["HOME_WIN", "DRAW", "AWAY_WIN", "HOME", "AWAY"]),
-        )
-        .group_by(ModelProb.market)
-        .subquery()
-    )
-    rows = (
-        db.query(ModelProb)
-        .join(latest, and_(ModelProb.market == latest.c.market, ModelProb.as_of == latest.c.latest))
-        .all()
-    )
-    out = {"home": None, "draw": None, "away": None}
-    for r in rows:
-        m = (r.market or "").upper()
-        if m in ("HOME_WIN", "HOME"): out["home"] = float(r.prob)
-        elif m == "DRAW": out["draw"] = float(r.prob)
-        elif m in ("AWAY_WIN", "AWAY"): out["away"] = float(r.prob)
-    return _fix_probs(out)
-
-
-@router.get("/edges")
-def admin_edges(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
-    data = _get_win_probs_and_edges_any(db, fixture_id, sources=[source], top_k_edges=50)
-    return data["edges"]
-
-@router.get("/debug/probs")
-def debug_preview_probs(
-    fixture_id: int = Query(...),
-    db: Session = Depends(get_db),
-):
-    """Quick check: show raw + normalized probabilities for preview generation."""
-    mdl = _get_win_probs_and_edges_any(db, fixture_id)
-    probs = mdl["probs"]
-
-    p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
-
-    # normalize the same way as in _build_prompt_enriched
-    vals = [v for v in [p_home, p_draw, p_away] if v is not None]
-    if vals and sum(vals) > 0:
-        total = sum(vals)
-        scale = 100.0 / total
-        if p_home is not None: p_home *= scale
-        if p_draw is not None: p_draw *= scale
-        if p_away is not None: p_away *= scale
-
-    def _pct(v): return f"{v:.1f}%" if v is not None else "n/a"
-
-    return {
-        "fixture_id": fixture_id,
-        "source_used": mdl.get("source_used"),
-        "raw_probs": mdl["probs"],
-        "normalized_probs": {
-            "home": _pct(p_home),
-            "draw": _pct(p_draw),
-            "away": _pct(p_away)
-        }
     }
