@@ -40,13 +40,19 @@ from .routes import (
     tennis as tennis_router,
     picks as picks_router,
     public as public_router,
-    preview as preview_router,  # ✅ AI previews
+    preview as preview_router,              # ⚽ sport-specific (football) private/admin
     accas as accas_router,
 )
+
+# --- NEW: sport-aware preview dispatch + other sports (NFL/NHL) ---
+from .routes.preview_dispatch import router as preview_dispatch_router, pub as preview_dispatch_pub
+from .routes.preview_gridiron import router as preview_gridiron_router
+from .routes.preview_hockey import router as preview_hockey_router
+
 from .services import league_strength
 
 # --- App init ---
-app = FastAPI(title="Value Betting API", version="0.2.0")
+app = FastAPI(title="Value Betting API", version="0.3.0")
 
 # --- CORS for frontend + live site ---
 app.add_middleware(
@@ -55,14 +61,13 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://logies-edges-site.vercel.app",
-        "https://logies-edges-dashboard.vercel.app",  # ✅ added dashboard
+        "https://logies-edges-dashboard.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# (Optional) allow all vercel preview domains too:
+# If you also want all Vercel preview URLs, uncomment:
 # app.add_middleware(
 #     CORSMiddleware,
 #     allow_origin_regex=r"https://.*\.vercel\.app$",
@@ -77,12 +82,10 @@ def health():
     """Lightweight health check for Render."""
     return {"ok": True}
 
-
 @app.get("/api/health")
 def api_health():
     """Mirror endpoint for dashboard/API checks."""
     return {"ok": True}
-
 
 # --- Startup ---
 @app.on_event("startup")
@@ -92,7 +95,6 @@ def startup():
     if env != "production":
         Base.metadata.create_all(bind=engine)
 
-
 # --- Optional compute route ---
 @app.post("/compute")
 def compute(db: Session = Depends(get_db)):
@@ -100,7 +102,6 @@ def compute(db: Session = Depends(get_db)):
     ensure_baseline_probs(db, now, source="team_form")
     compute_edges(db, now, settings.EDGE_MIN, source="team_form")
     return {"ok": True}
-
 
 # --- Include routers ---
 app.include_router(bets_router.router)
@@ -126,17 +127,22 @@ app.include_router(football_extra_router.router)
 app.include_router(player_props_router.router)
 app.include_router(tennis_router.router)
 app.include_router(picks_router.router)
-
 app.include_router(accas_router.router)
 
-
 # ✅ Public + AI Preview routes
-app.include_router(public_router.pub, prefix="/api")
-app.include_router(preview_router.router, prefix="/api")
-app.include_router(preview_router.pub, prefix="/api")
-app.include_router(accas_router.pub, prefix="/api")
-app.include_router(picks_router.pub, prefix="/api")
+app.include_router(public_router.pub, prefix="/api")                 # existing public pages
+# Keep football-specific private/admin preview routes available:
+app.include_router(preview_router.router, prefix="/api")             # /ai/preview (football-only, private)
+# ⛔️ Do NOT include preview_router.pub here to avoid path clash
+# app.include_router(preview_router.pub, prefix="/api")              # (removed; superseded by dispatcher)
 
+# NEW: include sport modules (private/admin endpoints for nfl/nhl, if any)
+app.include_router(preview_gridiron_router, prefix="/api")           # /ai/preview/gridiron/*
+app.include_router(preview_hockey_router, prefix="/api")             # /ai/preview/hockey/*
+
+# NEW: include dispatcher (auto routes + the unified public endpoint)
+app.include_router(preview_dispatch_router, prefix="/api")           # /ai/preview/generate/auto etc.
+app.include_router(preview_dispatch_pub, prefix="/api")              # /public/ai/preview/by-fixture (sport-agnostic)
 
 # --- Debug route for visibility ---
 @app.get("/debug/routes")

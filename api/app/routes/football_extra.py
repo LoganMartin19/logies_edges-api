@@ -839,6 +839,87 @@ def team_shots(
         **data,
     }
 
+@router.get("/team-stats")
+def team_stats(
+    fixture_id: int = Query(..., description="Internal fixture.id"),
+    refresh: bool = Query(False, description="Force refresh from provider"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return API-Football team statistics for both sides of a fixture (with DB caching).
+    Shape:
+      {
+        fixture_id, provider_fixture_id, league_id, season,
+        home_team, away_team,
+        home: { ...provider response... },
+        away: { ...provider response... },
+        summary: { home: {...}, away: {...} }   # handy subset
+      }
+    """
+    # resolve provider IDs
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
+    if not fx or not fx.provider_fixture_id:
+        raise HTTPException(status_code=404, detail="Fixture not found")
+    pfx = int(fx.provider_fixture_id)
+
+    fjson = get_fixture(pfx) or {}
+    core = (fjson.get("response") or [None])[0] or {}
+    lg = core.get("league") or {}
+    league_id = int(lg.get("id") or 0)
+    season    = int(lg.get("season") or 0)
+
+    teams = core.get("teams") or {}
+    home_pid = int(((teams.get("home") or {}).get("id")) or 0)
+    away_pid = int(((teams.get("away") or {}).get("id")) or 0)
+
+    if not (league_id and season and home_pid and away_pid):
+        raise HTTPException(status_code=502, detail="Missing league/season/team ids from provider")
+
+    # fetch (cached) team-season stats for this league
+    home_json = _get_team_stats_cached(db, home_pid, league_id, season, refresh=refresh) or {}
+    away_json = _get_team_stats_cached(db, away_pid, league_id, season, refresh=refresh) or {}
+
+    # provider puts payload under 'response' – keep that node for UI
+    home = home_json.get("response") or {}
+    away = away_json.get("response") or {}
+
+    # tiny, safe summary block your UI can use if desired
+    def _safe(v, *path, default=0.0):
+        cur = v
+        try:
+            for k in path:
+                cur = cur.get(k) if isinstance(cur, dict) else {}
+            x = cur
+            if isinstance(x, (int, float)): return float(x)
+            s = str(x).strip().replace("%","")
+            return float(s) if s else default
+        except Exception:
+            return default
+
+    def _summ(r):
+        return {
+            "played_total": int(_safe(r, "fixtures", "played", "total", default=0)),
+            "wins": int(_safe(r, "fixtures", "wins", "total", default=0)),
+            "draws": int(_safe(r, "fixtures", "draws", "total", default=0)),
+            "losses": int(_safe(r, "fixtures", "loses", "total", default=0)),
+            "gf": int(_safe(r, "goals", "for", "total", "total", default=0)),
+            "ga": int(_safe(r, "goals", "against", "total", "total", default=0)),
+            "avg_gf": _safe(r, "goals", "for", "average", "total", default=0.0),
+            "avg_ga": _safe(r, "goals", "against", "average", "total", default=0.0),
+            "form": (r.get("form") or None),
+        }
+
+    return {
+        "fixture_id": fixture_id,
+        "provider_fixture_id": pfx,
+        "league_id": league_id,
+        "season": season,
+        "home_team": fx.home_team,
+        "away_team": fx.away_team,
+        "home": home,
+        "away": away,
+        "summary": {"home": _summ(home), "away": _summ(away)},
+    }
 
 @router.get("/opponent-pace")
 def opponent_pace(
