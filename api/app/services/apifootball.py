@@ -33,9 +33,9 @@ LEAGUE_MAP = {
     # Scotland 🏴
     "SCO_PREM": 179, "Scottish Premiership": 179,
     "SCO_CHAMP": 180, "Scottish Championship": 180,
-    "SCO1": 181, "SCO2": 182,
+    "SCO1": 183, "SCO2": 184,
     "SCO_SC": 250, "Scottish Cup": 250,
-    "SCO_LC": 253, "Scottish League Cup": 253,
+    "SCO_LC": 185, "Scottish League Cup": 185,
 
     # Spain 🇪🇸
     "LA_LIGA": 140, "La Liga": 140,
