@@ -415,6 +415,25 @@ def debug_form_data(fixture_id: int, db: Session = Depends(get_db)):
         "away_summary": form.get("away"),
     }
 
+@router.get("/debug/shared")
+def debug_shared(fixture_id: int, db: Session = Depends(get_db)):
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
+    if not fx:
+        raise HTTPException(status_code=404, detail="Fixture not found")
+
+    ctx = _fixture_ctx_for_shared(fx)
+    shared = _shared_opponents_text(
+        ctx["home_pid"], ctx["away_pid"], ctx["season"], ctx["league_id"], 8
+    )
+    return {
+        "fixture_id": fixture_id,
+        "home_pid": ctx["home_pid"],
+        "away_pid": ctx["away_pid"],
+        "league_id": ctx["league_id"],
+        "season": ctx["season"],
+        "shared_text": shared,
+    }
+
 
 @router.post("/generate/daily")
 def generate_daily_ai_previews(
