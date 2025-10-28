@@ -229,24 +229,30 @@ def _build_prompt_enriched(
     probs: dict,
     n: int,
 ) -> str:
-    home, away = fixture.home_team or "Home", fixture.away_team or "Away"
+    home = fixture.home_team or "Home"
+    away = fixture.away_team or "Away"
     comp = fixture.comp or fixture.sport or "match"
 
     hf, af = form_data.get("home", {}) or {}, form_data.get("away", {}) or {}
     h_w, h_d, h_l = int(hf.get("wins", 0)), int(hf.get("draws", 0)), int(hf.get("losses", 0))
     a_w, a_d, a_l = int(af.get("wins", 0)), int(af.get("draws", 0)), int(af.get("losses", 0))
-    h_gf, h_ga = float(hf.get("avg_goals_for") or 0.0), float(hf.get("avg_goals_against") or 0.0)
-    a_gf, a_ga = float(af.get("avg_goals_for") or 0.0), float(af.get("avg_goals_against") or 0.0)
+    h_gf = float(hf.get("avg_goals_for") or 0.0)
+    h_ga = float(hf.get("avg_goals_against") or 0.0)
+    a_gf = float(af.get("avg_goals_for") or 0.0)
+    a_ga = float(af.get("avg_goals_against") or 0.0)
 
     summary = team_stats.get("summary") or {}
-    home_sum, away_sum = summary.get("home") or {}, summary.get("away") or {}
-    h_form, a_form = home_sum.get("form") or "?", away_sum.get("form") or "?"
-    h_avg_gf, h_avg_ga = float(home_sum.get("avg_gf") or 0.0), float(home_sum.get("avg_ga") or 0.0)
-    a_avg_gf, a_avg_ga = float(away_sum.get("avg_gf") or 0.0), float(away_sum.get("avg_ga") or 0.0)
+    home_sum = summary.get("home") or {}
+    away_sum = summary.get("away") or {}
+    h_form = home_sum.get("form") or "?"
+    a_form = away_sum.get("form") or "?"
+    h_avg_gf = float(home_sum.get("avg_gf") or 0.0)
+    h_avg_ga = float(home_sum.get("avg_ga") or 0.0)
+    a_avg_gf = float(away_sum.get("avg_gf") or 0.0)
+    a_avg_ga = float(away_sum.get("avg_ga") or 0.0)
 
     # --- FIXED probability normalization (works for 2-way or 3-way models)
     p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
-
     vals = [v for v in [p_home, p_draw, p_away] if v is not None]
     if vals and sum(vals) > 0:
         total = sum(vals)
@@ -258,13 +264,13 @@ def _build_prompt_enriched(
     def _pct(v):
         return f"{v:.1f}%" if v is not None else "n/a"
 
-    # Build dynamic label depending on which markets exist
+    # Build dynamic probability line
     if p_draw is None:
         prob_line = f"Model probabilities — {home}: {_pct(p_home)}, {away}: {_pct(p_away)}."
     else:
         prob_line = f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}."
 
-    # Build shared opponents compact line
+    # --- Compact shared-opponents sentence ---
     shared_sentence = ""
     if shared_text:
         bullets = [ln.strip() for ln in shared_text.splitlines() if ln.strip().startswith("- ")]
@@ -292,7 +298,6 @@ Season stats:
 {prob_line}
 {shared_sentence}
 End with one balanced 'what decides it' line."""
-
 # -------------------------------------------------------------------
 # Routes — Generate Preview (uses multi-source + enrichments)
 # -------------------------------------------------------------------
