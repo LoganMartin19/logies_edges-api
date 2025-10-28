@@ -330,7 +330,7 @@ def generate_ai_preview(
     team_stats = _get_team_stats(fixture_id)
     ctx = _fixture_ctx_for_shared(fx)
     shared_text = _shared_opponents_text(ctx["home_pid"], ctx["away_pid"], ctx["season"], ctx["league_id"], n)
-    mdl = _get_win_probs_and_edges_any(db, fixture_id)
+    mdl = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
     probs = mdl["probs"]
 
     prompt = _build_prompt_enriched(fx, form_data, team_stats, shared_text, probs, n)
