@@ -775,3 +775,36 @@ def admin_win_probs(fixture_id: int, source: str = Query("team_form"), db: Sessi
 def admin_edges(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
     data = _get_win_probs_and_edges_any(db, fixture_id, sources=[source], top_k_edges=50)
     return data["edges"]
+
+@router.get("/debug/probs")
+def debug_preview_probs(
+    fixture_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Quick check: show raw + normalized probabilities for preview generation."""
+    mdl = _get_win_probs_and_edges_any(db, fixture_id)
+    probs = mdl["probs"]
+
+    p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
+
+    # normalize the same way as in _build_prompt_enriched
+    vals = [v for v in [p_home, p_draw, p_away] if v is not None]
+    if vals and sum(vals) > 0:
+        total = sum(vals)
+        scale = 100.0 / total
+        if p_home is not None: p_home *= scale
+        if p_draw is not None: p_draw *= scale
+        if p_away is not None: p_away *= scale
+
+    def _pct(v): return f"{v:.1f}%" if v is not None else "n/a"
+
+    return {
+        "fixture_id": fixture_id,
+        "source_used": mdl.get("source_used"),
+        "raw_probs": mdl["probs"],
+        "normalized_probs": {
+            "home": _pct(p_home),
+            "draw": _pct(p_draw),
+            "away": _pct(p_away)
+        }
+    }
