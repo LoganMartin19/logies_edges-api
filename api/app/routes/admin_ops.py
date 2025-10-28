@@ -191,10 +191,41 @@ def admin_run_dates(
     db: Session = Depends(get_db),
     days: str = Query(..., description="CSV of YYYY-MM-DD"),
     leagues: str = Query(
-        "EPL,CHAMP,LG1,LG2,SCO_PREM,SCO_CHAMP,SCO1,SCO2,"
-        "LA_LIGA,BUNDES,BUNDES2,SERIE_A,SERIE_B,LIGUE1,"
-        "UCL,UEL,MLS,UECL,EFL_TROPHY,UWCL,"
-        "NFL,NCAA,NHL,NBA,BR_SERIE_A"   # ✅ added NBA
+        # England + Cups
+        "EPL,CHAMP,LG1,LG2,ENG_FA,EFL_CUP,EFL_TROPHY,"
+        # Scotland + Cups
+        "SCO_PREM,SCO_CHAMP,SCO1,SCO2,SCO_SC,SCO_LC,"
+        # Spain + Cup
+        "LA_LIGA,LA_LIGA2,ESP_CDR,"
+        # Germany + Cup
+        "BUNDES,BUNDES2,GER_POKAL,"
+        # Italy + Cup
+        "SERIE_A,SERIE_B,ITA_COPPA,"
+        # France + Cup
+        "LIGUE1,LIGUE2,FRA_CDF,"
+        # Portugal + Cup
+        "POR_LIGA,POR_TACA,"
+        # Netherlands + Cup
+        "NED_ERED,NED_EERST,NED_KNVB,"
+        # Belgium + Cup
+        "BEL_PRO,BEL_CUP,"
+        # Norway + Cup
+        "NOR_ELI,NOR_CUP,"
+        # Denmark + Cup
+        "DEN_SL,DEN_CUP,"
+        # Sweden + Cup
+        "SWE_ALLS,SWE_SUPER,SWE_CUP,"
+        # Argentina + Cups
+        "ARG_LP,ARG_CDL,ARG_CUP,"
+        # Brazil
+        "BR_SERIE_A,BR_SERIE_B,"
+        # USA
+        "MLS,"
+        # Europe comps
+        "UCL,UEL,UECL,UWCL,"
+        # Other sports you already run through here
+        "NFL,NCAA,NHL,NBA",
+        description="CSV of league keys to ingest"
     ),
     prefer_book: str = Query(None),
     compute_after: int = Query(1),

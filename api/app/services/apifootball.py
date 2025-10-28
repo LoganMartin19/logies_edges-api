@@ -75,7 +75,7 @@ LEAGUE_MAP = {
     "NOR_CUP": 104, "Norwegian Cup": 104,
 
     # Denmark 🇩🇰
-    "DEN_SL": 61, "Superliga": 61,
+    "DEN_SL": 119, "Superliga": 119,
     "DEN_CUP": 63, "DBU Pokalen": 63,
 
     # Sweden 🇸🇪
