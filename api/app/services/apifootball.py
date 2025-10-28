@@ -21,37 +21,85 @@ HEADERS = {
 
 # ---------------- League IDs ----------------
 LEAGUE_MAP = {
-    # England
+    # England 🇬🇧
     "EPL": 39, "Premier League": 39,
     "CHAMP": 40, "Championship": 40,
     "LG1": 41, "League One": 41,
     "LG2": 42, "League Two": 42,
+    "ENG_FA": 45, "FA Cup": 45,
     "EFL_CUP": 185, "EFL Cup": 185,
     "EFL_TROPHY": 46, "EFL Trophy": 46,
 
-    # Scotland
+    # Scotland 🏴
     "SCO_PREM": 179, "Scottish Premiership": 179,
     "SCO_CHAMP": 180, "Scottish Championship": 180,
     "SCO1": 181, "SCO2": 182,
+    "SCO_SC": 250, "Scottish Cup": 250,
+    "SCO_LC": 253, "Scottish League Cup": 253,
 
-    # Europe
+    # Spain 🇪🇸
     "LA_LIGA": 140, "La Liga": 140,
+    "LA_LIGA2": 141, "La Liga 2": 141,
+    "ESP_CDR": 143, "Copa del Rey": 143,
+
+    # Germany 🇩🇪
     "BUNDES": 78, "Bundesliga": 78,
     "BUNDES2": 79, "2. Bundesliga": 79,
+    "GER_POKAL": 81, "DFB-Pokal": 81,
+
+    # Italy 🇮🇹
     "SERIE_A": 135, "Serie A": 135,
     "SERIE_B": 136, "Serie B": 136,
-    "LIGUE1": 61, "Ligue 1": 61,
+    "ITA_COPPA": 137, "Coppa Italia": 137,
 
+    # France 🇫🇷
+    "LIGUE1": 61, "Ligue 1": 61,
+    "LIGUE2": 62, "Ligue 2": 62,
+    "FRA_CDF": 66, "Coupe de France": 66,
+
+    # Portugal 🇵🇹
+    "POR_LIGA": 94, "Primeira Liga": 94,
+    "POR_TACA": 95, "Taça de Portugal": 95,
+
+    # Netherlands 🇳🇱
+    "NED_ERED": 88, "Eredivisie": 88,
+    "NED_EERST": 89, "Eerste Divisie": 89,
+    "NED_KNVB": 90, "KNVB Beker": 90,
+
+    # Belgium 🇧🇪
+    "BEL_PRO": 144, "Pro League": 144,
+    "BEL_CUP": 145, "Belgian Cup": 145,
+
+    # Norway 🇳🇴
+    "NOR_ELI": 103, "Eliteserien": 103,
+    "NOR_CUP": 104, "Norwegian Cup": 104,
+
+    # Denmark 🇩🇰
+    "DEN_SL": 61, "Superliga": 61,
+    "DEN_CUP": 63, "DBU Pokalen": 63,
+
+    # Sweden 🇸🇪
+    "SWE_ALLS": 113, "Allsvenskan": 113,
+    "SWE_SUPER": 114, "Superettan": 114,
+    "SWE_CUP": 115, "Svenska Cupen": 115,
+
+    # Argentina 🇦🇷
+    "ARG_LP": 128, "Liga Profesional": 128,
+    "ARG_CDL": 130, "Copa de la Liga Profesional": 130,
+    "ARG_CUP": 131, "Copa Argentina": 131,
+
+    # Brazil 🇧🇷
+    "BR_SERIE_A": 71, "Brasileirão Série A": 71,
+    "BR_SERIE_B": 72, "Brasileirão Série B": 72,
+
+    # USA 🇺🇸
+    "MLS": 253, "Major League Soccer": 253,
+
+    # Continental 🇪🇺
     "UCL": 2, "UEFA Champions League": 2,
     "UEL": 3, "UEFA Europa League": 3,
     "UECL": 848, "UEFA Europa Conference League": 848,
     "UWCL": 525, "UEFA Women's Champions League": 525,
-
-    # USA
-    "MLS": 253, "Major League Soccer": 253,
-
-    #Brazil
-    "BR_SERIE_A": 71, "Brasileirão Série A": 71,
 }
 
 def canonicalize_comp(league_obj: dict) -> str:
