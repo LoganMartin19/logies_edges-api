@@ -340,3 +340,111 @@ def public_preview_by_fixture(
         "model": row.model,
         "updated_at": row.updated_at.isoformat(),
     }
+
+@router.get("/expert")
+def expert_prediction(
+    fixture_id: int = Query(...),
+    n: int = Query(5, ge=3, le=10),
+    overwrite: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
+    if not fx:
+        raise HTTPException(status_code=404, detail="Fixture not found")
+
+    today = date.today()
+
+    existing = (
+        db.query(ExpertPrediction)
+        .filter(ExpertPrediction.fixture_id == fixture_id, ExpertPrediction.day == today)
+        .first()
+    )
+    if existing and not overwrite:
+        return {
+            "fixture_id": fixture_id,
+            "home": fx.home_team,
+            "away": fx.away_team,
+            "analysis": existing.payload,
+            "cached": True,
+        }
+
+    # --- Context Data ---
+    form_data = _form_from_db(db, fixture_id, n)
+    team_stats = _get_team_stats(fixture_id)
+    probs = _get_win_probs_and_edges(db, fixture_id)
+    ctx = _fixture_ctx_for_shared(fx)
+    shared_text = _shared_opponents_text(ctx["home_pid"], ctx["away_pid"], ctx["season"], ctx["league_id"], n)
+
+    # --- Prompt for AI ---
+    prompt = f"""
+You are a professional sports betting analyst.
+Write a sharp, data-based analysis for {fx.home_team} vs {fx.away_team} ({fx.comp or fx.sport}).
+
+Use only the factual data below — no speculation.
+Include what the stats suggest, how styles might clash, and which metrics stand out.
+End with one line about what may decide the outcome.
+
+Form (last {n}):
+{form_data}
+
+Team Stats:
+{json.dumps(team_stats, indent=2)}
+
+Model Probabilities:
+{json.dumps(probs, indent=2)}
+
+{shared_text}
+
+Return a JSON object with:
+- "paragraphs": 2–3 short paragraphs of text
+- "confidence": "Low" | "Medium" | "High"
+- "best_bets": up to 3 picks from model edges (if relevant)
+- "disclaimer": a short reminder about betting variance
+""".strip()
+
+    client = _openai_client()
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Return valid JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.6,
+            max_tokens=450,
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+    except Exception as e:
+        print(f"[expert_prediction] OpenAI error: {e}")
+        data = {
+            "paragraphs": ["Analysis unavailable."],
+            "confidence": "Low",
+            "best_bets": [],
+            "disclaimer": "No betting recommendation due to limited data."
+        }
+
+    # --- Save to DB ---
+    try:
+        if existing:
+            existing.payload = data
+            existing.updated_at = datetime.utcnow()
+        else:
+            db.add(ExpertPrediction(
+                fixture_id=fixture_id,
+                day=today,
+                payload=data,
+                confidence=data.get("confidence", "Low"),
+            ))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[expert_prediction] DB write error: {e}")
+
+    return {
+        "fixture_id": fixture_id,
+        "home": fx.home_team,
+        "away": fx.away_team,
+        "analysis": data,
+        "cached": False,
+    }
