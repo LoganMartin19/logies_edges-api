@@ -244,18 +244,25 @@ def _build_prompt_enriched(
     h_avg_gf, h_avg_ga = float(home_sum.get("avg_gf") or 0.0), float(home_sum.get("avg_ga") or 0.0)
     a_avg_gf, a_avg_ga = float(away_sum.get("avg_gf") or 0.0), float(away_sum.get("avg_ga") or 0.0)
 
-    # Format probabilities like expert route: normalize -> percent
+    # --- FIXED probability normalization (works for 2-way or 3-way models)
     p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
-    if all(v is not None for v in [p_home, p_draw, p_away]):
-        total = p_home + p_draw + p_away
-        if total > 0:
-            p_home, p_draw, p_away = [v / total * 100 for v in [p_home, p_draw, p_away]]
-    _pct = lambda x: f"{x:.1f}%" if x is not None else "n/a"
-    prob_line = (
-        f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}."
-        if any(v is not None for v in [p_home, p_draw, p_away])
-        else ""
-    )
+
+    vals = [v for v in [p_home, p_draw, p_away] if v is not None]
+    if vals and sum(vals) > 0:
+        total = sum(vals)
+        scale = 100.0 / total
+        if p_home is not None: p_home *= scale
+        if p_draw is not None: p_draw *= scale
+        if p_away is not None: p_away *= scale
+
+    def _pct(v):
+        return f"{v:.1f}%" if v is not None else "n/a"
+
+    # Build dynamic label depending on which markets exist
+    if p_draw is None:
+        prob_line = f"Model probabilities — {home}: {_pct(p_home)}, {away}: {_pct(p_away)}."
+    else:
+        prob_line = f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}."
 
     # Build shared opponents compact line
     shared_sentence = ""
