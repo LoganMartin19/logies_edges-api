@@ -1,9 +1,8 @@
 # api/app/routes/preview.py
-# api/app/routes/preview.py
 from __future__ import annotations
 
 import os
-import re  # <-- NEW: for shared-opponents parsing
+import re
 import json
 from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict, List
@@ -33,7 +32,7 @@ router = APIRouter(prefix="/ai/preview", tags=["AI Preview"])
 pub = APIRouter(prefix="/public/ai/preview", tags=["Public AI Preview"])
 
 # -------------------------------------------------------------------
-# Config / Base helpers
+# Base / Config
 # -------------------------------------------------------------------
 
 def _api_base() -> str:
@@ -52,7 +51,7 @@ def _openai_client() -> OpenAI:
     return OpenAI(api_key=key)
 
 # -------------------------------------------------------------------
-# Data helpers (form, team-stats, probs/edges, shared opponents)
+# Helpers — Form, Stats, Shared Opponents
 # -------------------------------------------------------------------
 
 def _form_from_db(db: Session, fixture_id: int, n: int) -> Dict[str, Any]:
@@ -142,72 +141,12 @@ def _shared_opponents_text(
 
     return ("Shared Opponents (recent, same league):\n" + "\n".join(take)) if take else ""
 
+# -------------------------------------------------------------------
+# Probability helpers
+# -------------------------------------------------------------------
 
-# ---- ORIGINAL helper (used by expert route) --------------------------------
-def _get_win_probs_and_edges(
-    db: Session,
-    fixture_id: int,
-    source: str = "team_form",
-    top_k_edges: int = 5,
-) -> dict:
-    latest = (
-        db.query(
-            ModelProb.market,
-            func.max(ModelProb.as_of).label("latest"),
-        )
-        .filter(
-            ModelProb.fixture_id == fixture_id,
-            ModelProb.source == source,
-            ModelProb.market.in_(["HOME_WIN", "DRAW", "AWAY_WIN"]),
-        )
-        .group_by(ModelProb.market)
-        .subquery()
-    )
-
-    probs_rows = (
-        db.query(ModelProb)
-        .join(latest, and_(
-            ModelProb.market == latest.c.market,
-            ModelProb.as_of == latest.c.latest
-        ))
-        .all()
-    )
-
-    p_home = p_draw = p_away = None
-    for r in probs_rows:
-        if r.market == "HOME_WIN":
-            p_home = float(r.prob)
-        elif r.market == "DRAW":
-            p_draw = float(r.prob)
-        elif r.market == "AWAY_WIN":
-            p_away = float(r.prob)
-
-    edges_rows = (
-        db.query(Edge)
-        .filter(Edge.fixture_id == fixture_id, Edge.model_source == source)
-        .order_by(Edge.edge.desc(), Edge.created_at.desc())
-        .all()
-    )
-
-    pos_edges = [
-        {
-            "market": e.market,
-            "bookmaker": e.bookmaker,
-            "price": float(e.price) if e.price is not None else None,
-            "prob": float(e.prob) if e.prob is not None else None,
-            "edge": float(e.edge) if e.edge is not None else None,
-        }
-        for e in edges_rows
-        if (e.edge or 0) > 0
-    ][:top_k_edges]
-
-    return {"probs": {"home": p_home, "draw": p_draw, "away": p_away}, "edges": pos_edges}
-
-
-# ---- NEW robust helper (multi-source fallback for previews) -----------------
-
-# clamp + optional renorm (only if we have all three)
 def _fix_probs(p: dict) -> dict:
+    """Clamp + normalize probabilities."""
     def c(v):
         return None if v is None else max(0.0, min(1.0, float(v)))
     out = {"home": c(p.get("home")), "draw": c(p.get("draw")), "away": c(p.get("away"))}
@@ -218,6 +157,7 @@ def _fix_probs(p: dict) -> dict:
             out = {k: (v / s) for k, v in out.items()}
     return out
 
+
 def _get_win_probs_and_edges_any(
     db: Session,
     fixture_id: int,
@@ -227,15 +167,13 @@ def _get_win_probs_and_edges_any(
     probs = {"home": None, "draw": None, "away": None}
     used_source = None
 
-    HDA_SET = ["HOME_WIN", "DRAW", "AWAY_WIN", "HOME", "AWAY"]  # <-- ensure only win markets
-
     for src in sources:
         latest = (
             db.query(ModelProb.market, func.max(ModelProb.as_of).label("latest"))
             .filter(
                 ModelProb.fixture_id == fixture_id,
                 ModelProb.source == src,
-                ModelProb.market.in_(HDA_SET),  # <-- filter to H/D/A only
+                ModelProb.market.in_(["HOME_WIN", "DRAW", "AWAY_WIN", "HOME", "AWAY"]),
             )
             .group_by(ModelProb.market)
             .subquery()
@@ -246,26 +184,24 @@ def _get_win_probs_and_edges_any(
             .all()
         )
 
-        found_any = False
+        found = False
         for r in rows:
             m = (r.market or "").upper()
             if m in ("HOME_WIN", "HOME"):
-                probs["home"] = float(r.prob); found_any = True
+                probs["home"] = float(r.prob); found = True
             elif m == "DRAW":
-                probs["draw"] = float(r.prob); found_any = True
+                probs["draw"] = float(r.prob); found = True
             elif m in ("AWAY_WIN", "AWAY"):
-                probs["away"] = float(r.prob); found_any = True
-
-        if found_any:
+                probs["away"] = float(r.prob); found = True
+        if found:
             used_source = src
             break
 
-    # edges: align with the source if we found win probs; else take global best
     q = db.query(Edge).filter(Edge.fixture_id == fixture_id)
     if used_source:
-        rows = q.filter(Edge.model_source == used_source).order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
+        edges = q.filter(Edge.model_source == used_source).order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
     else:
-        rows = q.order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
+        edges = q.order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
 
     pos_edges = [
         {
@@ -276,14 +212,13 @@ def _get_win_probs_and_edges_any(
             "edge": float(e.edge) if e.edge is not None else None,
             "model_source": e.model_source,
         }
-        for e in rows
-        if (e.edge or 0) > 0
+        for e in edges if (e.edge or 0) > 0
     ][:top_k_edges]
 
-    return {"probs": _fix_probs(probs), "edges": pos_edges, "source_used": used_source}
+    return {"probs": _fix_probs(probs), "edges": pos_edges, "source_used": used_source or "unknown"}
 
 # -------------------------------------------------------------------
-# Prompt builder (includes team-stats + shared opponents + probs)
+# Prompt builder
 # -------------------------------------------------------------------
 
 def _build_prompt_enriched(
@@ -294,30 +229,35 @@ def _build_prompt_enriched(
     probs: dict,
     n: int,
 ) -> str:
-    home = fixture.home_team or "Home"
-    away = fixture.away_team or "Away"
-    comp  = fixture.comp or fixture.sport or "match"
+    home, away = fixture.home_team or "Home", fixture.away_team or "Away"
+    comp = fixture.comp or fixture.sport or "match"
 
     hf, af = form_data.get("home", {}) or {}, form_data.get("away", {}) or {}
     h_w, h_d, h_l = int(hf.get("wins", 0)), int(hf.get("draws", 0)), int(hf.get("losses", 0))
     a_w, a_d, a_l = int(af.get("wins", 0)), int(af.get("draws", 0)), int(af.get("losses", 0))
-    h_gf = float(hf.get("avg_goals_for") or 0.0);   h_ga = float(hf.get("avg_goals_against") or 0.0)
-    a_gf = float(af.get("avg_goals_for") or 0.0);   a_ga = float(af.get("avg_goals_against") or 0.0)
+    h_gf, h_ga = float(hf.get("avg_goals_for") or 0.0), float(hf.get("avg_goals_against") or 0.0)
+    a_gf, a_ga = float(af.get("avg_goals_for") or 0.0), float(af.get("avg_goals_against") or 0.0)
 
-    summary  = team_stats.get("summary") or {}
-    home_sum = summary.get("home") or {}
-    away_sum = summary.get("away") or {}
-    h_form   = home_sum.get("form") or "?"
-    a_form   = away_sum.get("form") or "?"
-    h_avg_gf = float(home_sum.get("avg_gf") or 0.0); h_avg_ga = float(home_sum.get("avg_ga") or 0.0)
-    a_avg_gf = float(away_sum.get("avg_gf") or 0.0); a_avg_ga = float(away_sum.get("avg_ga") or 0.0)
+    summary = team_stats.get("summary") or {}
+    home_sum, away_sum = summary.get("home") or {}, summary.get("away") or {}
+    h_form, a_form = home_sum.get("form") or "?", away_sum.get("form") or "?"
+    h_avg_gf, h_avg_ga = float(home_sum.get("avg_gf") or 0.0), float(home_sum.get("avg_ga") or 0.0)
+    a_avg_gf, a_avg_ga = float(away_sum.get("avg_gf") or 0.0), float(away_sum.get("avg_ga") or 0.0)
 
+    # Format probabilities like expert route: normalize -> percent
     p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
-    _pct = lambda x: f"{(x*100):.1f}%" if x is not None else "n/a"
-    prob_line = f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}." \
-                if any(v is not None for v in (p_home, p_draw, p_away)) else ""
+    if all(v is not None for v in [p_home, p_draw, p_away]):
+        total = p_home + p_draw + p_away
+        if total > 0:
+            p_home, p_draw, p_away = [v / total * 100 for v in [p_home, p_draw, p_away]]
+    _pct = lambda x: f"{x:.1f}%" if x is not None else "n/a"
+    prob_line = (
+        f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}."
+        if any(v is not None for v in [p_home, p_draw, p_away])
+        else ""
+    )
 
-    # Force a compact shared-opponents sentence
+    # Build shared opponents compact line
     shared_sentence = ""
     if shared_text:
         bullets = [ln.strip() for ln in shared_text.splitlines() if ln.strip().startswith("- ")]
@@ -345,6 +285,7 @@ Season stats:
 {prob_line}
 {shared_sentence}
 End with one balanced 'what decides it' line."""
+
 # -------------------------------------------------------------------
 # Routes — Generate Preview (uses multi-source + enrichments)
 # -------------------------------------------------------------------
@@ -384,6 +325,16 @@ def generate_ai_preview(
     client = _openai_client()
 
     try:
+        resp = client.chat_completions.create(  # support both clients; fallback below if needed
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a neutral, sharp football analyst."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.6,
+            max_tokens=280,
+        )
+    except AttributeError:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -393,6 +344,8 @@ def generate_ai_preview(
             temperature=0.6,
             max_tokens=280,
         )
+
+    try:
         text = (resp.choices[0].message.content or "").strip()
         tokens = getattr(getattr(resp, "usage", None), "total_tokens", None)
     except Exception as e:
@@ -464,6 +417,9 @@ def debug_shared(fixture_id: int, db: Session = Depends(get_db)):
         "shared_text": shared,
     }
 
+# -------------------------------------------------------------------
+# Batch (daily) generation
+# -------------------------------------------------------------------
 
 @router.post("/generate/daily")
 def generate_daily_ai_previews(
@@ -519,15 +475,26 @@ def generate_daily_ai_previews(
             prompt = _build_prompt_enriched(fx, form_data, team_stats, shared_text, probs, n)
             client = _openai_client()
 
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a sharp, neutral football analyst."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.6,
-                max_tokens=280,
-            )
+            try:
+                resp = client.chat_completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are a sharp, neutral football analyst."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.6,
+                    max_tokens=280,
+                )
+            except AttributeError:
+                resp = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are a sharp, neutral football analyst."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.6,
+                    max_tokens=280,
+                )
 
             text = (resp.choices[0].message.content or "").strip()
             tokens = getattr(getattr(resp, "usage", None), "total_tokens", None)
@@ -556,7 +523,9 @@ def generate_daily_ai_previews(
 
     return {"ok": True, "added": added, "skipped": skipped, "errors": errors}
 
-# --- PUBLIC: read preview for a fixture --------------------------------------
+# -------------------------------------------------------------------
+# Public reader
+# -------------------------------------------------------------------
 
 @pub.get("/by-fixture")
 def public_preview_by_fixture(
@@ -610,7 +579,9 @@ def public_preview_by_fixture(
         raise HTTPException(status_code=404, detail="No preview found")
     return _row_to_payload(latest)
 
-# --- Expert bettor analysis (unchanged) --------------------------------------
+# -------------------------------------------------------------------
+# Expert bettor analysis (unchanged logic)
+# -------------------------------------------------------------------
 
 @router.get("/expert")
 def expert_prediction(
@@ -641,7 +612,7 @@ def expert_prediction(
 
     # context
     form_data = _form_from_db(db, fixture_id, n=n)
-    model = _get_win_probs_and_edges(db, fixture_id, source="team_form", top_k_edges=5)
+    model = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
     p_home = model["probs"]["home"]
     p_draw = model["probs"]["draw"]
     p_away = model["probs"]["away"]
@@ -694,6 +665,17 @@ Produce a SINGLE JSON object with:
 
     client = _openai_client()
     try:
+        resp = client.chat_completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Return valid JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_tokens=450,
+            response_format={"type": "json_object"},
+        )
+    except AttributeError:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -704,6 +686,8 @@ Produce a SINGLE JSON object with:
             max_tokens=450,
             response_format={"type": "json_object"},
         )
+
+    try:
         data = json.loads(resp.choices[0].message.content or "{}")
     except Exception as e:
         data = {
@@ -750,11 +734,32 @@ Produce a SINGLE JSON object with:
 
 @router.get("/winprobs")
 def admin_win_probs(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
-    data = _get_win_probs_and_edges(db, fixture_id, source=source, top_k_edges=0)
-    return data["probs"]
+    # keep simple admin passthrough (no edges)
+    latest = (
+        db.query(ModelProb.market, func.max(ModelProb.as_of).label("latest"))
+        .filter(
+            ModelProb.fixture_id == fixture_id,
+            ModelProb.source == source,
+            ModelProb.market.in_(["HOME_WIN", "DRAW", "AWAY_WIN", "HOME", "AWAY"]),
+        )
+        .group_by(ModelProb.market)
+        .subquery()
+    )
+    rows = (
+        db.query(ModelProb)
+        .join(latest, and_(ModelProb.market == latest.c.market, ModelProb.as_of == latest.c.latest))
+        .all()
+    )
+    out = {"home": None, "draw": None, "away": None}
+    for r in rows:
+        m = (r.market or "").upper()
+        if m in ("HOME_WIN", "HOME"): out["home"] = float(r.prob)
+        elif m == "DRAW": out["draw"] = float(r.prob)
+        elif m in ("AWAY_WIN", "AWAY"): out["away"] = float(r.prob)
+    return _fix_probs(out)
 
 
 @router.get("/edges")
 def admin_edges(fixture_id: int, source: str = Query("team_form"), db: Session = Depends(get_db)):
-    data = _get_win_probs_and_edges(db, fixture_id, source=source, top_k_edges=50)
+    data = _get_win_probs_and_edges_any(db, fixture_id, sources=[source], top_k_edges=50)
     return data["edges"]
