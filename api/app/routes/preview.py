@@ -267,65 +267,56 @@ def _get_win_probs_and_edges_any(
 
 def _build_prompt_enriched(
     fixture: Fixture,
-    form_data: Dict[str, Any],
-    team_stats: Dict[str, Any],
+    form_data: dict,
+    team_stats: dict,
     shared_text: str,
-    probs: Dict[str, float | None],
+    probs: dict,
     n: int,
 ) -> str:
     home = fixture.home_team or "Home"
     away = fixture.away_team or "Away"
-    comp = fixture.comp or fixture.sport or "match"
+    comp  = fixture.comp or fixture.sport or "match"
 
-    # --- Recent form (last n) ---
+    # --- recent form (aggregates) ---
     hf, af = form_data.get("home", {}) or {}, form_data.get("away", {}) or {}
     h_w, h_d, h_l = int(hf.get("wins", 0)), int(hf.get("draws", 0)), int(hf.get("losses", 0))
     a_w, a_d, a_l = int(af.get("wins", 0)), int(af.get("draws", 0)), int(af.get("losses", 0))
-    h_gf = float(hf.get("avg_goals_for") or 0.0)
-    h_ga = float(hf.get("avg_goals_against") or 0.0)
-    a_gf = float(af.get("avg_goals_for") or 0.0)
-    a_ga = float(af.get("avg_goals_against") or 0.0)
+    h_gf = float(hf.get("avg_goals_for") or 0.0);   h_ga = float(hf.get("avg_goals_against") or 0.0)
+    a_gf = float(af.get("avg_goals_for") or 0.0);   a_ga = float(af.get("avg_goals_against") or 0.0)
 
-    # --- Season/competition stats summary (if present) ---
-    summary = team_stats.get("summary") or {}
+    # --- season/comp summary ---
+    summary  = team_stats.get("summary") or {}
     home_sum = summary.get("home") or {}
     away_sum = summary.get("away") or {}
-    h_form = (home_sum.get("form") or "?")
-    a_form = (away_sum.get("form") or "?")
-    h_avg_gf = float(home_sum.get("avg_gf") or 0.0)
-    h_avg_ga = float(home_sum.get("avg_ga") or 0.0)
-    a_avg_gf = float(away_sum.get("avg_gf") or 0.0)
-    a_avg_ga = float(away_sum.get("avg_ga") or 0.0)
+    h_form   = home_sum.get("form") or "?"
+    a_form   = away_sum.get("form") or "?"
+    h_avg_gf = float(home_sum.get("avg_gf") or 0.0); h_avg_ga = float(home_sum.get("avg_ga") or 0.0)
+    a_avg_gf = float(away_sum.get("avg_gf") or 0.0); a_avg_ga = float(away_sum.get("avg_ga") or 0.0)
 
-    # --- Model probabilities line (if we have any) ---
+    # --- probabilities line ---
     p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
-    def _fmt_pct(x: float | None) -> str:
-        return f"{(x*100):.1f}%" if (x is not None) else "n/a"
-    prob_line = ""
-    if any(v is not None for v in (p_home, p_draw, p_away)):
-        prob_line = (
-            f"\nModel probabilities: {home} {_fmt_pct(p_home)}, "
-            f"Draw {_fmt_pct(p_draw)}, {away} {_fmt_pct(p_away)}."
-        )
+    _pct = lambda x: f"{(x*100):.1f}%" if x is not None else "n/a"
+    prob_line = f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}." \
+                if any(v is not None for v in (p_home, p_draw, p_away)) else ""
 
-    # --- Shared opponents section (clean + capped) ---
-    shared_section = ""
+    # --- shared opponents (force a compact sentence) ---
+    shared_sentence = ""
     if shared_text:
-        # Expecting input like: "Shared Opponents...\n- vs TeamA: ...\n- vs TeamB: ..."
-        lines = [ln.strip() for ln in shared_text.splitlines() if ln.strip()]
-        # keep header if present; otherwise add one
-        header = lines[0] if lines and lines[0].lower().startswith("shared opponents") else "Shared opponents (recent, same league):"
-        bullets = [ln for ln in lines[1:] if ln.startswith("- ")] if lines and lines[0].lower().startswith("shared opponents") else [ln for ln in lines if ln.startswith("- ")]
-        bullets = bullets[:4]  # cap to 4 to keep preview concise
-        if bullets:
-            shared_section = "\n\n" + header + "\n" + "\n".join(bullets)
+        # Expect lines like: "- vs AC Milan: loss 0-2 | loss 2-1"
+        bullets = [ln.strip() for ln in shared_text.splitlines() if ln.strip().startswith("- ")]
+        parsed = []
+        for ln in bullets[:4]:  # cap to 4
+            m = re.match(r"-\s*vs\s*(.+?):\s*(.+?)\s*\|\s*(.+)$", ln)
+            if m:
+                opp, home_res, away_res = m.groups()
+                parsed.append(f"{opp} ({home_res} / {away_res})")
+        if parsed:
+            shared_sentence = "Shared opponents: " + ", ".join(parsed) + "."
 
-    # --- Final prompt ---
-    return f"""
-Write a concise {comp} preview (6–8 lines) for {home} vs {away}.
+    # --- final prompt (explicitly require the sentence) ---
+    return f"""Write a concise {comp} preview (6–8 lines) for {home} vs {away}.
 Use ONLY the factual data below — do not invent lineups or player news.
-Summarize recent form, season averages, and shared opponents where relevant.
-Conclude with one balanced 'what decides it' line.
+Include the shared-opponents sentence exactly once.
 
 Recent form (last {n}):
 - {home}: {h_w}W–{h_d}D–{h_l}L, {h_gf:.1f} scored / {h_ga:.1f} conceded.
@@ -334,8 +325,10 @@ Recent form (last {n}):
 Season stats:
 - {home}: avg {h_avg_gf:.1f} GF / {h_avg_ga:.1f} GA, Form {h_form}
 - {away}: avg {a_avg_gf:.1f} GF / {a_avg_ga:.1f} GA, Form {a_form}
-{prob_line}{shared_section}
-""".strip()
+
+{prob_line}
+{shared_sentence}
+End with one balanced 'what decides it' line."""
 # -------------------------------------------------------------------
 # Routes — Generate Preview (uses multi-source + enrichments)
 # -------------------------------------------------------------------
