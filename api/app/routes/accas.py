@@ -192,12 +192,33 @@ def _format_leg_note(e: Edge, fx: Fixture) -> str:
 
 @router.post("/auto")
 def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
-    # Time window: only upcoming fixtures for given day, and within hours_ahead
+    """
+    Auto-build a 3–4 leg ACCA near target_odds (default ~5.0x) from today's best edges.
+    Improvements:
+      - Postgres-safe bookmaker match (normalize column in SQL; normalize RHS in Python only).
+      - Market diversification: max 1 leg per bucket (1X2 / BTTS / TOTALS / OTHER), with graceful relax
+        if we can't hit legs_min.
+      - Bounded combo search (top-K pool, try all combos of size [legs_min..legs_max]) to hit target band.
+      - Per-leg odds guardrails to avoid silly products.
+    """
+    import math, re, itertools
+
+    # --- Params / guards ----------------------------------------------------
     start, end = _day_bounds(payload.day)
     now = datetime.now(timezone.utc)
     window_end = min(end, now + timedelta(hours=payload.hours_ahead))
 
-    # Base query: edges on upcoming fixtures in the window
+    # Reasonable odds guardrails per leg (tweak to taste)
+    MIN_LEG_ODDS = 1.50
+    MAX_LEG_ODDS = 3.00
+
+    # Aim for target within ±15%
+    TOL = 0.15
+    tgt = max(float(payload.target_odds or 5.0), 1.01)
+    lo = tgt * (1 - TOL)
+    hi = tgt * (1 + TOL)
+
+    # --- Base query: best edges, upcoming today -----------------------------
     q = (
         db.query(Edge, Fixture)
         .join(Fixture, Edge.fixture_id == Fixture.id)
@@ -207,79 +228,133 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
         .order_by(Edge.edge.desc(), Edge.created_at.desc())
     )
 
-    # Prefer bookmaker (normalize “bet365”, “bet 365”, etc.)
+    # Postgres-safe bookmaker normalization: normalize the COLUMN in SQL,
+    # normalize the input in Python (no SQL functions on the bindparam).
+    def _book_chain(col):
+        x = func.lower(col)
+        for ch in (" ", "-", "_", "."):
+            x = func.replace(x, ch, "")
+        return x
+
     if payload.bookmaker:
-        chain = _book_norm()
-        # normalize bookmaker name in Python instead of SQL to avoid type-cast issue
-        import re
         bk_norm = re.sub(r"[^a-z0-9]+", "", payload.bookmaker.lower())
-        db_norm = chain(Edge.bookmaker)
-        q = q.filter(db_norm == bk_norm)
+        q = q.filter(_book_chain(Edge.bookmaker) == bk_norm)
 
     rows = q.all()
     if not rows:
         raise HTTPException(404, "No candidate edges found for that window/bookmaker.")
 
-    # Take best per fixture (and optionally diversify markets)
-    best_per_fx: dict[int, Edge] = {}
-    markets_seen: set[str] = set()
+    # --- Pick best per fixture (avoid repeats) & apply leg odds guardrails ---
+    best_per_fixture: dict[int, tuple[Edge, Fixture]] = {}
     for e, f in rows:
-        if payload.avoid_same_fixture and f.id in best_per_fx:
+        try:
+            price = float(e.price)
+        except Exception:
             continue
-        if payload.diversify_markets:
-            bucket = _market_bucket(e.market or "")
-            # allow repeat buckets only if we still have < legs_min candidates
-            if bucket in markets_seen and len(best_per_fx) >= payload.legs_min:
-                continue
-            markets_seen.add(bucket)
-        best_per_fx[f.id] = (e, f)
-        if len(best_per_fx) >= max(payload.legs_max * 2, payload.legs_max + 2):
-            break  # enough candidates
+        if not (MIN_LEG_ODDS <= price <= MAX_LEG_ODDS):
+            continue
+        if payload.avoid_same_fixture and f.id in best_per_fixture:
+            continue
+        # first time we see a fixture is the highest edge due to ordering
+        best_per_fixture.setdefault(f.id, (e, f))
 
-    if not best_per_fx:
+    if not best_per_fixture:
         raise HTTPException(404, "No suitable fixtures survived filtering.")
 
-    # Greedy pick aiming for target odds with legs in [min,max]
-    cands = list(best_per_fx.values())
-    # sort again just in case by edge descending
+    # --- Build a candidate pool (top-K by edge) -----------------------------
+    cands = list(best_per_fixture.values())
     cands.sort(key=lambda t: float(t[0].edge or 0), reverse=True)
+    K = max(24, payload.legs_max * 8)  # bounded pool for the combinatorial step
+    cands = cands[:K]
 
-    target = payload.target_odds
-    best_combo: list[tuple[Edge, Fixture]] = []
-    best_diff = 1e9
+    # --- Enforce market diversification (at most one per bucket initially) ---
+    def bucket_of(t):
+        e, _ = t
+        return _market_bucket(e.market or "")
 
-    # Simple greedy: try top-N prefixes, then adjust to reach target range
-    for take in range(payload.legs_min, payload.legs_max + 1):
-        if len(cands) < take: break
-        legs = cands[:take]
-        prod = 1.0
-        for e, _ in legs:
-            try: prod *= float(e.price)
-            except Exception: prod *= 1.0
-        diff = abs(prod - target)
-        if diff < best_diff:
-            best_diff = diff
-            best_combo = legs
+    diversified: list[tuple[Edge, Fixture]] = []
+    seen_buckets: set[str] = set()
+    if payload.diversify_markets:
+        for t in cands:
+            b = bucket_of(t)
+            if b in seen_buckets:
+                continue
+            seen_buckets.add(b)
+            diversified.append(t)
+        # If we still don't have enough for legs_min, relax and add more (even if bucket repeats)
+        if len(diversified) < payload.legs_min:
+            for t in cands:
+                if t not in diversified:
+                    diversified.append(t)
+                if len(diversified) >= max(payload.legs_max * 3, payload.legs_min + 4):
+                    break
+        pool = diversified
+    else:
+        pool = cands
 
-    # fallback: if still empty, just take top legs_min
-    if not best_combo and cands:
-        best_combo = cands[:payload.legs_min]
+    if len(pool) < payload.legs_min:
+        raise HTTPException(404, "Not enough candidates to form an ACCA with current constraints.")
+
+    # --- Combo search: try all combos in [legs_min..legs_max] ---------------
+    best_combo = None
+    best_diff = float("inf")
+    best_prod = None
+
+    def prod_odds(combo):
+        p = 1.0
+        for (e, _) in combo:
+            p *= float(e.price)
+        return p
+
+    # Prefer combos inside the band; among those pick closest to target.
+    # If none in band, pick globally closest.
+    for r in range(payload.legs_min, payload.legs_max + 1):
+        # quick optimization: if we demanded diversification, skip combos that duplicate bucket
+        if payload.diversify_markets:
+            def valid_combo(c):
+                bs = set()
+                for t in c:
+                    b = bucket_of(t)
+                    if b in bs:
+                        return False
+                    bs.add(b)
+                return True
+        else:
+            def valid_combo(c): return True
+
+        # iterate over combos (bounded by K)
+        for combo in itertools.combinations(pool, r):
+            if not valid_combo(combo):
+                continue
+            p = prod_odds(combo)
+            diff = abs(p - tgt)
+            inside = (lo <= p <= hi)
+            if inside:
+                # Prefer inside-band and closer to target
+                if diff < best_diff:
+                    best_diff = diff
+                    best_combo = combo
+                    best_prod = p
+            else:
+                # Track closest overall if we never find an inside-band combo
+                if best_combo is None and diff < best_diff:
+                    best_diff = diff
+                    best_combo = combo
+                    best_prod = p
 
     if not best_combo:
         raise HTTPException(500, "Failed to assemble an ACCA combo.")
 
-    # Compute final combined price
-    combined = 1.0
-    for e, _ in best_combo:
-        combined *= float(e.price)
+    legs = list(best_combo)
+    combined = round(best_prod or prod_odds(legs), 2)
 
-    # Create ticket
+    # --- Create ticket ------------------------------------------------------
     d = date_cls.fromisoformat(payload.day)
     t = AccaTicket(
         day=d,
-        sport="football",
-        title=payload.title or f"Daily {len(best_combo)}-Leg ACCA",
-        note=payload.note or f"Auto-generated to target ~{payload.target_odds:.2f}x from best {payload.bookmaker} edges.",
+        sport=payload.sport or "football",
+        title=payload.title or f"Daily {len(legs)}-Leg ACCA",
+        note=payload.note or f"Auto-generated near {tgt:.2f}x from best {payload.bookmaker} edges.",
         stake_units=payload.stake_units,
         is_public=payload.is_public,
         combined_price=combined,
@@ -287,7 +362,7 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
     db.add(t); db.flush()
 
     legs_out = []
-    for e, f in best_combo:
+    for e, f in legs:
         leg_note = _format_leg_note(e, f)
         db.add(AccaLeg(
             ticket_id=t.id,
@@ -311,24 +386,27 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
 
     db.commit()
 
-    # Return with a human summary
-    summary = {
-        "id": t.id,
-        "day": payload.day,
-        "title": t.title,
-        "note": t.note,
-        "is_public": t.is_public,
-        "legs_count": len(legs_out),
-        "combined_price": round(combined, 2),
-        "target_odds": payload.target_odds,
-        "legs": legs_out,
-        "explanation": f"Built from top edges on {payload.bookmaker} with min edge {payload.min_edge*100:.1f}%. "
-                       f"Greedy picked {len(legs_out)} legs to approximate {payload.target_odds:.2f}x while "
-                       f"{'diversifying markets' if payload.diversify_markets else 'allowing repeats'} "
-                       f"and avoiding same fixture: {payload.avoid_same_fixture}."
+    return {
+        "ok": True,
+        "ticket": {
+            "id": t.id,
+            "day": payload.day,
+            "title": t.title,
+            "note": t.note,
+            "is_public": t.is_public,
+            "legs_count": len(legs_out),
+            "combined_price": t.combined_price,
+            "target_odds": tgt,
+            "legs": legs_out,
+            "explanation": (
+                f"Built from best {payload.bookmaker} edges with per-leg odds "
+                f"{MIN_LEG_ODDS:.2f}–{MAX_LEG_ODDS:.2f}. "
+                f"{'Diversified by market' if payload.diversify_markets else 'Market repeats allowed'}. "
+                f"Searched combos of {payload.legs_min}–{payload.legs_max} legs to hit ~{tgt:.2f}x "
+                f"(accept band {lo:.2f}–{hi:.2f})."
+            ),
+        },
     }
-    return {"ok": True, "ticket": summary}
-
 # ---------- Public: SINGLE acca for a day (most recent public) ----------
 @pub.get("/today")
 def public_acca_today(
