@@ -3,15 +3,14 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import List, Optional
+from typing import List, Optional, Set, Dict, Tuple
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import or_
 
 from ..db import get_db
-from ..models import Edge, Fixture, Bet, ModelProb
-from ..schemas import EdgeOut
+from ..models import Edge, Fixture, Bet
 from ..edge import ensure_baseline_probs, compute_edges
 from ..settings import settings
 from ..telegram_alert import send_telegram_alert  # legacy "today" send
@@ -19,16 +18,39 @@ from ..services.telegram import send_alert_message  # manual single send
 
 router = APIRouter(prefix="", tags=["shortlist"])
 
+# ----------------------- helpers -----------------------
+
 def _norm_book_name(name: str | None) -> str:
     if not name:
         return ""
     return re.sub(r"[^a-z0-9]+", "", name.lower())
 
+def _same_bookmaker(lhs: str | None, rhs: str | None) -> bool:
+    return _norm_book_name(lhs) == _norm_book_name(rhs)
+
 def _alert_digest(fixture_id: int, market: str, bookmaker: str, price: float) -> str:
     alert_key = f"{fixture_id}|{market}|{bookmaker}|{price:.4f}"
     return sha256(alert_key.encode()).hexdigest()
 
-@router.get("/shortlist/today", response_model=List[EdgeOut])
+def _safe_float(x):
+    try:
+        return float(x) if x is not None else None
+    except Exception:
+        return None
+
+def _implied_prob(price: Optional[float]) -> Optional[float]:
+    try:
+        p = float(price)
+        return 1.0 / p if p > 0 else None
+    except Exception:
+        return None
+
+def _market_key(m: Optional[str]) -> str:
+    return (m or "").strip().upper()
+
+# ----------------------- shortlist (raw) -----------------------
+
+@router.get("/shortlist/today")
 def shortlist_today(
     db: Session = Depends(get_db),
     hours_ahead: int = Query(96, ge=1, le=14*24),
@@ -36,12 +58,12 @@ def shortlist_today(
     send_alerts: int = Query(0, description="(deprecated) 1=send Telegram alerts immediately; default 0"),
     prefer_book: Optional[str] = Query(None),
     leagues: Optional[str] = Query(None),
+    exclude_started: bool = Query(True, description="Hide fixtures already kicked off unless unsettled"),
+    grace_mins: int = Query(10, ge=0, le=120, description="In-play grace for 'exclude_started'"),
 ):
     """
     Returns shortlist edges for the next N hours.
-    - Does NOT send alerts by default.
-    - Each row includes a ready-to-send `alert_payload` and `already_sent` bool
-      so the frontend can let you cherry-pick and send later.
+    Includes alert helpers (already_sent, alert_hash, alert_payload).
     """
     now = datetime.now(timezone.utc)
     until = now + timedelta(hours=hours_ahead)
@@ -52,28 +74,27 @@ def shortlist_today(
         .filter(
             or_(
                 Fixture.kickoff_utc >= now,            # upcoming
-                Fixture.result_settled == False         # in-progress
+                Fixture.result_settled == False         # in-progress / unsettled
             )
         )
         .filter(Fixture.kickoff_utc <= until)
         .filter(Edge.edge >= min_edge)
-        .order_by(Edge.edge.desc())
+        .order_by(Edge.edge.desc(), Edge.created_at.desc())
     )
 
+    rows = q.all()
+
+    # Python-side filters (portable)
     if leagues:
-        wanted = [s.strip() for s in leagues.split(",") if s.strip()]
-        if wanted:
-            q = q.filter(Fixture.comp.in_(wanted))
+        wanted = {s.strip() for s in leagues.split(",") if s.strip()}
+        rows = [(e, f) for (e, f) in rows if f.comp in wanted]
 
     if prefer_book:
-        norm = _norm_book_name(prefer_book)
-        db_norm = func.replace(func.lower(Edge.bookmaker), " ", "")
-        db_norm = func.replace(db_norm, "-", "")
-        db_norm = func.replace(db_norm, "_", "")
-        db_norm = func.replace(db_norm, ".", "")
-        q = q.filter(db_norm == norm)
+        rows = [(e, f) for (e, f) in rows if _same_bookmaker(e.bookmaker, prefer_book)]
 
-    rows = q.all()
+    if exclude_started:
+        cutoff = now - timedelta(minutes=grace_mins)
+        rows = [(e, f) for (e, f) in rows if (f.kickoff_utc or now) >= cutoff or (not f.result_settled)]
 
     out: list[dict] = []
     for e, f in rows:
@@ -81,42 +102,40 @@ def shortlist_today(
         digest = _alert_digest(f.id, e.market, e.bookmaker, price)
         dup = db.query(Bet).filter(Bet.duplicate_alert_hash == digest).first()
 
-        # Standard EdgeOut fields
-        row = EdgeOut(
-            fixture_id=f.id,
-            comp=f.comp,
-            home_team=f.home_team,
-            away_team=f.away_team,
-            kickoff_utc=f.kickoff_utc,
-            market=e.market,
-            bookmaker=e.bookmaker,
-            price=price,
-            prob=float(e.prob),
-            edge=float(e.edge),
-            model_source=e.model_source,
-        ).dict()
-
-        # Extra UI helpers (NOT part of EdgeOut schema; included in the JSON)
-        row["already_sent"] = bool(dup)
-        row["alert_hash"] = digest
-        row["alert_payload"] = {
-            "match": f"{f.home_team} v {f.away_team}",
+        row = {
+            "fixture_id": f.id,
+            "comp": f.comp,
+            "home_team": f.home_team,
+            "away_team": f.away_team,
+            "kickoff_utc": f.kickoff_utc,
             "market": e.market,
-            "odds": price,
-            "edge": float(e.edge) * 100.0,
-            "kickoff": f.kickoff_utc.strftime("%a %d %b, %H:%M"),
-            "league": f.comp,
             "bookmaker": e.bookmaker,
+            "price": price,
+            "prob": _safe_float(e.prob),
+            "edge": _safe_float(e.edge),
             "model_source": e.model_source,
-            "link": None,
-            "bet_id": f"{f.id}-{e.market.replace(' ', '')}-{e.bookmaker}",
+            # UI helpers
+            "already_sent": bool(dup),
+            "alert_hash": digest,
+            "alert_payload": {
+                "match": f"{f.home_team} v {f.away_team}",
+                "market": e.market,
+                "odds": price,
+                "edge": (_safe_float(e.edge) or 0.0) * 100.0 if e.edge is not None else None,
+                "kickoff": f.kickoff_utc.strftime("%a %d %b, %H:%M") if f.kickoff_utc else None,
+                "league": f.comp,
+                "bookmaker": e.bookmaker,
+                "model_source": e.model_source,
+                "link": None,
+                "bet_id": f"{f.id}-{(e.market or '').replace(' ', '')}-{e.bookmaker}",
+            },
         }
         out.append(row)
 
-    # Deprecated: legacy path that sent everything immediately
+    # Deprecated: blast everything
     if send_alerts:
         for e, f in rows:
-            if float(e.edge) < 0.0:
+            if (e.edge or 0.0) < 0.0:
                 continue
             price = float(e.price)
             digest = _alert_digest(f.id, e.market, e.bookmaker, price)
@@ -128,13 +147,13 @@ def shortlist_today(
                     match=f"{f.home_team} v {f.away_team}",
                     market=e.market,
                     odds=price,
-                    edge=float(e.edge) * 100.0,
-                    kickoff=f.kickoff_utc.strftime("%a %d %b, %H:%M"),
+                    edge=float(e.edge) * 100.0 if e.edge is not None else None,
+                    kickoff=f.kickoff_utc.strftime("%a %d %b, %H:%M") if f.kickoff_utc else None,
                     league=f.comp,
                     bookmaker=e.bookmaker,
                     model_source=e.model_source,
                     link=None,
-                    bet_id=f"{f.id}-{e.market.replace(' ', '')}-{e.bookmaker}",
+                    bet_id=f"{f.id}-{(e.market or '').replace(' ', '')}-{e.bookmaker}",
                 )
             except Exception as te:
                 print(f"[Telegram] send error: {te!r}")
@@ -155,24 +174,12 @@ def shortlist_today(
 def send_shortlist_batch(
     payload: dict = Body(..., example={
         "items": [
-            {
-                "fixture_id": 1234,
-                "market": "Over 2.5",
-                "bookmaker": "Bet365",
-                "price": 1.91,
-                # You can optionally include alert_payload to avoid
-                # the server re-assembling strings:
-                # "alert_payload": {...}
-            }
+            {"fixture_id": 1234, "market": "Over 2.5", "bookmaker": "Bet365", "price": 1.91}
         ],
         "dry_run": False
     }),
     db: Session = Depends(get_db),
 ):
-    """
-    Accepts a selection of shortlist rows and sends Telegram alerts for those only.
-    Duplicate protection via hash. Returns a per-item status report.
-    """
     items = payload.get("items") or []
     dry_run = bool(payload.get("dry_run", False))
     if not isinstance(items, list) or not items:
@@ -189,7 +196,6 @@ def send_shortlist_batch(
             results.append({"ok": False, "reason": "bad item fields", "item": it})
             continue
 
-        # fetch fixture for text fields if alert_payload not supplied
         f = db.query(Fixture).filter(Fixture.id == fid).first()
         if not f:
             results.append({"ok": False, "reason": "fixture not found", "item": it})
@@ -205,8 +211,8 @@ def send_shortlist_batch(
             "match": f"{f.home_team} v {f.away_team}",
             "market": market,
             "odds": price,
-            "edge": None,  # optional
-            "kickoff": f.kickoff_utc.strftime("%a %d %b, %H:%M"),
+            "edge": None,
+            "kickoff": f.kickoff_utc.strftime("%a %d %b, %H:%M") if f.kickoff_utc else None,
             "league": f.comp,
             "bookmaker": bookmaker,
             "model_source": None,
@@ -220,7 +226,6 @@ def send_shortlist_batch(
 
         try:
             send_alert_message(payload_obj)
-            # store duplicate guard
             db.add(Bet(
                 fixture_id=fid,
                 market=market,
@@ -240,7 +245,7 @@ def send_shortlist_batch(
 @router.post("/compute")
 def compute_now(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
-    source = "team_form"  # keep your current model source
+    source = "team_form"
     ensure_baseline_probs(db, now, source=source)
     compute_edges(db, now, settings.EDGE_MIN, source=source)
     return {"ok": True, "source": source}
@@ -249,41 +254,24 @@ def compute_now(db: Session = Depends(get_db)):
 def send_alert(alert: dict):
     return send_alert_message(alert)
 
-# ====================== BEST EDGES & ACCA SUGGESTIONS ======================
-from typing import Set, Dict
-
-def _safe_float(x):
-    try:
-        return float(x) if x is not None else None
-    except Exception:
-        return None
-
-def _implied_prob(price: Optional[float]) -> Optional[float]:
-    try:
-        if price and price > 0:
-            return 1.0 / float(price)
-    except Exception:
-        pass
-    return None
+# ====================== BEST EDGES & FEATURED PICKS ======================
 
 @router.get("/shortlist/best")
 def shortlist_best(
     day: str = Query(datetime.now(timezone.utc).date().isoformat(), description="YYYY-MM-DD (UTC)"),
-    hours_ahead: Optional[int] = Query(None, ge=1, le=14*24, description="If set, ignores day and uses now..now+hours"),
-    sport: Optional[str] = Query(None, description="Optional sport filter via Fixture.sport"),
+    hours_ahead: Optional[int] = Query(None, ge=1, le=14*24, description="If set, ignore 'day' and use now..now+hours"),
+    sport: Optional[str] = Query(None, description="Filter by Fixture.sport"),
     model: Optional[str] = Query("team_form", description="Edge.model_source"),
-    min_edge: float = Query(0.03, ge=-1.0, le=1.0, description="Minimum edge (e.g. 0.04 = 4%)"),
-    markets: Optional[str] = Query(None, description="Comma-separated market filter, e.g. 'HOME_WIN,AWAY_WIN,O2.5,BTTS_Y'"),
-    bookmaker: Optional[str] = Query(None, description="Exact bookmaker name filter"),
-    per_fixture: bool = Query(True, description="Return only the top edge per fixture"),
+    min_edge: float = Query(0.03, ge=-1.0, le=1.0, description="e.g. 0.04 = 4%"),
+    markets: Optional[str] = Query(None, description="Comma list e.g. 'HOME_WIN,AWAY_WIN,O2.5,BTTS_Y'"),
+    bookmaker: Optional[str] = Query(None, description="Bookmaker name (normalized)"),
+    per_fixture: bool = Query(True, description="Only the top edge per fixture"),
+    prefer_distinct_leagues: bool = Query(False, description="Avoid multiple from same league"),
+    exclude_started: bool = Query(True),
+    grace_mins: int = Query(10, ge=0, le=120),
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
 ):
-    """
-    Returns top edges, great for Featured Picks.
-    - If hours_ahead is provided, uses [now, now+hours]; else uses the whole UTC day.
-    - per_fixture=True gives the single best edge for each fixture.
-    """
     now = datetime.now(timezone.utc)
     if hours_ahead:
         start, end = now, now + timedelta(hours=hours_ahead)
@@ -299,65 +287,63 @@ def shortlist_best(
         .filter(Edge.edge >= min_edge)
         .order_by(Edge.edge.desc(), Edge.created_at.desc())
     )
-
-    if sport:
-        q = q.filter(Fixture.sport == sport)
-    if model:
-        q = q.filter(Edge.model_source == model)
-
-    if markets:
-        allowed = [m.strip().upper() for m in markets.split(",") if m.strip()]
-        if allowed:
-            q = q.filter(Edge.market.in_(allowed))
-
-    if bookmaker:
-        q = q.filter(Edge.bookmaker == bookmaker)
-
     rows = q.all()
 
+    # Python-side filters
+    if sport:
+        rows = [(e, f) for (e, f) in rows if (f.sport or "football") == sport]
+    if model:
+        rows = [(e, f) for (e, f) in rows if (e.model_source or "") == model]
+    if markets:
+        allowed = {_market_key(m) for m in markets.split(",") if m.strip()}
+        rows = [(e, f) for (e, f) in rows if _market_key(e.market) in allowed]
+    if bookmaker:
+        rows = [(e, f) for (e, f) in rows if _same_bookmaker(e.bookmaker, bookmaker)]
+    if exclude_started:
+        cutoff = now - timedelta(minutes=grace_mins)
+        rows = [(e, f) for (e, f) in rows if (f.kickoff_utc or now) >= cutoff or (not f.result_settled)]
+
+    # Deduplicate per fixture + optional distinct leagues
     payload = []
-    if per_fixture:
-        seen: Set[int] = set()
-        for e, f in rows:
-            if f.id in seen:
-                continue
-            seen.add(f.id)
-            price = _safe_float(e.price)
-            payload.append({
+    seen_fx: Set[int] = set()
+    seen_leagues: Set[str] = set()
+
+    for e, f in rows:
+        if per_fixture and f.id in seen_fx:
+            continue
+        if prefer_distinct_leagues and f.comp in seen_leagues:
+            continue
+        price = _safe_float(e.price)
+        item = {
+            "fixture_id": f.id,
+            "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
+            "league": f.comp,
+            "home": f.home_team,
+            "away": f.away_team,
+            "market": e.market,
+            "bookmaker": e.bookmaker,
+            "price": price,
+            "model_prob": _safe_float(e.prob),
+            "implied_prob": _implied_prob(price),
+            "edge": _safe_float(e.edge),
+            "model_source": e.model_source,
+            "label": f"{f.home_team} vs {f.away_team} · {e.market} @{e.bookmaker} {price}",
+            # Telegram/picks helpers
+            "telegram_text": f"🔥 {f.comp} — {f.home_team} v {f.away_team}\n{e.market} @ {e.bookmaker} {price} (edge {(_safe_float(e.edge) or 0.0)*100:.1f}%)\nKO: {f.kickoff_utc.strftime('%a %d %b, %H:%M') if f.kickoff_utc else 'TBC'}",
+            "pick_payload": {
+                "day": start.date().isoformat(),
                 "fixture_id": f.id,
-                "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
-                "league": f.comp,
-                "home": f.home_team,
-                "away": f.away_team,
-                "market": e.market,
-                "bookmaker": e.bookmaker,
-                "price": price,
-                "model_prob": _safe_float(e.prob),
-                "implied_prob": _implied_prob(price),
-                "edge": _safe_float(e.edge),
-                "model_source": e.model_source,
-                "label": f"{f.home_team} vs {f.away_team} · {e.market} @{e.bookmaker} {price}"
-            })
-            if len(payload) >= limit:
-                break
-    else:
-        for e, f in rows[:limit]:
-            price = _safe_float(e.price)
-            payload.append({
-                "fixture_id": f.id,
-                "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
-                "league": f.comp,
-                "home": f.home_team,
-                "away": f.away_team,
-                "market": e.market,
-                "bookmaker": e.bookmaker,
-                "price": price,
-                "model_prob": _safe_float(e.prob),
-                "implied_prob": _implied_prob(price),
-                "edge": _safe_float(e.edge),
-                "model_source": e.model_source,
-                "label": f"{f.home_team} vs {f.away_team} · {e.market} @{e.bookmaker} {price}"
-            })
+                "sport": (f.sport or "football"),
+                "title": f"{f.home_team} v {f.away_team} — {e.market}",
+                "blurb": f"{e.bookmaker} {price} | model {(_safe_float(e.prob) or 0.0)*100:.1f}% | fair { (1.0/(_safe_float(e.prob) or 1.0)):.2f } | edge {(_safe_float(e.edge) or 0.0)*100:.1f}%",
+                "is_public": False,
+            },
+        }
+        payload.append(item)
+        seen_fx.add(f.id)
+        seen_leagues.add(f.comp)
+        if len(payload) >= limit:
+            break
 
     payload.sort(key=lambda r: (-(r["edge"] or 0.0), r["kickoff_utc"] or ""))
 
@@ -368,10 +354,30 @@ def shortlist_best(
         "min_edge": min_edge,
         "markets": [m.strip().upper() for m in markets.split(",")] if markets else None,
         "per_fixture": per_fixture,
+        "prefer_distinct_leagues": prefer_distinct_leagues,
         "count": len(payload),
         "rows": payload[:limit],
     }
 
+@router.get("/shortlist/featured")
+def shortlist_featured(
+    top_n: int = Query(5, ge=1, le=20),
+    **kwargs,
+):
+    """
+    Wrapper over /shortlist/best returning the top-N edges across fixtures,
+    with Telegram text and /admin/picks payloads.
+    Accepts all query params of /shortlist/best (pass-through via **kwargs).
+    """
+    # Reuse shortlist_best
+    res = shortlist_best(**kwargs)
+    rows = res.get("rows", [])[:top_n]
+    return {
+        "meta": {"top_n": top_n, **{k: v for k, v in res.items() if k != "rows"}},
+        "featured": rows,
+    }
+
+# ====================== ACCA SUGGEST ======================
 
 @router.get("/shortlist/acca/suggest")
 def shortlist_acca_suggest(
@@ -385,15 +391,11 @@ def shortlist_acca_suggest(
     prefer_distinct_leagues: bool = Query(False, description="Try to avoid multiple legs from same league"),
     bankroll: Optional[float] = Query(None, ge=0.0, description="If provided, returns Kelly stake (full Kelly)"),
     kelly_fraction: float = Query(0.5, ge=0.0, le=1.0, description="Fractional Kelly to apply"),
+    target_odds: float = Query(5.0, ge=1.1, description="For admin_acca_auto_hint only"),
+    bookmaker_hint: Optional[str] = Query("bet365", description="For admin_acca_auto_hint only"),
     db: Session = Depends(get_db),
 ):
-    """
-    Builds an acca:
-    - Picks top 'legs' edges from distinct fixtures (optionally distinct leagues)
-    - Returns legs, combined decimal price, naive combined prob (product of model probs),
-      and Kelly stake suggestion if bankroll provided.
-    """
-    # Reuse shortlist_best (per_fixture=True)
+    # Reuse shortlist_best
     params = {
         "day": day,
         "hours_ahead": hours_ahead,
@@ -402,15 +404,14 @@ def shortlist_acca_suggest(
         "min_edge": min_edge,
         "markets": markets,
         "per_fixture": True,
-        "limit": 500,  # enough headroom
+        "limit": 500,
     }
     result = shortlist_best(**params, db=db)
     rows: List[Dict] = result["rows"]
 
     if not rows:
-        return {"ok": True, "legs": [], "reason": "no rows"}
+        return {"ok": True, "legs": [], "reason": "no rows", "window": result["window"]}
 
-    # Greedy pick: largest edge first, respecting distinct fixtures (+ optional leagues)
     chosen: List[Dict] = []
     seen_fixtures: Set[int] = set()
     seen_leagues: Set[str] = set()
@@ -426,7 +427,6 @@ def shortlist_acca_suggest(
         if len(chosen) >= legs:
             break
 
-    # Compute combined price/prob
     combined_price = 1.0
     combined_prob = 1.0
     for leg in chosen:
@@ -437,20 +437,38 @@ def shortlist_acca_suggest(
         if mp is not None:
             combined_prob *= float(mp)
 
-    # Kelly (using acca edge if model prob available)
     kelly_full = None
     kelly_stake = None
     acca_edge = None
     if combined_prob is not None and combined_price:
         q = 1.0 - combined_prob
         b = combined_price - 1.0
-        acca_edge = combined_prob * (combined_price) - 1.0  # EV - 1 baseline
+        acca_edge = combined_prob * (combined_price) - 1.0
         try:
             kelly_full = ((b * combined_prob) - q) / b if b > 0 else None
         except Exception:
             kelly_full = None
         if bankroll is not None and kelly_full is not None:
             kelly_stake = max(0.0, kelly_full * kelly_fraction * bankroll)
+
+    # Handy hint to POST to /admin/accas/auto
+    admin_acca_auto_hint = {
+        "day": day,
+        "bookmaker": bookmaker_hint,
+        "min_edge": max(0.01, min_edge),
+        "target_odds": target_odds,
+        "legs_min": legs,
+        "legs_max": legs,
+        "diversify_markets": True,
+        "avoid_same_fixture": True,
+        "is_public": False,
+        "title": f"Auto ACCA ({legs} legs)",
+        # keep the default price band wide; the /admin/accas/auto route will refine
+        "min_price": 1.3,
+        "max_price": 3.0,
+        "target_tolerance_pct": 0.50,
+        "search_pool_size": 24,
+    }
 
     return {
         "ok": True,
@@ -466,4 +484,5 @@ def shortlist_acca_suggest(
         "markets": markets.split(",") if markets else None,
         "min_edge": min_edge,
         "prefer_distinct_leagues": prefer_distinct_leagues,
+        "admin_acca_auto_hint": admin_acca_auto_hint,
     }
