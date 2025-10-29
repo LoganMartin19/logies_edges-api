@@ -355,7 +355,48 @@ Season stats:
 
 {prob_line}
 {shared_sentence}
-End with one balanced 'what decides it' line."""
+End with one balanced 'what decides it' line."""\
+
+# -------- League-only form helpers (for expert depth) -----------------
+
+def _form_stats_from_rows(rows: List[dict], n: int) -> dict:
+    """Compute W/D/L and avg GF/GA from API-Football 'recent results' rows."""
+    take = rows[:n] if rows else []
+    w = d = l = gf_sum = ga_sum = 0
+    seq = []
+    for r in take:
+        res = (r.get("result") or "").lower()
+        gf = float(r.get("goals_for") or 0)
+        ga = float(r.get("goals_against") or 0)
+        gf_sum += gf; ga_sum += ga
+        if res.startswith("w"): w += 1; seq.append("W")
+        elif res.startswith("d"): d += 1; seq.append("D")
+        elif res.startswith("l"): l += 1; seq.append("L")
+        else: seq.append("?")
+    games = max(1, len(take))
+    return {
+        "wins": w, "draws": d, "losses": l,
+        "avg_goals_for": round(gf_sum / games, 2),
+        "avg_goals_against": round(ga_sum / games, 2),
+        "sequence": " ".join(seq)
+    }
+
+def _league_form_pair(ctx: dict, n: int = 5) -> dict:
+    """
+    Get last-n league-only form for both sides using API-Football.
+    ctx = {home_pid, away_pid, season, league_id}
+    """
+    lid = ctx.get("league_id"); season = ctx.get("season")
+    hpid = ctx.get("home_pid"); apid = ctx.get("away_pid")
+    if not (lid and season and hpid and apid):
+        return {"home": {}, "away": {}}
+
+    H = _af_recent(int(hpid), season=int(season), limit=max(10, n), league_id=int(lid)) or []
+    A = _af_recent(int(apid), season=int(season), limit=max(10, n), league_id=int(lid)) or []
+    return {
+        "home": _form_stats_from_rows(H, n),
+        "away": _form_stats_from_rows(A, n),
+    }
 
 # -------------------------------------------------------------------
 # Routes — Generate Preview (team_form + strict probs)
@@ -674,7 +715,7 @@ def public_preview_by_fixture(
 def expert_prediction(
     fixture_id: int = Query(...),
     n: int = Query(5, ge=3, le=10),
-    overwrite: bool = Query(False),
+    overwrite: bool = Query(False, description="Force regeneration even if cached"),
     db: Session = Depends(get_db),
 ):
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
@@ -696,17 +737,20 @@ def expert_prediction(
             "cached": True,
         }
 
-    # ---------------- core data ----------------
-    form_data = _form_from_db(db, fixture_id, n=n)
-    model = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
+    # ---------- Core data ----------
+    # All competitions form (from your DB summary — already last-n)
+    form_all = _form_from_db(db, fixture_id, n=n)
+    home_all = form_all.get("home", {}) or {}
+    away_all = form_all.get("away", {}) or {}
 
-    # safer explicit access (dict order not guaranteed)
-    p_home = model["probs"].get("home")
-    p_draw = model["probs"].get("draw")
-    p_away = model["probs"].get("away")
+    # Strict win probs (team_form)
+    model = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
+    p_home = model["probs"]["home"]
+    p_draw = model["probs"]["draw"]
+    p_away = model["probs"]["away"]
     top_edges = model["edges"]
 
-    # league positions
+    # League positions (if available)
     league_positions = (
         db.query(LeagueStanding.team, LeagueStanding.position)
         .filter(LeagueStanding.league == fx.comp)
@@ -715,81 +759,72 @@ def expert_prediction(
     home_pos = next((p for t, p in league_positions if t == fx.home_team), None)
     away_pos = next((p for t, p in league_positions if t == fx.away_team), None)
 
-    # cup awareness / h2h context
+    # Cup/H2H + league-only form
     ctx = _fixture_ctx_for_shared(fx)
     cup_like = _is_cup_like(fx.comp)
-    h2h_note = ""
-    recent_h2h = {}
+    # League-only last-n using API (same season + league_id)
+    league_form = _league_form_pair(ctx, n=n)
+    home_lg = league_form.get("home", {}) or {}
+    away_lg = league_form.get("away", {}) or {}
 
-    if ctx["home_pid"] and ctx["away_pid"]:
+    # Recent H2H
+    h2h_note = ""
+    if ctx.get("home_pid") and ctx.get("away_pid"):
         recent_h2h = _pick_most_recent_h2h(ctx["home_pid"], ctx["away_pid"], ctx["season"])
         if recent_h2h:
-            # days-ago phrasing
+            # human-friendly recency
             days_ago_txt = ""
             try:
                 dt = datetime.fromisoformat((recent_h2h.get("date") or "").replace("Z", ""))
                 delta_days = (datetime.utcnow() - dt).days
-                if 0 <= delta_days <= 10:
-                    days_ago_txt = f" just {delta_days} days ago"
-                else:
-                    days_ago_txt = f" on {dt.date().isoformat()}"
+                if 0 <= delta_days <= 31:
+                    days_ago_txt = f" ({delta_days} days ago)"
             except Exception:
                 pass
 
-            comp_nm = recent_h2h.get("competition") or fx.comp or "a league match"
-            score  = recent_h2h.get("score") or "?"
-            side   = (recent_h2h.get("side") or "").lower()   # "home" | "away"
-            result = (recent_h2h.get("result") or "").lower() # "win" | "loss" | "draw"
+            comp_nm = recent_h2h.get("competition") or "league match"
+            res = recent_h2h.get("result") or "unknown result"
+            score = recent_h2h.get("score") or "?"
+            h2h_note = f"Most recent H2H{days_ago_txt}: {comp_nm}, {res} ({score})."
 
-            if result == "draw":
-                outcome = "It finished level"
-            elif result == "win":
-                winner = fx.away_team if side == "away" else fx.home_team if side == "home" else "The visitors"
-                outcome = f"{winner} won"
-            elif result == "loss":
-                loser = fx.away_team if side == "away" else fx.home_team if side == "home" else "The hosts"
-                outcome = f"{loser} lost"
-            else:
-                outcome = "Result unknown"
-
-            h2h_note = f"The sides met{days_ago_txt} in {comp_nm}: {outcome} {score}."
-
-    home_summary = form_data.get("home", {})
-    away_summary = form_data.get("away", {})
-
+    # ---------- Prompt ----------
     prompt = f"""
-You are a professional sports betting analyst. Use ONLY the facts given. 
-Do NOT invent season status, injuries, suspensions, or narrative context not provided. 
-If a data point is missing, omit it rather than guessing.
+You are a professional sports betting analyst. Be specific and concise.
 
-Match: {fx.home_team} vs {fx.away_team} ({fx.comp or fx.sport})
+Fixture: {fx.home_team} vs {fx.away_team} ({fx.comp or fx.sport})
+League positions (if known): {fx.home_team}: {home_pos or "?"}, {fx.away_team}: {away_pos or "?"}
 
-League positions:
-- {fx.home_team}: {home_pos or "unknown"}
-- {fx.away_team}: {away_pos or "unknown"}
+ALL competitions – last {n}:
+- {fx.home_team}: {home_all}
+- {fx.away_team}: {away_all}
 
-Recent form (last {n}):
-- {fx.home_team}: {home_summary}
-- {fx.away_team}: {away_summary}
+LEAGUE ONLY – last {n}:
+- {fx.home_team}: {home_lg}
+- {fx.away_team}: {away_lg}
+
+Recent H2H (if present): {h2h_note or "none"}
 
 Model win probabilities (0..1):
 - home: {p_home}
 - draw: {p_draw}
 - away: {p_away}
 
-Edges (candidate bets, optional):
+Edges (candidate bets – show only sensible, positive edges):
 {top_edges}
 
-Cup/H2H context (verbatim, include if present):
-{h2h_note or "None"}
-
-Produce a SINGLE JSON object with:
-- "paragraphs": 2–3 short paragraphs in plain text; if h2h_note is present, reference it explicitly.
-- "probabilities": object with home/draw/away converted to percentages (1 decimal).
-- "best_bets": up to 3 items chosen from the provided Edges (do not invent bookmakers or prices).
-- "confidence": one of ["Low","Medium","High"] based on edge quality and price availability.
-- "disclaimer": short reminder about variance and bankroll discipline.
-""".strip()
+Return a SINGLE JSON object with:
+- "paragraphs": 3–4 short paragraphs, plain text (no Markdown). Structure:
+   1) All-comps form contrast + what it implies.
+   2) League-only form (W/D/L, avg GF/GA, sequences) + style matchup (defence/attack).
+   3) H2H + tactical hinge (pressing/transition/set pieces) inferred ONLY from the data above; do NOT invent players.
+   4) Pricing view tying back to model probabilities and edges; mention 'no bet' if prices are weak.
+- "probabilities": object {{ "home": number|null, "draw": number|null, "away": number|null }} in PERCENT (0–100, 1 decimal).
+- "best_bets": up to 3 objects: {{
+    "market": string, "bookmaker": string|null, "price": number|null,
+    "edge_pct": number|null, "why": string }}
+- "confidence": one of ["Low","Medium","High"] based on edge sizes and market coverage.
+- "disclaimer": short bankroll/variance reminder.
+    """.strip()
 
     client = _openai_client()
     try:
@@ -799,8 +834,8 @@ Produce a SINGLE JSON object with:
                 {"role": "system", "content": "Return valid JSON only."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.5,
-            max_tokens=450,
+            temperature=0.45,
+            max_tokens=600,
             response_format={"type": "json_object"},
         )
     except AttributeError:
@@ -810,8 +845,8 @@ Produce a SINGLE JSON object with:
                 {"role": "system", "content": "Return valid JSON only."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.5,
-            max_tokens=450,
+            temperature=0.45,
+            max_tokens=600,
             response_format={"type": "json_object"},
         )
 
@@ -826,6 +861,7 @@ Produce a SINGLE JSON object with:
             "disclaimer": "No bet if price/edge isn’t there."
         }
 
+    # ---------- Persist ----------
     try:
         if existing:
             existing.payload = data
@@ -856,8 +892,9 @@ Produce a SINGLE JSON object with:
         "away": fx.away_team,
         "analysis": data,
         "cached": False,
-        "cup_context": cup_like,
+        "cup_context": _is_cup_like(fx.comp),
         "h2h_note": h2h_note,
+        "league_form": league_form,
     }
 
 @router.get("/debug/h2h")
