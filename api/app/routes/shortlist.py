@@ -25,18 +25,25 @@ def _norm_book_name(name: str | None) -> str:
         return ""
     return re.sub(r"[^a-z0-9]+", "", name.lower())
 
-def _same_bookmaker(lhs: str | None, rhs: str | None) -> bool:
-    return _norm_book_name(lhs) == _norm_book_name(rhs)
-
-def _alert_digest(fixture_id: int, market: str, bookmaker: str, price: float) -> str:
-    alert_key = f"{fixture_id}|{market}|{bookmaker}|{price:.4f}"
-    return sha256(alert_key.encode()).hexdigest()
+# --- helpers (put near the top of shortlist.py, after _norm_book_name) ---
+def _same_bookmaker(a: Optional[str], b: Optional[str]) -> bool:
+    """Portable equality: lowercase and strip spaces/dashes/underscores/dots."""
+    def norm(x: Optional[str]) -> str:
+        s = (x or "").lower()
+        for ch in (" ", "-", "_", "."):
+            s = s.replace(ch, "")
+        return s
+    return norm(a) == norm(b)
 
 def _safe_float(x):
     try:
         return float(x) if x is not None else None
     except Exception:
         return None
+
+def _alert_digest(fixture_id: int, market: str, bookmaker: str, price: float) -> str:
+    alert_key = f"{fixture_id}|{market}|{bookmaker}|{price:.4f}"
+    return sha256(alert_key.encode()).hexdigest()
 
 def _implied_prob(price: Optional[float]) -> Optional[float]:
     try:
@@ -73,8 +80,8 @@ def shortlist_today(
         .join(Fixture, Edge.fixture_id == Fixture.id)
         .filter(
             or_(
-                Fixture.kickoff_utc >= now,            # upcoming
-                Fixture.result_settled == False         # in-progress / unsettled
+                Fixture.kickoff_utc >= now,       # upcoming
+                Fixture.result_settled == False   # in-progress / unsettled
             )
         )
         .filter(Fixture.kickoff_utc <= until)
@@ -87,32 +94,41 @@ def shortlist_today(
     # Python-side filters (portable)
     if leagues:
         wanted = {s.strip() for s in leagues.split(",") if s.strip()}
-        rows = [(e, f) for (e, f) in rows if f.comp in wanted]
+        rows = [(e, f) for (e, f) in rows if (f.comp or "") in wanted]
 
     if prefer_book:
         rows = [(e, f) for (e, f) in rows if _same_bookmaker(e.bookmaker, prefer_book)]
 
     if exclude_started:
         cutoff = now - timedelta(minutes=grace_mins)
-        rows = [(e, f) for (e, f) in rows if (f.kickoff_utc or now) >= cutoff or (not f.result_settled)]
+        rows = [(e, f) for (e, f) in rows if ((f.kickoff_utc or now) >= cutoff) or (not f.result_settled)]
 
     out: list[dict] = []
     for e, f in rows:
-        price = float(e.price)
+        price = _safe_float(e.price)
+        if price is None:
+            # skip edges with no usable price (prevents 500 + not actionable)
+            continue
+
+        prob_val = _safe_float(e.prob)
+        edge_val = _safe_float(e.edge)
+
         digest = _alert_digest(f.id, e.market, e.bookmaker, price)
         dup = db.query(Bet).filter(Bet.duplicate_alert_hash == digest).first()
+
+        kickoff_iso = f.kickoff_utc.isoformat() if f.kickoff_utc else None
 
         row = {
             "fixture_id": f.id,
             "comp": f.comp,
             "home_team": f.home_team,
             "away_team": f.away_team,
-            "kickoff_utc": f.kickoff_utc,
+            "kickoff_utc": kickoff_iso,
             "market": e.market,
             "bookmaker": e.bookmaker,
             "price": price,
-            "prob": _safe_float(e.prob),
-            "edge": _safe_float(e.edge),
+            "prob": prob_val,
+            "edge": edge_val,
             "model_source": e.model_source,
             # UI helpers
             "already_sent": bool(dup),
@@ -121,7 +137,7 @@ def shortlist_today(
                 "match": f"{f.home_team} v {f.away_team}",
                 "market": e.market,
                 "odds": price,
-                "edge": (_safe_float(e.edge) or 0.0) * 100.0 if e.edge is not None else None,
+                "edge": (edge_val * 100.0) if edge_val is not None else None,
                 "kickoff": f.kickoff_utc.strftime("%a %d %b, %H:%M") if f.kickoff_utc else None,
                 "league": f.comp,
                 "bookmaker": e.bookmaker,
@@ -132,12 +148,15 @@ def shortlist_today(
         }
         out.append(row)
 
-    # Deprecated: blast everything
+    # Deprecated: blast everything (still safe-casted)
     if send_alerts:
         for e, f in rows:
-            if (e.edge or 0.0) < 0.0:
+            edge_val = _safe_float(e.edge)
+            if (edge_val or 0.0) < 0.0:
                 continue
-            price = float(e.price)
+            price = _safe_float(e.price)
+            if price is None:
+                continue
             digest = _alert_digest(f.id, e.market, e.bookmaker, price)
             exists = db.query(Bet).filter(Bet.duplicate_alert_hash == digest).first()
             if exists:
@@ -147,7 +166,7 @@ def shortlist_today(
                     match=f"{f.home_team} v {f.away_team}",
                     market=e.market,
                     odds=price,
-                    edge=float(e.edge) * 100.0 if e.edge is not None else None,
+                    edge=(edge_val * 100.0) if edge_val is not None else None,
                     kickoff=f.kickoff_utc.strftime("%a %d %b, %H:%M") if f.kickoff_utc else None,
                     league=f.comp,
                     bookmaker=e.bookmaker,
