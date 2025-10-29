@@ -89,79 +89,61 @@ def _fixture_ctx_for_shared(fixture: Fixture) -> dict:
     except Exception:
         return {"league_id": 0, "season": 0, "home_pid": 0, "away_pid": 0}
 
+# -------------------------------------------------------------------
+# Domestic / H2H helpers (for cup intelligence)
+# -------------------------------------------------------------------
 
-def _shared_opponents_text(
-    home_pid: int, away_pid: int, season: int, league_id: int, lookback: int = 8
-) -> str:
-    if not (home_pid and away_pid and season and league_id):
-        return ""
+def _is_cup_like(name: str | None) -> bool:
+    if not name:
+        return False
+    n = name.lower()
+    cup_markers = [
+        "cup", "coppa", "copa", "dfb", "fa ", "super cup", "supercup", "shield",
+        "trophy", "league cup", "carabao", "dfb-pokal", "knvb", "taça", "reykjavik",
+        "challenge", "community", "supertaça", "pokal"
+    ]
+    return any(t in n for t in cup_markers)
 
-    def norm(s: str | None) -> str:
-        if not s:
-            return ""
-        s = s.lower().strip()
-        for t in [" fc", " cf", " sc", " afc", " ssc", " ac", " calcio", ".", "-"]:
-            s = s.replace(t, " ")
-        return " ".join(s.split())
+def _pick_most_recent_h2h(home_pid: int, away_pid: int, season: int, lookback: int = 12) -> dict:
+    """Return most recent H2H between the two teams across any comp."""
+    H = _af_recent(home_pid, season=season, limit=lookback) or []
+    A = _af_recent(away_pid, season=season, limit=lookback) or []
 
-    H = _af_recent(home_pid, season=season, limit=lookback, league_id=league_id) or []
-    A = _af_recent(away_pid, season=season, limit=lookback, league_id=league_id) or []
-
-    def maps(rows):
-        by_id, by_nm = {}, {}
+    def _extract(rows, opp_id):
+        out = []
         for r in rows:
             oid = r.get("opponent_id") or r.get("opponent_team_id")
-            if oid:
-                by_id[int(oid)] = r
-            nm = r.get("opponent")
-            if nm:
-                by_nm[norm(nm)] = r
-        return by_id, by_nm
+            if oid and int(oid) == int(opp_id):
+                out.append({
+                    "date": r.get("date") or r.get("fixture_date"),
+                    "league": r.get("league"),
+                    "competition": r.get("competition") or "",
+                    "score": r.get("score") or f"{r.get('goals_for','?')}-{r.get('goals_against','?')}",
+                    "result": r.get("result"),
+                })
+        return out
 
-    H_id, H_nm = maps(H)
-    A_id, A_nm = maps(A)
-
-    take: List[str] = []
-    shared_ids = list(set(H_id) & set(A_id))
-    if shared_ids:
-        for oid in shared_ids[:5]:
-            h, a = H_id[oid], A_id[oid]
-            h_score = h.get("score") or f"{h.get('goals_for', '?')}-{h.get('goals_against', '?')}"
-            a_score = a.get("score") or f"{a.get('goals_for', '?')}-{a.get('goals_against', '?')}"
-            opp = h.get("opponent") or a.get("opponent") or f"Team {oid}"
-            take.append(f"- vs {opp}: {h.get('result','?')} {h_score} | {a.get('result','?')} {a_score}")
-    else:
-        shared_nm = list(set(H_nm) & set(A_nm))
-        for nm in shared_nm[:5]:
-            h, a = H_nm[nm], A_nm[nm]
-            h_score = h.get("score") or f"{h.get('goals_for', '?')}-{h.get('goals_against', '?')}"
-            a_score = a.get("score") or f"{a.get('goals_for', '?')}-{a.get('goals_against', '?')}"
-            opp = h.get("opponent") or a.get("opponent") or "Opponent"
-            take.append(f"- vs {opp}: {h.get('result','?')} {h_score} | {a.get('result','?')} {a_score}")
-
-    return ("Shared Opponents (recent, same league):\n" + "\n".join(take)) if take else ""
+    cand = _extract(H, away_pid) + _extract(A, home_pid)
+    def _key(x):
+        try:
+            return datetime.fromisoformat(x.get("date").replace("Z", "")).timestamp()
+        except Exception:
+            return 0
+    cand.sort(key=_key, reverse=True)
+    return cand[0] if cand else {}
 
 # -------------------------------------------------------------------
-# Probability helpers (STRICT H/D/A with same timestamp)
+# Probability helpers (STRICT H/D/A)
 # -------------------------------------------------------------------
 
 HDA_ONLY = ("HOME_WIN", "DRAW", "AWAY_WIN")
 
-def _pick_latest_complete_triplet(
-    rows: List[ModelProb]
-) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[datetime]]:
-    """
-    From a list of ModelProb rows (already filtered to H/D/A), pick the most recent
-    timestamp that has all three markets present. Returns (home, draw, away, as_of).
-    """
-    # Group by as_of (to the second)
+def _pick_latest_complete_triplet(rows: List[ModelProb]) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[datetime]]:
     buckets: Dict[str, Dict[str, ModelProb]] = {}
     for r in rows:
         tkey = (r.as_of.replace(microsecond=0)).isoformat()
         buckets.setdefault(tkey, {})
         buckets[tkey][(r.market or "").upper()] = r
-
-    # Iterate most recent first
     for tkey in sorted(buckets.keys(), reverse=True):
         bucket = buckets[tkey]
         if all(m in bucket for m in HDA_ONLY):
@@ -173,16 +155,7 @@ def _pick_latest_complete_triplet(
     return None, None, None, None
 
 
-def _get_win_probs_strict(
-    db: Session,
-    fixture_id: int,
-    source: str = "team_form",
-) -> Dict[str, Optional[float]]:
-    """
-    STRICT: pull only HOME_WIN/DRAW/AWAY_WIN from the most-recent timestamp
-    where all three exist together. This prevents mixing markets from different
-    calc runs (the root of your 57.8% issue).
-    """
+def _get_win_probs_strict(db: Session, fixture_id: int, source: str = "team_form") -> Dict[str, Optional[float]]:
     rows: List[ModelProb] = (
         db.query(ModelProb)
         .filter(ModelProb.fixture_id == fixture_id)
@@ -195,17 +168,7 @@ def _get_win_probs_strict(
     return {"home": h, "draw": d, "away": a}
 
 
-def _get_win_probs_and_edges_any(
-    db: Session,
-    fixture_id: int,
-    sources: List[str] = ["team_form", "consensus_calib", "consensus_v2"],
-    top_k_edges: int = 5,
-) -> dict:
-    """
-    New behavior: for each source in order, try STRICT H/D/A triplet first.
-    If no complete triplet exists, fall back to your old per-market-latest logic
-    but still ignore HOME/AWAY markets.
-    """
+def _get_win_probs_and_edges_any(db: Session, fixture_id: int, sources: List[str] = ["team_form"], top_k_edges: int = 5) -> dict:
     probs = {"home": None, "draw": None, "away": None}
     used_source = None
 
@@ -216,35 +179,6 @@ def _get_win_probs_and_edges_any(
             used_source = src
             break
 
-        # Fallback: take latest per market among H/D/A only
-        latest = (
-            db.query(ModelProb.market, func.max(ModelProb.as_of).label("latest"))
-            .filter(
-                ModelProb.fixture_id == fixture_id,
-                ModelProb.source == src,
-                ModelProb.market.in_(HDA_ONLY),
-            )
-            .group_by(ModelProb.market)
-            .subquery()
-        )
-        rows = (
-            db.query(ModelProb)
-            .join(latest, and_(ModelProb.market == latest.c.market, ModelProb.as_of == latest.c.latest))
-            .all()
-        )
-        if rows:
-            for r in rows:
-                m = (r.market or "").upper()
-                if m == "HOME_WIN":
-                    probs["home"] = float(r.prob)
-                elif m == "DRAW":
-                    probs["draw"] = float(r.prob)
-                elif m == "AWAY_WIN":
-                    probs["away"] = float(r.prob)
-            used_source = src
-            break
-
-    # edges aligned with used_source (if any)
     q = db.query(Edge).filter(Edge.fixture_id == fixture_id)
     if used_source:
         edges_rows = q.filter(Edge.model_source == used_source).order_by(Edge.edge.desc(), Edge.created_at.desc()).all()
@@ -266,17 +200,10 @@ def _get_win_probs_and_edges_any(
     return {"probs": probs, "edges": pos_edges, "source_used": used_source or "unknown"}
 
 # -------------------------------------------------------------------
-# Prompt builder
+# Prompt builder (unchanged)
 # -------------------------------------------------------------------
 
-def _build_prompt_enriched(
-    fixture: Fixture,
-    form_data: dict,
-    team_stats: dict,
-    shared_text: str,
-    probs: dict,
-    n: int,
-) -> str:
+def _build_prompt_enriched(fixture: Fixture, form_data: dict, team_stats: dict, shared_text: str, probs: dict, n: int) -> str:
     home = fixture.home_team or "Home"
     away = fixture.away_team or "Away"
     comp = fixture.comp or fixture.sport or "match"
@@ -299,9 +226,9 @@ def _build_prompt_enriched(
     a_avg_gf = float(away_sum.get("avg_gf") or 0.0)
     a_avg_ga = float(away_sum.get("avg_ga") or 0.0)
 
-    # normalize to percentages with sum ~100
+    # normalize to %
     p_home, p_draw, p_away = probs.get("home"), probs.get("draw"), probs.get("away")
-    vals = [v for v in [p_home, p_draw, p_away] if v is not None]
+    vals = [v for v in (p_home, p_draw, p_away) if v is not None]
     if vals and sum(vals) > 0:
         total = sum(vals)
         scale = 100.0 / total
@@ -311,13 +238,7 @@ def _build_prompt_enriched(
 
     def _pct(v): return f"{v:.1f}%" if v is not None else "n/a"
 
-    prob_line = (
-        f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}."
-        if p_draw is not None
-        else f"Model probabilities — {home}: {_pct(p_home)}, {away}: {_pct(p_away)}."
-    )
-
-    # Compact shared-opponents sentence
+    prob_line = f"Model probabilities — {home}: {_pct(p_home)}, Draw: {_pct(p_draw)}, {away}: {_pct(p_away)}."
     shared_sentence = ""
     if shared_text:
         bullets = [ln.strip() for ln in shared_text.splitlines() if ln.strip().startswith("- ")]
@@ -655,11 +576,15 @@ def public_preview_by_fixture(
 # Expert bettor analysis (uses same strict probs)
 # -------------------------------------------------------------------
 
+# -------------------------------------------------------------------
+# Expert bettor analysis (now cup-aware + H2H context)
+# -------------------------------------------------------------------
+
 @router.get("/expert")
 def expert_prediction(
     fixture_id: int = Query(...),
     n: int = Query(5, ge=3, le=10),
-    overwrite: bool = Query(False, description="Force regeneration even if cached"),
+    overwrite: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
@@ -667,7 +592,6 @@ def expert_prediction(
         raise HTTPException(status_code=404, detail="Fixture not found")
 
     today = date.today()
-
     existing = (
         db.query(ExpertPrediction)
         .filter(ExpertPrediction.fixture_id == fixture_id, ExpertPrediction.day == today)
@@ -682,13 +606,17 @@ def expert_prediction(
             "cached": True,
         }
 
+    # ---------------- core data ----------------
     form_data = _form_from_db(db, fixture_id, n=n)
     model = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
-    p_home = model["probs"]["home"]
-    p_draw = model["probs"]["draw"]
-    p_away = model["probs"]["away"]
+
+    # safer explicit access (dict order not guaranteed)
+    p_home = model["probs"].get("home")
+    p_draw = model["probs"].get("draw")
+    p_away = model["probs"].get("away")
     top_edges = model["edges"]
 
+    # league positions
     league_positions = (
         db.query(LeagueStanding.team, LeagueStanding.position)
         .filter(LeagueStanding.league == fx.comp)
@@ -696,6 +624,23 @@ def expert_prediction(
     )
     home_pos = next((p for t, p in league_positions if t == fx.home_team), None)
     away_pos = next((p for t, p in league_positions if t == fx.away_team), None)
+
+    # cup awareness / h2h context
+    ctx = _fixture_ctx_for_shared(fx)
+    cup_like = _is_cup_like(fx.comp)
+    h2h_note = ""
+    if cup_like and ctx["home_pid"] and ctx["away_pid"]:
+        recent_h2h = _pick_most_recent_h2h(ctx["home_pid"], ctx["away_pid"], ctx["season"])
+        if recent_h2h:
+            comp_nm = recent_h2h.get("league") or recent_h2h.get("competition") or "league match"
+            res = recent_h2h.get("result") or "unknown"
+            score = recent_h2h.get("score") or ""
+            h2h_note = f"The sides met recently in {comp_nm} where the result was {res} ({score})."
+    elif ctx["home_pid"] and ctx["away_pid"]:
+        recent_h2h = _pick_most_recent_h2h(ctx["home_pid"], ctx["away_pid"], ctx["season"])
+        if recent_h2h:
+            score = recent_h2h.get("score")
+            h2h_note = f"They met earlier this season ({score})."
 
     home_summary = form_data.get("home", {})
     away_summary = form_data.get("away", {})
@@ -712,26 +657,23 @@ Context (last {n}):
 - {fx.home_team}: {home_summary}
 - {fx.away_team}: {away_summary}
 
-Model win probabilities (0..1, any missing = unknown):
+Model win probabilities (0..1):
 - home: {p_home}
 - draw: {p_draw}
 - away: {p_away}
 
-Edges (candidate bets from model, include only if they look positive):
+Edges (candidate bets):
 {top_edges}
 
+Cup/H2H context:
+{h2h_note or "None"}
+
 Produce a SINGLE JSON object with:
-- "paragraphs": array of 2–3 short paragraphs in plain text (no Markdown),
-- "probabilities": object {{ "home": number|null, "draw": number|null, "away": number|null }} in PERCENT (0–100, 1 decimal),
-- "best_bets": array of up to 3 objects {{
-    "market": string,
-    "bookmaker": string|null,
-    "price": number|null,
-    "edge_pct": number|null,
-    "why": string
-  }},
-- "confidence": one of ["Low","Medium","High"] based on edge quality + price availability,
-- "disclaimer": short string reminding about variance and bankroll discipline.
+- "paragraphs": 2–3 short paragraphs of insight (plain text),
+- "probabilities": percentages for home/draw/away,
+- "best_bets": up to 3 suggested edges with rationale,
+- "confidence": one of ["Low","Medium","High"],
+- "disclaimer": a short reminder about variance.
 """.strip()
 
     client = _openai_client()
@@ -760,7 +702,7 @@ Produce a SINGLE JSON object with:
 
     try:
         data = json.loads(resp.choices[0].message.content or "{}")
-    except Exception as e:
+    except Exception:
         data = {
             "paragraphs": ["Analysis unavailable."],
             "probabilities": {"home": None, "draw": None, "away": None},
@@ -768,7 +710,6 @@ Produce a SINGLE JSON object with:
             "confidence": "Low",
             "disclaimer": "No bet if price/edge isn’t there."
         }
-        print(f"[expert_prediction] OpenAI fallback: {e}")
 
     try:
         if existing:
@@ -800,4 +741,6 @@ Produce a SINGLE JSON object with:
         "away": fx.away_team,
         "analysis": data,
         "cached": False,
+        "cup_context": cup_like,
+        "h2h_note": h2h_note,
     }
