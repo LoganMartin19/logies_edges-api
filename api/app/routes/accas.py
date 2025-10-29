@@ -60,7 +60,7 @@ def create_acca(payload: AccaIn, db: Session = Depends(get_db)):
         note=payload.note,
         stake_units=payload.stake_units,
         is_public=payload.is_public,
-        combined_price=combined,
+        combined_price=round(combined, 4),
     )
     db.add(t); db.flush()
 
@@ -74,7 +74,7 @@ def create_acca(payload: AccaIn, db: Session = Depends(get_db)):
             note=l.note or None,
         ))
     db.commit()
-    return {"ok": True, "id": t.id, "combined_price": combined}
+    return {"ok": True, "id": t.id, "combined_price": t.combined_price}
 
 @router.post("/{ticket_id}/publish")
 def publish_acca(ticket_id: int, public: int = Query(1), db: Session = Depends(get_db)):
@@ -123,13 +123,70 @@ def list_admin_accas(day: str = Query(...), db: Session = Depends(get_db)):
                         "price": l.price,
                         "bookmaker": l.bookmaker,
                         "result": l.result,
+                        "note": l.note,
                     } for l in legs_by.get(t.id, [])
                 ],
             } for t in rows
         ],
     }
 
-# ---------- Public daily ----------
+# ---------- Public: SINGLE acca for a day (most recent public) ----------
+@pub.get("/today")
+def public_acca_today(
+    day: str = Query(..., description="YYYY-MM-DD (UTC)"),
+    db: Session = Depends(get_db),
+):
+    d = date_cls.fromisoformat(day)
+    t = (
+        db.query(AccaTicket)
+        .filter(AccaTicket.day == d, AccaTicket.is_public == True)
+        .order_by(AccaTicket.created_at.desc())
+        .first()
+    )
+    if not t:
+        return {"exists": False, "message": "No public ACCA for this day."}
+
+    legs = db.query(AccaLeg).filter(AccaLeg.ticket_id == t.id).all()
+    fids = [l.fixture_id for l in legs if l.fixture_id]
+    fmap = {f.id: f for f in db.query(Fixture).filter(Fixture.id.in_(fids)).all()} if fids else {}
+
+    # lightweight summary: N legs, ~price, first/last kickoff, and any leg notes condensed
+    kickoffs = [fmap[l.fixture_id].kickoff_utc for l in legs if l.fixture_id in fmap and fmap[l.fixture_id].kickoff_utc]
+    kmin = min(kickoffs).strftime("%H:%M") if kickoffs else None
+    kmax = max(kickoffs).strftime("%H:%M") if kickoffs else None
+    note_bits = []
+    for l in legs:
+        if l.note:
+            fx = fmap.get(l.fixture_id)
+            if fx:
+                note_bits.append(f"{fx.home_team}–{fx.away_team} ({l.market}): {l.note}")
+    summary = f"{len(legs)}-fold at ~{t.combined_price}x. Kickoffs {kmin}–{kmax} UTC." + (f" Notes: " + " | ".join(note_bits) if note_bits else "")
+
+    return {
+        "exists": True,
+        "ticket_id": t.id,
+        "day": t.day.isoformat(),
+        "title": t.title or f"{d.strftime('%a %d %b')} ACCA",
+        "note": t.note,
+        "stake_units": t.stake_units,
+        "combined_price": t.combined_price,
+        "summary": summary,
+        "legs": [
+            {
+                "fixture_id": l.fixture_id,
+                "matchup": f"{fmap[l.fixture_id].home_team} vs {fmap[l.fixture_id].away_team}" if l.fixture_id in fmap else "",
+                "comp": fmap[l.fixture_id].comp if l.fixture_id in fmap else "",
+                "kickoff_utc": fmap[l.fixture_id].kickoff_utc.isoformat() if l.fixture_id in fmap else None,
+                "market": l.market,
+                "bookmaker": l.bookmaker,
+                "price": l.price,
+                "result": l.result,
+                "note": l.note,
+            } for l in legs
+        ],
+    }
+
+# ---------- Public: keep your multi-acca daily endpoint (unchanged) ----------
 @pub.get("/daily")
 def public_accas_daily(day: str = Query(...), db: Session = Depends(get_db)):
     d = date_cls.fromisoformat(day)
@@ -167,6 +224,7 @@ def public_accas_daily(day: str = Query(...), db: Session = Depends(get_db)):
                         "bookmaker": l.bookmaker,
                         "price": l.price,
                         "result": l.result,
+                        "note": l.note,
                     } for l in legs_by.get(t.id, [])
                 ],
             } for t in rows

@@ -116,78 +116,69 @@ def _norm_team(s: str | None) -> str:
 
 def _pick_most_recent_h2h(home_pid: int, away_pid: int, season: int, lookback: int = 20) -> dict:
     """
-    Find most-recent H2H across ANY comp this season using BOTH opponent_id and
-    normalized opponent name fallback (covers data where id is missing).
-    Returns {date, competition, league, score, result, side, source}.
+    Return the most-recent competitive match between the two teams, across any competition.
+    Uses opponent_id matching (no league filter), sorts by parsed datetime, and
+    returns neutral info + winner side so the caller can format with team names.
     """
     H = _af_recent(home_pid, season=season, limit=lookback) or []
     A = _af_recent(away_pid, season=season, limit=lookback) or []
 
-    home_rows, away_rows = [], []
+    # index both lists by opponent_id for fast pairing
+    def by_opp(rows):
+        m = {}
+        for r in rows:
+            oid = r.get("opponent_id") or r.get("opponent_team_id")
+            if not oid:
+                continue
+            m.setdefault(int(oid), []).append(r)
+        return m
 
-    # tag which side the record belongs to (helps interpret result wording)
-    for r in H:
-        r = dict(r or {})
-        r["_side"] = "home"
-        home_rows.append(r)
-    for r in A:
-        r = dict(r or {})
-        r["_side"] = "away"
-        away_rows.append(r)
+    Hmap = by_opp(H)
+    Amap = by_opp(A)
 
-    def _date_key(x):
-        d = x.get("date") or x.get("fixture_date") or ""
+    # candidates are rows where each side’s recent list has the other as opponent
+    pairs = []
+    if away_pid in Hmap:
+        for hr in Hmap[away_pid]:
+            pairs.append(("home_side", hr))  # row from home_pid POV
+    if home_pid in Amap:
+        for ar in Amap[home_pid]:
+            pairs.append(("away_side", ar))  # row from away_pid POV
+
+    def parse_dt(s: str | None) -> float:
+        if not s:
+            return 0.0
         try:
-            return datetime.fromisoformat(d.replace("Z", "")).timestamp()
+            return datetime.fromisoformat(s.replace("Z", "")).timestamp()
         except Exception:
             return 0.0
 
-    # build lookup by id AND name
-    def _opp_id(r): return r.get("opponent_id") or r.get("opponent_team_id")
-    def _opp_nm(r): return _norm_team(r.get("opponent"))
-
-    H_by_id   = {int(_opp_id(r)): r for r in home_rows if _opp_id(r)}
-    A_by_id   = {int(_opp_id(r)): r for r in away_rows if _opp_id(r)}
-    H_by_name = {_opp_nm(r): r for r in home_rows if _opp_nm(r)}
-    A_by_name = {_opp_nm(r): r for r in away_rows if _opp_nm(r)}
-
-    candidates = []
-
-    # id match (best)
-    if away_pid in H_by_id and home_pid in A_by_id:
-        candidates.append(H_by_id[away_pid])
-        candidates.append(A_by_id[home_pid])
-
-    # name match fallback
-    nm_home = next(iter(H_by_name.keys()), "")
-    nm_away = next(iter(A_by_name.keys()), "")
-    if _norm_team(nm_home) in A_by_name:
-        candidates.append(H_by_name[_norm_team(nm_home)])
-        candidates.append(A_by_name[_norm_team(nm_home)])
-    if _norm_team(nm_away) in H_by_name:
-        candidates.append(A_by_name[_norm_team(nm_away)])
-        candidates.append(H_by_name[_norm_team(nm_away)])
-
-    # last resort: scan all rows for explicit opponent string matches both ways
-    home_names = set(H_by_name.keys())
-    away_names = set(A_by_name.keys())
-    for nm in sorted(home_names & away_names):
-        candidates.append(H_by_name[nm])
-        candidates.append(A_by_name[nm])
-
-    if not candidates:
+    # Sort by actual fixture datetime
+    pairs.sort(key=lambda tup: parse_dt((tup[1].get("date") or tup[1].get("fixture_date"))), reverse=True)
+    if not pairs:
         return {}
 
-    # pick the latest-dated candidate pair
-    candidates.sort(key=_date_key, reverse=True)
-    r = candidates[0]
+    side, row = pairs[0]
+    gf = float(row.get("goals_for") or 0)
+    ga = float(row.get("goals_against") or 0)
+    score = f"{int(gf)}-{int(ga)}"
+    dt = (row.get("date") or row.get("fixture_date")) or ""
+    comp = row.get("league") or row.get("competition") or "league"
+
+    # winner_pid decided from the POV of the row’s team
+    if gf > ga:
+        winner_pid = home_pid if side == "home_side" else away_pid
+    elif ga > gf:
+        winner_pid = away_pid if side == "home_side" else home_pid
+    else:
+        winner_pid = None
+
     return {
-        "date": r.get("date") or r.get("fixture_date"),
-        "competition": r.get("competition") or r.get("league"),
-        "score": r.get("score") or f"{r.get('goals_for','?')}-{r.get('goals_against','?')}",
-        "result": r.get("result"),
-        "side": r.get("_side"),
-        "source": "id" if _opp_id(r) else "name",
+        "date": dt,
+        "competition": comp,
+        "score": score,           # always "X-Y" from the reporting side’s POV (already neutral enough)
+        "winner_pid": winner_pid, # None if draw
+        "source_side": side,      # "home_side" or "away_side"
     }
 
 def _pretty_h2h_line(fx: Fixture, h2h: dict) -> str:
@@ -738,19 +729,19 @@ def expert_prediction(
         }
 
     # ---------- Core data ----------
-    # All competitions form (from your DB summary — already last-n)
+    # All competitions form (from DB summary)
     form_all = _form_from_db(db, fixture_id, n=n)
     home_all = form_all.get("home", {}) or {}
     away_all = form_all.get("away", {}) or {}
 
-    # Strict win probs (team_form)
+    # Model probabilities
     model = _get_win_probs_and_edges_any(db, fixture_id, sources=["team_form"], top_k_edges=5)
     p_home = model["probs"]["home"]
     p_draw = model["probs"]["draw"]
     p_away = model["probs"]["away"]
     top_edges = model["edges"]
 
-    # League positions (if available)
+    # League positions
     league_positions = (
         db.query(LeagueStanding.team, LeagueStanding.position)
         .filter(LeagueStanding.league == fx.comp)
@@ -762,34 +753,47 @@ def expert_prediction(
     # Cup/H2H + league-only form
     ctx = _fixture_ctx_for_shared(fx)
     cup_like = _is_cup_like(fx.comp)
-    # League-only last-n using API (same season + league_id)
     league_form = _league_form_pair(ctx, n=n)
     home_lg = league_form.get("home", {}) or {}
     away_lg = league_form.get("away", {}) or {}
 
-    # Recent H2H
+    # Handle missing league data gracefully
+    if home_lg.get("games", 0) == 0:
+        home_lg["note"] = "No recent league matches recorded."
+    if away_lg.get("games", 0) == 0:
+        away_lg["note"] = "No recent league matches recorded."
+
+    # -------- Corrected H2H logic --------
     h2h_note = ""
     if ctx.get("home_pid") and ctx.get("away_pid"):
         recent_h2h = _pick_most_recent_h2h(ctx["home_pid"], ctx["away_pid"], ctx["season"])
         if recent_h2h:
-            # human-friendly recency
             days_ago_txt = ""
             try:
                 dt = datetime.fromisoformat((recent_h2h.get("date") or "").replace("Z", ""))
                 delta_days = (datetime.utcnow() - dt).days
-                if 0 <= delta_days <= 31:
+                if 0 <= delta_days <= 14:
                     days_ago_txt = f" ({delta_days} days ago)"
             except Exception:
                 pass
 
-            comp_nm = recent_h2h.get("competition") or "league match"
-            res = recent_h2h.get("result") or "unknown result"
+            comp_nm = recent_h2h.get("competition") or "league"
             score = recent_h2h.get("score") or "?"
-            h2h_note = f"Most recent H2H{days_ago_txt}: {comp_nm}, {res} ({score})."
+            winner_pid = recent_h2h.get("winner_pid")
+
+            home_name = fx.home_team or "Home"
+            away_name = fx.away_team or "Away"
+
+            if winner_pid is None:
+                h2h_note = f"The sides met{days_ago_txt} in {comp_nm}: it finished {score}."
+            else:
+                winner_name = home_name if winner_pid == ctx["home_pid"] else away_name
+                loser_name = away_name if winner_pid == ctx["home_pid"] else home_name
+                h2h_note = f"The sides met{days_ago_txt} in {comp_nm}: {winner_name} beat {loser_name} {score}."
 
     # ---------- Prompt ----------
     prompt = f"""
-You are a professional sports betting analyst. Be specific and concise.
+You are a professional football betting analyst. Be concise and data-grounded.
 
 Fixture: {fx.home_team} vs {fx.away_team} ({fx.comp or fx.sport})
 League positions (if known): {fx.home_team}: {home_pos or "?"}, {fx.away_team}: {away_pos or "?"}
@@ -804,28 +808,27 @@ LEAGUE ONLY – last {n}:
 
 Recent H2H (if present): {h2h_note or "none"}
 
-Model win probabilities (0..1):
+Model win probabilities:
 - home: {p_home}
 - draw: {p_draw}
 - away: {p_away}
 
-Edges (candidate bets – show only sensible, positive edges):
+Edges (potential value bets):
 {top_edges}
 
-Return a SINGLE JSON object with:
-- "paragraphs": 3–4 short paragraphs, plain text (no Markdown). Structure:
-   1) All-comps form contrast + what it implies.
-   2) League-only form (W/D/L, avg GF/GA, sequences) + style matchup (defence/attack).
-   3) H2H + tactical hinge (pressing/transition/set pieces) inferred ONLY from the data above; do NOT invent players.
-   4) Pricing view tying back to model probabilities and edges; mention 'no bet' if prices are weak.
-- "probabilities": object {{ "home": number|null, "draw": number|null, "away": number|null }} in PERCENT (0–100, 1 decimal).
-- "best_bets": up to 3 objects: {{
-    "market": string, "bookmaker": string|null, "price": number|null,
-    "edge_pct": number|null, "why": string }}
-- "confidence": one of ["Low","Medium","High"] based on edge sizes and market coverage.
-- "disclaimer": short bankroll/variance reminder.
+Respond with one JSON object containing:
+- "paragraphs": 3–4 short paragraphs of analytical insight (no Markdown):
+   1. Compare overall form across all competitions.
+   2. Discuss league-only trends (W/D/L, avg GF/GA, strengths/weaknesses).
+   3. Include tactical implications and recent H2H summary.
+   4. Conclude with betting implications, referencing model probabilities and edges.
+- "probabilities": percentages (home/draw/away).
+- "best_bets": up to 3 suggested bets with rationale.
+- "confidence": one of ["Low","Medium","High"].
+- "disclaimer": short note on variance and responsible betting.
     """.strip()
 
+    # ---------- LLM call ----------
     client = _openai_client()
     try:
         resp = client.chat_completions.create(
@@ -858,7 +861,7 @@ Return a SINGLE JSON object with:
             "probabilities": {"home": None, "draw": None, "away": None},
             "best_bets": [],
             "confidence": "Low",
-            "disclaimer": "No bet if price/edge isn’t there."
+            "disclaimer": "No bet if price/edge isn’t there.",
         }
 
     # ---------- Persist ----------

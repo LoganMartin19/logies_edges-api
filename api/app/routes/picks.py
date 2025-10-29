@@ -39,7 +39,7 @@ def _sport_matcher(sport: str):
         return True
     return ok
 
-# --- Admin: list fixtures for a day (for the picker UI) --------------------
+# --- Admin: list fixtures for a day (picker UI) ----------------------------
 
 @router.get("/picks/fixtures")
 def admin_picker_fixtures(
@@ -70,7 +70,7 @@ def admin_picker_fixtures(
         ]
     }
 
-# --- Admin: list existing picks for a day ----------------------------------
+# --- Admin: list existing featured picks for a day -------------------------
 
 @router.get("/picks")
 def admin_list_picks(
@@ -84,7 +84,6 @@ def admin_list_picks(
         .order_by(FeaturedPick.created_at.asc())
         .all()
     )
-    # join fixture basics
     fids = [r.fixture_id for r in rows]
     fmap = {f.id: f for f in db.query(Fixture).filter(Fixture.id.in_(fids)).all()} if fids else {}
     return {
@@ -95,9 +94,13 @@ def admin_list_picks(
                 "id": r.id,
                 "fixture_id": r.fixture_id,
                 "sport": r.sport,
-                "title": r.title,
-                "blurb": r.blurb,
-                "is_public": r.is_public,
+                "market": r.market,
+                "bookmaker": r.bookmaker,
+                "price": r.price,
+                "edge": r.edge,
+                "note": r.note,
+                "stake": r.stake,
+                "result": r.result,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "fixture": {
                     "home": fmap.get(r.fixture_id).home_team if fmap.get(r.fixture_id) else None,
@@ -109,53 +112,57 @@ def admin_list_picks(
         ]
     }
 
-# --- Admin: add/update/delete picks ----------------------------------------
+# --- Admin: add/update/delete featured picks -------------------------------
 
 from pydantic import BaseModel
 
 class PickIn(BaseModel):
     day: str
     fixture_id: int
-    sport: str = "all"
-    title: str | None = None
-    blurb: str | None = None
-    is_public: bool = False
+    sport: str = "football"
+    market: str
+    bookmaker: str
+    price: float
+    edge: float | None = None
+    note: str | None = None
+    stake: float | None = 1.0
 
 @router.post("/picks")
 def admin_save_pick(payload: PickIn, db: Session = Depends(get_db)):
     d = date_cls.fromisoformat(payload.day)
-    # ensure fixture exists
     fx = db.query(Fixture).filter(Fixture.id == payload.fixture_id).one_or_none()
     if not fx:
         raise HTTPException(404, "Fixture not found")
-    # upsert by (day, fixture_id)
+
+    # upsert by (day, fixture_id, market, bookmaker)
     r = (
         db.query(FeaturedPick)
-        .filter(FeaturedPick.day == d, FeaturedPick.fixture_id == payload.fixture_id)
+        .filter(
+            FeaturedPick.day == d,
+            FeaturedPick.fixture_id == payload.fixture_id,
+            FeaturedPick.market == payload.market,
+            FeaturedPick.bookmaker == payload.bookmaker,
+        )
         .one_or_none()
     )
     if r:
         r.sport = payload.sport
-        r.title = payload.title
-        r.blurb = payload.blurb
-        r.is_public = bool(payload.is_public)
+        r.price = payload.price
+        r.edge = payload.edge
+        r.note = payload.note
+        r.stake = payload.stake
     else:
         r = FeaturedPick(
-            day=d, fixture_id=payload.fixture_id, sport=payload.sport,
-            title=payload.title, blurb=payload.blurb, is_public=bool(payload.is_public)
+            day=d, sport=payload.sport,
+            fixture_id=payload.fixture_id,
+            comp=fx.comp, home_team=fx.home_team, away_team=fx.away_team,
+            kickoff_utc=fx.kickoff_utc,
+            market=payload.market, bookmaker=payload.bookmaker,
+            price=payload.price, edge=payload.edge, note=payload.note, stake=payload.stake,
         )
         db.add(r)
     db.commit()
     return {"ok": True, "id": r.id}
-
-@router.post("/picks/{pick_id}/publish")
-def admin_publish_pick(pick_id: int, public: int = Query(1), db: Session = Depends(get_db)):
-    r = db.query(FeaturedPick).filter(FeaturedPick.id == pick_id).one_or_none()
-    if not r:
-        raise HTTPException(404, "Pick not found")
-    r.is_public = bool(public)
-    db.commit()
-    return {"ok": True, "id": r.id, "is_public": r.is_public}
 
 @router.delete("/picks/{pick_id}")
 def admin_delete_pick(pick_id: int, db: Session = Depends(get_db)):
@@ -163,47 +170,14 @@ def admin_delete_pick(pick_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "deleted": n}
 
-# --- Public endpoints -------------------------------------------------------
+# --- Public: only show up to 3 featured picks for the day ------------------
 
 pub = APIRouter(prefix="/public", tags=["public"])
-
-@pub.get("/fixtures/today")
-def public_fixtures_today(
-    day: str | None = Query(None, description="YYYY-MM-DD (UTC). Default=today"),
-    sport: str = Query("all", description="all | soccer | nba | nhl | nfl | cfb"),
-    db: Session = Depends(get_db),
-):
-    if not day:
-        day = datetime.now(timezone.utc).date().isoformat()
-    start, end = _day_bounds(day)
-
-    rows: List[Fixture] = (
-        db.query(Fixture)
-        .filter(Fixture.kickoff_utc >= start, Fixture.kickoff_utc < end)
-        .order_by(Fixture.kickoff_utc.asc(), Fixture.id.asc())
-        .all()
-    )
-    ok = _sport_matcher(sport)
-    rows = [f for f in rows if ok(f)]
-
-    return {
-        "day": day,
-        "sport": sport,
-        "count": len(rows),
-        "fixtures": [
-            {
-                "id": f.id,
-                "home": f.home_team,
-                "away": f.away_team,
-                "comp": f.comp,
-                "kickoff_utc": f.kickoff_utc.isoformat(),
-            } for f in rows
-        ]
-    }
 
 @pub.get("/picks")
 def public_picks(
     day: str | None = Query(None, description="YYYY-MM-DD (UTC). Default=today"),
+    limit: int = Query(3, ge=1, le=3, description="Max 3 public featured picks"),
     db: Session = Depends(get_db),
 ):
     if not day:
@@ -212,8 +186,9 @@ def public_picks(
 
     picks: List[FeaturedPick] = (
         db.query(FeaturedPick)
-        .filter(FeaturedPick.day == d, FeaturedPick.is_public == True)
+        .filter(FeaturedPick.day == d)
         .order_by(FeaturedPick.created_at.asc())
+        .limit(limit)
         .all()
     )
 
@@ -223,7 +198,6 @@ def public_picks(
     # optional: include best edge per fixture (if present)
     best_by_fixture: Dict[int, dict] = {}
     if fids:
-        # take highest edge row per fixture
         rows = (
             db.query(Edge)
             .filter(Edge.fixture_id.in_(fids))
@@ -237,23 +211,31 @@ def public_picks(
                     "price": float(r.price), "edge": float(r.edge)
                 }
 
+    def _reason(p: FeaturedPick) -> str | None:
+        if p.note: return p.note
+        be = best_by_fixture.get(p.fixture_id)
+        if be and be.get("market") == p.market:
+            e = be.get("edge")
+            return f"Best model edge for this match (~{e:.1%})." if e is not None else "Model-favoured market."
+        return None
+
     return {
         "day": day,
         "count": len(picks),
         "picks": [
             {
                 "id": p.id,
-                "sport": p.sport,
-                "title": p.title,
-                "blurb": p.blurb,
                 "fixture_id": p.fixture_id,
-                "fixture": {
-                    "home": fmap[p.fixture_id].home_team if p.fixture_id in fmap else None,
-                    "away": fmap[p.fixture_id].away_team if p.fixture_id in fmap else None,
-                    "comp":  fmap[p.fixture_id].comp if p.fixture_id in fmap else None,
-                    "kickoff_utc": fmap[p.fixture_id].kickoff_utc.isoformat() if p.fixture_id in fmap else None,
-                },
-                "best_edge": best_by_fixture.get(p.fixture_id)
+                "match": f"{fmap[p.fixture_id].home_team} v {fmap[p.fixture_id].away_team}" if p.fixture_id in fmap else None,
+                "league": fmap[p.fixture_id].comp if p.fixture_id in fmap else None,
+                "kickoff_utc": fmap[p.fixture_id].kickoff_utc.isoformat() if p.fixture_id in fmap else None,
+                "sport": p.sport,
+                "market": p.market,
+                "bookmaker": p.bookmaker,
+                "price": float(p.price) if p.price is not None else None,
+                "edge": float(p.edge) if p.edge is not None else None,
+                "stake": float(p.stake) if p.stake is not None else 1.0,
+                "reason": _reason(p),
             } for p in picks
         ]
     }
@@ -273,12 +255,9 @@ def public_picks_record(
         days = int(span.rstrip("d"))
         start_dt = today - timedelta(days=days)
 
-    q = db.query(FeaturedPick).filter(FeaturedPick.is_public == True)
+    q = db.query(FeaturedPick)
     if start_dt: q = q.filter(FeaturedPick.created_at >= start_dt)
     rows = q.order_by(FeaturedPick.created_at.desc()).limit(1000).all()
-
-    fids = [r.fixture_id for r in rows]
-    fmap = {f.id: f for f in db.query(Fixture).filter(Fixture.id.in_(fids)).all()} if fids else {}
 
     won = lost = void = 0; staked = returned = 0.0; items = []
     for r in rows:
@@ -288,11 +267,10 @@ def public_picks_record(
         elif res == "lost": lost += 1; units = -stake
         elif res == "void": void += 1; returned += stake
         staked += stake
-        fx = fmap.get(r.fixture_id)
         items.append({
-            "pick_id": r.id, "fixture_id": r.fixture_id, "sport": r.sport, "comp": r.comp,
-            "home_team": r.home_team, "away_team": r.away_team,
-            "kickoff_utc": r.kickoff_utc.isoformat() if r.kickoff_utc else None,
+            "pick_id": r.id, "fixture_id": r.fixture_id,
+            "match": f"{r.home_team} v {r.away_team}" if r.home_team and r.away_team else None,
+            "league": r.comp, "kickoff_utc": r.kickoff_utc.isoformat() if r.kickoff_utc else None,
             "market": r.market, "bookmaker": r.bookmaker, "price": r.price, "edge": r.edge,
             "stake": stake, "result": r.result, "units": round(units, 2), "note": r.note,
             "created_at": r.created_at.isoformat() if r.created_at else None,
