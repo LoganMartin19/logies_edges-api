@@ -190,6 +190,38 @@ def _pick_most_recent_h2h(home_pid: int, away_pid: int, season: int, lookback: i
         "source": "id" if _opp_id(r) else "name",
     }
 
+def _pretty_h2h_line(fx: Fixture, h2h: dict) -> str:
+    if not h2h: 
+        return ""
+    # who won?
+    side = (h2h.get("side") or "").lower()
+    res  = (h2h.get("result") or "").lower()
+    home, away = fx.home_team or "Home", fx.away_team or "Away"
+
+    if res == "draw":
+        outcome = "It finished level"
+    elif res == "win":
+        winner = away if side == "away" else home if side == "home" else "The visitors"
+        outcome = f"{winner} won"
+    elif res == "loss":
+        loser = away if side == "away" else home if side == "home" else "The visitors"
+        outcome = f"{loser} lost"
+    else:
+        outcome = "Result unknown"
+
+    score = h2h.get("score") or "?"
+    comp  = h2h.get("competition") or "a league match"
+
+    # days-ago tag
+    when = ""
+    try:
+        dt = datetime.fromisoformat((h2h.get("date") or "").replace("Z", ""))
+        days = (datetime.utcnow() - dt).days
+        when = f" just {days} days ago" if 0 <= days <= 10 else f" on {dt.date().isoformat()}"
+    except Exception:
+        pass
+
+    return f"The sides met{when} in {comp}: {outcome} {score}."
 # -------------------------------------------------------------------
 # Probability helpers (STRICT H/D/A)
 # -------------------------------------------------------------------
@@ -688,23 +720,39 @@ def expert_prediction(
     cup_like = _is_cup_like(fx.comp)
     h2h_note = ""
     recent_h2h = {}
+
     if ctx["home_pid"] and ctx["away_pid"]:
         recent_h2h = _pick_most_recent_h2h(ctx["home_pid"], ctx["away_pid"], ctx["season"])
         if recent_h2h:
-            # If within ~10 days, call it “just days ago”
+            # days-ago phrasing
             days_ago_txt = ""
             try:
                 dt = datetime.fromisoformat((recent_h2h.get("date") or "").replace("Z", ""))
                 delta_days = (datetime.utcnow() - dt).days
                 if 0 <= delta_days <= 10:
                     days_ago_txt = f" just {delta_days} days ago"
+                else:
+                    days_ago_txt = f" on {dt.date().isoformat()}"
             except Exception:
                 pass
 
-            comp_nm = recent_h2h.get("competition") or "league match"
-            res = recent_h2h.get("result") or "unknown result"
-            score = recent_h2h.get("score") or "?"
-            h2h_note = f"The sides met{days_ago_txt} in {comp_nm}: {res} ({score})."
+            comp_nm = recent_h2h.get("competition") or fx.comp or "a league match"
+            score  = recent_h2h.get("score") or "?"
+            side   = (recent_h2h.get("side") or "").lower()   # "home" | "away"
+            result = (recent_h2h.get("result") or "").lower() # "win" | "loss" | "draw"
+
+            if result == "draw":
+                outcome = "It finished level"
+            elif result == "win":
+                winner = fx.away_team if side == "away" else fx.home_team if side == "home" else "The visitors"
+                outcome = f"{winner} won"
+            elif result == "loss":
+                loser = fx.away_team if side == "away" else fx.home_team if side == "home" else "The hosts"
+                outcome = f"{loser} lost"
+            else:
+                outcome = "Result unknown"
+
+            h2h_note = f"The sides met{days_ago_txt} in {comp_nm}: {outcome} {score}."
 
     home_summary = form_data.get("home", {})
     away_summary = form_data.get("away", {})
