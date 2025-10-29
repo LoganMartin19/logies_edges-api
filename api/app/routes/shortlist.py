@@ -248,3 +248,222 @@ def compute_now(db: Session = Depends(get_db)):
 @router.post("/telegram/send-alert")
 def send_alert(alert: dict):
     return send_alert_message(alert)
+
+# ====================== BEST EDGES & ACCA SUGGESTIONS ======================
+from typing import Set, Dict
+
+def _safe_float(x):
+    try:
+        return float(x) if x is not None else None
+    except Exception:
+        return None
+
+def _implied_prob(price: Optional[float]) -> Optional[float]:
+    try:
+        if price and price > 0:
+            return 1.0 / float(price)
+    except Exception:
+        pass
+    return None
+
+@router.get("/shortlist/best")
+def shortlist_best(
+    day: str = Query(datetime.now(timezone.utc).date().isoformat(), description="YYYY-MM-DD (UTC)"),
+    hours_ahead: Optional[int] = Query(None, ge=1, le=14*24, description="If set, ignores day and uses now..now+hours"),
+    sport: Optional[str] = Query(None, description="Optional sport filter via Fixture.sport"),
+    model: Optional[str] = Query("team_form", description="Edge.model_source"),
+    min_edge: float = Query(0.03, ge=-1.0, le=1.0, description="Minimum edge (e.g. 0.04 = 4%)"),
+    markets: Optional[str] = Query(None, description="Comma-separated market filter, e.g. 'HOME_WIN,AWAY_WIN,O2.5,BTTS_Y'"),
+    bookmaker: Optional[str] = Query(None, description="Exact bookmaker name filter"),
+    per_fixture: bool = Query(True, description="Return only the top edge per fixture"),
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns top edges, great for Featured Picks.
+    - If hours_ahead is provided, uses [now, now+hours]; else uses the whole UTC day.
+    - per_fixture=True gives the single best edge for each fixture.
+    """
+    now = datetime.now(timezone.utc)
+    if hours_ahead:
+        start, end = now, now + timedelta(hours=hours_ahead)
+    else:
+        day_obj = datetime.fromisoformat(day).date()
+        start = datetime.combine(day_obj, datetime.min.time(), tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
+
+    q = (
+        db.query(Edge, Fixture)
+        .join(Fixture, Fixture.id == Edge.fixture_id)
+        .filter(Fixture.kickoff_utc >= start, Fixture.kickoff_utc < end)
+        .filter(Edge.edge >= min_edge)
+        .order_by(Edge.edge.desc(), Edge.created_at.desc())
+    )
+
+    if sport:
+        q = q.filter(Fixture.sport == sport)
+    if model:
+        q = q.filter(Edge.model_source == model)
+
+    if markets:
+        allowed = [m.strip().upper() for m in markets.split(",") if m.strip()]
+        if allowed:
+            q = q.filter(Edge.market.in_(allowed))
+
+    if bookmaker:
+        q = q.filter(Edge.bookmaker == bookmaker)
+
+    rows = q.all()
+
+    payload = []
+    if per_fixture:
+        seen: Set[int] = set()
+        for e, f in rows:
+            if f.id in seen:
+                continue
+            seen.add(f.id)
+            price = _safe_float(e.price)
+            payload.append({
+                "fixture_id": f.id,
+                "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
+                "league": f.comp,
+                "home": f.home_team,
+                "away": f.away_team,
+                "market": e.market,
+                "bookmaker": e.bookmaker,
+                "price": price,
+                "model_prob": _safe_float(e.prob),
+                "implied_prob": _implied_prob(price),
+                "edge": _safe_float(e.edge),
+                "model_source": e.model_source,
+                "label": f"{f.home_team} vs {f.away_team} · {e.market} @{e.bookmaker} {price}"
+            })
+            if len(payload) >= limit:
+                break
+    else:
+        for e, f in rows[:limit]:
+            price = _safe_float(e.price)
+            payload.append({
+                "fixture_id": f.id,
+                "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
+                "league": f.comp,
+                "home": f.home_team,
+                "away": f.away_team,
+                "market": e.market,
+                "bookmaker": e.bookmaker,
+                "price": price,
+                "model_prob": _safe_float(e.prob),
+                "implied_prob": _implied_prob(price),
+                "edge": _safe_float(e.edge),
+                "model_source": e.model_source,
+                "label": f"{f.home_team} vs {f.away_team} · {e.market} @{e.bookmaker} {price}"
+            })
+
+    payload.sort(key=lambda r: (-(r["edge"] or 0.0), r["kickoff_utc"] or ""))
+
+    return {
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "sport": sport,
+        "model": model,
+        "min_edge": min_edge,
+        "markets": [m.strip().upper() for m in markets.split(",")] if markets else None,
+        "per_fixture": per_fixture,
+        "count": len(payload),
+        "rows": payload[:limit],
+    }
+
+
+@router.get("/shortlist/acca/suggest")
+def shortlist_acca_suggest(
+    day: str = Query(datetime.now(timezone.utc).date().isoformat(), description="YYYY-MM-DD (UTC)"),
+    hours_ahead: Optional[int] = Query(None, ge=1, le=14*24),
+    sport: Optional[str] = Query(None),
+    model: Optional[str] = Query("team_form"),
+    min_edge: float = Query(0.03, ge=-1.0, le=1.0),
+    markets: Optional[str] = Query("HOME_WIN,AWAY_WIN,O2.5,BTTS_Y", description="Market whitelist"),
+    legs: int = Query(4, ge=2, le=12, description="Number of legs"),
+    prefer_distinct_leagues: bool = Query(False, description="Try to avoid multiple legs from same league"),
+    bankroll: Optional[float] = Query(None, ge=0.0, description="If provided, returns Kelly stake (full Kelly)"),
+    kelly_fraction: float = Query(0.5, ge=0.0, le=1.0, description="Fractional Kelly to apply"),
+    db: Session = Depends(get_db),
+):
+    """
+    Builds an acca:
+    - Picks top 'legs' edges from distinct fixtures (optionally distinct leagues)
+    - Returns legs, combined decimal price, naive combined prob (product of model probs),
+      and Kelly stake suggestion if bankroll provided.
+    """
+    # Reuse shortlist_best (per_fixture=True)
+    params = {
+        "day": day,
+        "hours_ahead": hours_ahead,
+        "sport": sport,
+        "model": model,
+        "min_edge": min_edge,
+        "markets": markets,
+        "per_fixture": True,
+        "limit": 500,  # enough headroom
+    }
+    result = shortlist_best(**params, db=db)
+    rows: List[Dict] = result["rows"]
+
+    if not rows:
+        return {"ok": True, "legs": [], "reason": "no rows"}
+
+    # Greedy pick: largest edge first, respecting distinct fixtures (+ optional leagues)
+    chosen: List[Dict] = []
+    seen_fixtures: Set[int] = set()
+    seen_leagues: Set[str] = set()
+
+    for r in rows:
+        if r["fixture_id"] in seen_fixtures:
+            continue
+        if prefer_distinct_leagues and r["league"] in seen_leagues:
+            continue
+        chosen.append(r)
+        seen_fixtures.add(r["fixture_id"])
+        seen_leagues.add(r["league"])
+        if len(chosen) >= legs:
+            break
+
+    # Compute combined price/prob
+    combined_price = 1.0
+    combined_prob = 1.0
+    for leg in chosen:
+        p = leg.get("price")
+        mp = leg.get("model_prob")
+        if p:
+            combined_price *= float(p)
+        if mp is not None:
+            combined_prob *= float(mp)
+
+    # Kelly (using acca edge if model prob available)
+    kelly_full = None
+    kelly_stake = None
+    acca_edge = None
+    if combined_prob is not None and combined_price:
+        q = 1.0 - combined_prob
+        b = combined_price - 1.0
+        acca_edge = combined_prob * (combined_price) - 1.0  # EV - 1 baseline
+        try:
+            kelly_full = ((b * combined_prob) - q) / b if b > 0 else None
+        except Exception:
+            kelly_full = None
+        if bankroll is not None and kelly_full is not None:
+            kelly_stake = max(0.0, kelly_full * kelly_fraction * bankroll)
+
+    return {
+        "ok": True,
+        "legs": chosen,
+        "combined_price": round(combined_price, 4) if chosen else None,
+        "combined_prob": round(combined_prob, 6) if chosen else None,
+        "acca_edge": round(acca_edge, 4) if acca_edge is not None else None,
+        "kelly_full": round(kelly_full, 4) if kelly_full is not None else None,
+        "kelly_fraction": kelly_fraction,
+        "kelly_stake": round(kelly_stake, 2) if kelly_stake is not None else None,
+        "window": result["window"],
+        "model": model,
+        "markets": markets.split(",") if markets else None,
+        "min_edge": min_edge,
+        "prefer_distinct_leagues": prefer_distinct_leagues,
+    }
