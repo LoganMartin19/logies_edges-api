@@ -190,7 +190,7 @@ def _format_leg_note(e: Edge, fx: Fixture) -> str:
     except Exception:
         return f"{fx.home_team} v {fx.away_team} • {e.market} @ {e.bookmaker} {float(e.price):.2f}"
 
-@router.post("/accas/auto")
+@router.post("/auto")
 def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
     # Time window: only upcoming fixtures for given day, and within hours_ahead
     start, end = _day_bounds(payload.day)
@@ -210,7 +210,11 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
     # Prefer bookmaker (normalize “bet365”, “bet 365”, etc.)
     if payload.bookmaker:
         chain = _book_norm()
-        q = q.filter(chain(Edge.bookmaker) == chain(func.bindparam("bk", payload.bookmaker)).self_group())
+        # normalize bookmaker name in Python instead of SQL to avoid type-cast issue
+        import re
+        bk_norm = re.sub(r"[^a-z0-9]+", "", payload.bookmaker.lower())
+        db_norm = chain(Edge.bookmaker)
+        q = q.filter(db_norm == bk_norm)
 
     rows = q.all()
     if not rows:
