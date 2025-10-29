@@ -364,12 +364,15 @@ def _form_stats_from_rows(rows: List[dict], n: int) -> dict:
         elif res.startswith("d"): d += 1; seq.append("D")
         elif res.startswith("l"): l += 1; seq.append("L")
         else: seq.append("?")
-    games = max(1, len(take))
+    games = len(take)  # <-- real count (do not clamp to 1)
     return {
-        "wins": w, "draws": d, "losses": l,
-        "avg_goals_for": round(gf_sum / games, 2),
-        "avg_goals_against": round(ga_sum / games, 2),
-        "sequence": " ".join(seq)
+        "wins": w,
+        "draws": d,
+        "losses": l,
+        "avg_goals_for": round(gf_sum / games, 2) if games else 0.0,
+        "avg_goals_against": round(ga_sum / games, 2) if games else 0.0,
+        "sequence": " ".join(seq),
+        "games": games,  # <-- NEW: used by the 'no recent league matches' check
     }
 
 def _league_form_pair(ctx: dict, n: int = 5) -> dict:
@@ -469,7 +472,7 @@ def generate_ai_preview(
         db.add(ai)
     db.commit()
 
-    return {"ok": True, "fixture_id": fixture_id, "preview": text, "tokens": tokens}
+    return {"ok": True, "fixture_id": fixture_id, "preview": text, "tokens": tokens, "cup_context": _is_cup_like(fx.comp)}
 
 # -------------------------------------------------------------------
 # Debug helpers
