@@ -104,33 +104,91 @@ def _is_cup_like(name: str | None) -> bool:
     ]
     return any(t in n for t in cup_markers)
 
-def _pick_most_recent_h2h(home_pid: int, away_pid: int, season: int, lookback: int = 12) -> dict:
-    """Return most recent H2H between the two teams across any comp."""
+# --- replace _pick_most_recent_h2h with this ---
+def _norm_team(s: str | None) -> str:
+    if not s:
+        return ""
+    s = s.lower().strip()
+    junk = [" fc", " cf", " sc", " afc", " ssc", " ac", " calcio", " bk", ".", "-", "  "]
+    for t in junk:
+        s = s.replace(t, " ")
+    return " ".join(s.split())
+
+def _pick_most_recent_h2h(home_pid: int, away_pid: int, season: int, lookback: int = 20) -> dict:
+    """
+    Find most-recent H2H across ANY comp this season using BOTH opponent_id and
+    normalized opponent name fallback (covers data where id is missing).
+    Returns {date, competition, league, score, result, side, source}.
+    """
     H = _af_recent(home_pid, season=season, limit=lookback) or []
     A = _af_recent(away_pid, season=season, limit=lookback) or []
 
-    def _extract(rows, opp_id):
-        out = []
-        for r in rows:
-            oid = r.get("opponent_id") or r.get("opponent_team_id")
-            if oid and int(oid) == int(opp_id):
-                out.append({
-                    "date": r.get("date") or r.get("fixture_date"),
-                    "league": r.get("league"),
-                    "competition": r.get("competition") or "",
-                    "score": r.get("score") or f"{r.get('goals_for','?')}-{r.get('goals_against','?')}",
-                    "result": r.get("result"),
-                })
-        return out
+    home_rows, away_rows = [], []
 
-    cand = _extract(H, away_pid) + _extract(A, home_pid)
-    def _key(x):
+    # tag which side the record belongs to (helps interpret result wording)
+    for r in H:
+        r = dict(r or {})
+        r["_side"] = "home"
+        home_rows.append(r)
+    for r in A:
+        r = dict(r or {})
+        r["_side"] = "away"
+        away_rows.append(r)
+
+    def _date_key(x):
+        d = x.get("date") or x.get("fixture_date") or ""
         try:
-            return datetime.fromisoformat(x.get("date").replace("Z", "")).timestamp()
+            return datetime.fromisoformat(d.replace("Z", "")).timestamp()
         except Exception:
-            return 0
-    cand.sort(key=_key, reverse=True)
-    return cand[0] if cand else {}
+            return 0.0
+
+    # build lookup by id AND name
+    def _opp_id(r): return r.get("opponent_id") or r.get("opponent_team_id")
+    def _opp_nm(r): return _norm_team(r.get("opponent"))
+
+    H_by_id   = {int(_opp_id(r)): r for r in home_rows if _opp_id(r)}
+    A_by_id   = {int(_opp_id(r)): r for r in away_rows if _opp_id(r)}
+    H_by_name = {_opp_nm(r): r for r in home_rows if _opp_nm(r)}
+    A_by_name = {_opp_nm(r): r for r in away_rows if _opp_nm(r)}
+
+    candidates = []
+
+    # id match (best)
+    if away_pid in H_by_id and home_pid in A_by_id:
+        candidates.append(H_by_id[away_pid])
+        candidates.append(A_by_id[home_pid])
+
+    # name match fallback
+    nm_home = next(iter(H_by_name.keys()), "")
+    nm_away = next(iter(A_by_name.keys()), "")
+    if _norm_team(nm_home) in A_by_name:
+        candidates.append(H_by_name[_norm_team(nm_home)])
+        candidates.append(A_by_name[_norm_team(nm_home)])
+    if _norm_team(nm_away) in H_by_name:
+        candidates.append(A_by_name[_norm_team(nm_away)])
+        candidates.append(H_by_name[_norm_team(nm_away)])
+
+    # last resort: scan all rows for explicit opponent string matches both ways
+    home_names = set(H_by_name.keys())
+    away_names = set(A_by_name.keys())
+    for nm in sorted(home_names & away_names):
+        candidates.append(H_by_name[nm])
+        candidates.append(A_by_name[nm])
+
+    if not candidates:
+        return {}
+
+    # pick the latest-dated candidate pair
+    candidates.sort(key=_date_key, reverse=True)
+    r = candidates[0]
+    return {
+        "date": r.get("date") or r.get("fixture_date"),
+        "competition": r.get("competition") or r.get("league"),
+        "score": r.get("score") or f"{r.get('goals_for','?')}-{r.get('goals_against','?')}",
+        "result": r.get("result"),
+        "side": r.get("_side"),
+        "source": "id" if _opp_id(r) else "name",
+    }
 
 # -------------------------------------------------------------------
 # Probability helpers (STRICT H/D/A)
@@ -629,31 +687,40 @@ def expert_prediction(
     ctx = _fixture_ctx_for_shared(fx)
     cup_like = _is_cup_like(fx.comp)
     h2h_note = ""
-    if cup_like and ctx["home_pid"] and ctx["away_pid"]:
+    recent_h2h = {}
+    if ctx["home_pid"] and ctx["away_pid"]:
         recent_h2h = _pick_most_recent_h2h(ctx["home_pid"], ctx["away_pid"], ctx["season"])
         if recent_h2h:
-            comp_nm = recent_h2h.get("league") or recent_h2h.get("competition") or "league match"
-            res = recent_h2h.get("result") or "unknown"
-            score = recent_h2h.get("score") or ""
-            h2h_note = f"The sides met recently in {comp_nm} where the result was {res} ({score})."
-    elif ctx["home_pid"] and ctx["away_pid"]:
-        recent_h2h = _pick_most_recent_h2h(ctx["home_pid"], ctx["away_pid"], ctx["season"])
-        if recent_h2h:
-            score = recent_h2h.get("score")
-            h2h_note = f"They met earlier this season ({score})."
+            # If within ~10 days, call it “just days ago”
+            days_ago_txt = ""
+            try:
+                dt = datetime.fromisoformat((recent_h2h.get("date") or "").replace("Z", ""))
+                delta_days = (datetime.utcnow() - dt).days
+                if 0 <= delta_days <= 10:
+                    days_ago_txt = f" just {delta_days} days ago"
+            except Exception:
+                pass
+
+            comp_nm = recent_h2h.get("competition") or "league match"
+            res = recent_h2h.get("result") or "unknown result"
+            score = recent_h2h.get("score") or "?"
+            h2h_note = f"The sides met{days_ago_txt} in {comp_nm}: {res} ({score})."
 
     home_summary = form_data.get("home", {})
     away_summary = form_data.get("away", {})
 
     prompt = f"""
-You are a professional sports betting analyst.
-Write a succinct bettor-facing note for {fx.home_team} vs {fx.away_team} ({fx.comp or fx.sport}).
+You are a professional sports betting analyst. Use ONLY the facts given. 
+Do NOT invent season status, injuries, suspensions, or narrative context not provided. 
+If a data point is missing, omit it rather than guessing.
 
-League positions: 
-- {fx.home_team}: {home_pos or "unknown"} 
+Match: {fx.home_team} vs {fx.away_team} ({fx.comp or fx.sport})
+
+League positions:
+- {fx.home_team}: {home_pos or "unknown"}
 - {fx.away_team}: {away_pos or "unknown"}
 
-Context (last {n}):
+Recent form (last {n}):
 - {fx.home_team}: {home_summary}
 - {fx.away_team}: {away_summary}
 
@@ -662,18 +729,18 @@ Model win probabilities (0..1):
 - draw: {p_draw}
 - away: {p_away}
 
-Edges (candidate bets):
+Edges (candidate bets, optional):
 {top_edges}
 
-Cup/H2H context:
+Cup/H2H context (verbatim, include if present):
 {h2h_note or "None"}
 
 Produce a SINGLE JSON object with:
-- "paragraphs": 2–3 short paragraphs of insight (plain text),
-- "probabilities": percentages for home/draw/away,
-- "best_bets": up to 3 suggested edges with rationale,
-- "confidence": one of ["Low","Medium","High"],
-- "disclaimer": a short reminder about variance.
+- "paragraphs": 2–3 short paragraphs in plain text; if h2h_note is present, reference it explicitly.
+- "probabilities": object with home/draw/away converted to percentages (1 decimal).
+- "best_bets": up to 3 items chosen from the provided Edges (do not invent bookmakers or prices).
+- "confidence": one of ["Low","Medium","High"] based on edge quality and price availability.
+- "disclaimer": short reminder about variance and bankroll discipline.
 """.strip()
 
     client = _openai_client()
@@ -744,3 +811,14 @@ Produce a SINGLE JSON object with:
         "cup_context": cup_like,
         "h2h_note": h2h_note,
     }
+
+@router.get("/debug/h2h")
+def debug_h2h(fixture_id: int = Query(...), db: Session = Depends(get_db)):
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
+    if not fx:
+        raise HTTPException(status_code=404, detail="Fixture not found")
+    ctx = _fixture_ctx_for_shared(fx)
+    if not (ctx["home_pid"] and ctx["away_pid"]):
+        return {"fixture_id": fixture_id, "message": "Missing provider team ids", "ctx": ctx}
+    h2h = _pick_most_recent_h2h(ctx["home_pid"], ctx["away_pid"], ctx["season"])
+    return {"fixture_id": fixture_id, "ctx": ctx, "h2h": h2h}
