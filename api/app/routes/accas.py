@@ -130,6 +130,201 @@ def list_admin_accas(day: str = Query(...), db: Session = Depends(get_db)):
         ],
     }
 
+# ---------- Admin: auto-generate ACCA (3–4 legs around target odds) ----------
+from pydantic import BaseModel, Field
+from sqlalchemy import or_, func
+from ..models import Edge, Fixture, AccaTicket, AccaLeg
+
+class AutoAccaIn(BaseModel):
+    day: str                                  # YYYY-MM-DD (UTC)
+    hours_ahead: int = Field(48, ge=1, le=14*24)
+    min_edge: float = Field(0.03, ge=-1.0, le=1.0)   # 3%+
+    bookmaker: str = "bet365"
+    target_odds: float = Field(5.0, ge=1.1)         # aim ~5.0x
+    legs_min: int = Field(3, ge=2, le=6)
+    legs_max: int = Field(4, ge=2, le=8)
+    diversify_markets: bool = True                  # mix markets if possible
+    avoid_same_fixture: bool = True
+    is_public: bool = False                         # review first by default
+    title: str | None = None
+    note: str | None = None
+    stake_units: float = Field(1.0, ge=0)
+
+def _norm(s: str | None) -> str:
+    return (s or "").strip().lower()
+
+def _book_norm():
+    # SQL-friendly normalization to match "bet365", "Bet 365", etc.
+    def _chain(col):
+        x = func.lower(col)
+        for ch in (" ", "-", "_", "."):
+            x = func.replace(x, ch, "")
+        return x
+    return _chain
+
+def _market_bucket(m: str) -> str:
+    m = (_norm(m)).upper()
+    if "HOME_WIN" in m or m == "1": return "1X2"
+    if "AWAY_WIN" in m or m == "2": return "1X2"
+    if "DRAW" in m or m == "X":    return "1X2"
+    if "BTTS" in m:                return "BTTS"
+    if m.startswith("O") or m.startswith("U"): return "TOTALS"
+    return "OTHER"
+
+def _format_leg_note(e: Edge, fx: Fixture) -> str:
+    # Keep it short and useful for the UI
+    try:
+        prob = float(e.prob) if e.prob is not None else None
+        edge_pct = float(e.edge) * 100 if e.edge is not None else None
+        fair = (1.0 / prob) if prob and prob > 0 else None
+        parts = []
+        parts.append(f"{fx.home_team} v {fx.away_team} • {e.market}")
+        parts.append(f"{e.bookmaker} {float(e.price):.2f}")
+        if prob is not None:
+            parts.append(f"model {prob*100:.1f}%")
+        if fair is not None:
+            parts.append(f"fair {fair:.2f}")
+        if edge_pct is not None:
+            parts.append(f"edge {edge_pct:.1f}%")
+        return " | ".join(parts)
+    except Exception:
+        return f"{fx.home_team} v {fx.away_team} • {e.market} @ {e.bookmaker} {float(e.price):.2f}"
+
+@router.post("/accas/auto")
+def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
+    # Time window: only upcoming fixtures for given day, and within hours_ahead
+    start, end = _day_bounds(payload.day)
+    now = datetime.now(timezone.utc)
+    window_end = min(end, now + timedelta(hours=payload.hours_ahead))
+
+    # Base query: edges on upcoming fixtures in the window
+    q = (
+        db.query(Edge, Fixture)
+        .join(Fixture, Edge.fixture_id == Fixture.id)
+        .filter(Fixture.kickoff_utc >= now)
+        .filter(Fixture.kickoff_utc >= start, Fixture.kickoff_utc < window_end)
+        .filter(Edge.edge >= payload.min_edge)
+        .order_by(Edge.edge.desc(), Edge.created_at.desc())
+    )
+
+    # Prefer bookmaker (normalize “bet365”, “bet 365”, etc.)
+    if payload.bookmaker:
+        chain = _book_norm()
+        q = q.filter(chain(Edge.bookmaker) == chain(func.bindparam("bk", payload.bookmaker)).self_group())
+
+    rows = q.all()
+    if not rows:
+        raise HTTPException(404, "No candidate edges found for that window/bookmaker.")
+
+    # Take best per fixture (and optionally diversify markets)
+    best_per_fx: dict[int, Edge] = {}
+    markets_seen: set[str] = set()
+    for e, f in rows:
+        if payload.avoid_same_fixture and f.id in best_per_fx:
+            continue
+        if payload.diversify_markets:
+            bucket = _market_bucket(e.market or "")
+            # allow repeat buckets only if we still have < legs_min candidates
+            if bucket in markets_seen and len(best_per_fx) >= payload.legs_min:
+                continue
+            markets_seen.add(bucket)
+        best_per_fx[f.id] = (e, f)
+        if len(best_per_fx) >= max(payload.legs_max * 2, payload.legs_max + 2):
+            break  # enough candidates
+
+    if not best_per_fx:
+        raise HTTPException(404, "No suitable fixtures survived filtering.")
+
+    # Greedy pick aiming for target odds with legs in [min,max]
+    cands = list(best_per_fx.values())
+    # sort again just in case by edge descending
+    cands.sort(key=lambda t: float(t[0].edge or 0), reverse=True)
+
+    target = payload.target_odds
+    best_combo: list[tuple[Edge, Fixture]] = []
+    best_diff = 1e9
+
+    # Simple greedy: try top-N prefixes, then adjust to reach target range
+    for take in range(payload.legs_min, payload.legs_max + 1):
+        if len(cands) < take: break
+        legs = cands[:take]
+        prod = 1.0
+        for e, _ in legs:
+            try: prod *= float(e.price)
+            except Exception: prod *= 1.0
+        diff = abs(prod - target)
+        if diff < best_diff:
+            best_diff = diff
+            best_combo = legs
+
+    # fallback: if still empty, just take top legs_min
+    if not best_combo and cands:
+        best_combo = cands[:payload.legs_min]
+
+    if not best_combo:
+        raise HTTPException(500, "Failed to assemble an ACCA combo.")
+
+    # Compute final combined price
+    combined = 1.0
+    for e, _ in best_combo:
+        combined *= float(e.price)
+
+    # Create ticket
+    d = date_cls.fromisoformat(payload.day)
+    t = AccaTicket(
+        day=d,
+        sport="football",
+        title=payload.title or f"Daily {len(best_combo)}-Leg ACCA",
+        note=payload.note or f"Auto-generated to target ~{payload.target_odds:.2f}x from best {payload.bookmaker} edges.",
+        stake_units=payload.stake_units,
+        is_public=payload.is_public,
+        combined_price=combined,
+    )
+    db.add(t); db.flush()
+
+    legs_out = []
+    for e, f in best_combo:
+        leg_note = _format_leg_note(e, f)
+        db.add(AccaLeg(
+            ticket_id=t.id,
+            fixture_id=f.id,
+            market=e.market,
+            bookmaker=e.bookmaker,
+            price=float(e.price),
+            note=leg_note,
+        ))
+        legs_out.append({
+            "fixture_id": f.id,
+            "matchup": f"{f.home_team} vs {f.away_team}",
+            "comp": f.comp,
+            "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
+            "market": e.market,
+            "bookmaker": e.bookmaker,
+            "price": float(e.price),
+            "edge": float(e.edge) if e.edge is not None else None,
+            "note": leg_note,
+        })
+
+    db.commit()
+
+    # Return with a human summary
+    summary = {
+        "id": t.id,
+        "day": payload.day,
+        "title": t.title,
+        "note": t.note,
+        "is_public": t.is_public,
+        "legs_count": len(legs_out),
+        "combined_price": round(combined, 2),
+        "target_odds": payload.target_odds,
+        "legs": legs_out,
+        "explanation": f"Built from top edges on {payload.bookmaker} with min edge {payload.min_edge*100:.1f}%. "
+                       f"Greedy picked {len(legs_out)} legs to approximate {payload.target_odds:.2f}x while "
+                       f"{'diversifying markets' if payload.diversify_markets else 'allowing repeats'} "
+                       f"and avoiding same fixture: {payload.avoid_same_fixture}."
+    }
+    return {"ok": True, "ticket": summary}
+
 # ---------- Public: SINGLE acca for a day (most recent public) ----------
 @pub.get("/today")
 def public_acca_today(
