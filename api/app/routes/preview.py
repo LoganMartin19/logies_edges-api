@@ -89,6 +89,100 @@ def _fixture_ctx_for_shared(fixture: Fixture) -> dict:
     except Exception:
         return {"league_id": 0, "season": 0, "home_pid": 0, "away_pid": 0}
 
+
+def _shared_opponents_text(
+    home_pid: int | None,
+    away_pid: int | None,
+    season: int | None,
+    league_id: int | None,
+    n: int = 5,
+) -> str:
+    """
+    Build a small shared-opponents summary for the preview.
+    We try to pull each team's recent matches from API-Football and see if they both
+    played the same opponent. Returns a string with '- vs Opponent: ...' lines,
+    or '' if nothing useful.
+    """
+    # if we don't have provider IDs, just give back empty
+    if not home_pid or not away_pid or not season:
+        return ""
+
+    # get recent league-only first (closer to how the rest of this file works)
+    # but if league_id is missing, just get recent general fixtures
+    limit = max(10, n)
+    try:
+        home_recent = _af_recent(
+            int(home_pid),
+            season=int(season),
+            limit=limit,
+            league_id=int(league_id) if league_id else None,
+        ) or []
+    except Exception:
+        home_recent = []
+
+    try:
+        away_recent = _af_recent(
+            int(away_pid),
+            season=int(season),
+            limit=limit,
+            league_id=int(league_id) if league_id else None,
+        ) or []
+    except Exception:
+        away_recent = []
+
+    if not home_recent or not away_recent:
+        return ""
+
+    def _norm(name: str | None) -> str:
+        return (name or "").strip().lower()
+
+    # index home by opponent
+    home_map: dict[str, dict] = {}
+    for r in home_recent:
+        opp = _norm(r.get("opponent") or r.get("team") or r.get("opponent_name"))
+        if not opp:
+            continue
+        home_map[opp] = r
+
+    lines: list[str] = []
+    for r in away_recent:
+        opp = _norm(r.get("opponent") or r.get("team") or r.get("opponent_name"))
+        if not opp or opp not in home_map:
+            continue
+
+        h = home_map[opp]
+        # home side result
+        h_gf = h.get("goals_for") or h.get("gf") or h.get("goals", {}).get("for")
+        h_ga = h.get("goals_against") or h.get("ga") or h.get("goals", {}).get("against")
+        a_gf = r.get("goals_for") or r.get("gf") or r.get("goals", {}).get("for")
+        a_ga = r.get("goals_against") or r.get("ga") or r.get("goals", {}).get("against")
+
+        def _res(gf, ga):
+            try:
+                gf = int(gf)
+                ga = int(ga)
+            except Exception:
+                return "played"
+            if gf > ga:
+                return f"won {gf}-{ga}"
+            if ga > gf:
+                return f"lost {gf}-{ga}"
+            return f"drew {gf}-{ga}"
+
+        home_res = _res(h_gf, h_ga)
+        away_res = _res(a_gf, a_ga)
+
+        opp_disp = (r.get("opponent") or r.get("team") or r.get("opponent_name") or "").strip()
+        if not opp_disp:
+            opp_disp = "the same opponent"
+
+        lines.append(f"- vs {opp_disp}: home {home_res} | away {away_res}")
+
+        if len(lines) >= 4:  # keep it short
+            break
+
+    return "\n".join(lines)
+    
 # -------------------------------------------------------------------
 # Domestic / H2H helpers (for cup intelligence)
 # -------------------------------------------------------------------
@@ -699,10 +793,6 @@ def public_preview_by_fixture(
 
 # -------------------------------------------------------------------
 # Expert bettor analysis (uses same strict probs)
-# -------------------------------------------------------------------
-
-# -------------------------------------------------------------------
-# Expert bettor analysis (now cup-aware + H2H context)
 # -------------------------------------------------------------------
 
 @router.get("/expert")
