@@ -182,7 +182,7 @@ def _shared_opponents_text(
             break
 
     return "\n".join(lines)
-    
+
 # -------------------------------------------------------------------
 # Domestic / H2H helpers (for cup intelligence)
 # -------------------------------------------------------------------
@@ -924,38 +924,50 @@ Respond with one JSON object containing:
     # ---------- LLM call ----------
     client = _openai_client()
     try:
+        # keep it simple like the normal preview – no response_format
         resp = client.chat_completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Return valid JSON only."},
+                {"role": "system", "content": "You are a professional football betting analyst. Return JSON only."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.45,
             max_tokens=600,
-            response_format={"type": "json_object"},
         )
     except AttributeError:
+        # older client fallback
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Return valid JSON only."},
+                {"role": "system", "content": "You are a professional football betting analyst. Return JSON only."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.45,
             max_tokens=600,
-            response_format={"type": "json_object"},
         )
 
+    raw = (resp.choices[0].message.content or "").strip()
+    parsed = None
     try:
-        data = json.loads(resp.choices[0].message.content or "{}")
+        parsed = json.loads(raw)
     except Exception:
-        data = {
-            "paragraphs": ["Analysis unavailable."],
-            "probabilities": {"home": None, "draw": None, "away": None},
-            "best_bets": [],
+        # sometimes model returns text – try to wrap it
+        parsed = {
+            "paragraphs": [raw or "Analysis unavailable."],
+            "probabilities": {"home": p_home, "draw": p_draw, "away": p_away},
+            "best_bets": [
+                {
+                    "market": e["market"],
+                    "price": e["price"],
+                    "bookmaker": e["bookmaker"],
+                    "edge": e["edge"],
+                }
+                for e in top_edges[:3]
+            ],
             "confidence": "Low",
             "disclaimer": "No bet if price/edge isn’t there.",
         }
+    data = parsed
 
     # ---------- Persist ----------
     try:
