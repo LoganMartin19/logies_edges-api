@@ -53,7 +53,7 @@ def save_logo(team_name: str, logo_url: str):
 
 if __name__ == "__main__":
     # Just fetch EPL today
-    league_id = LEAGUE_MAP["BR_SERIE_A"]   # 👈 change code here
+    league_id = LEAGUE_MAP["LA_LIGA2"]   # 👈 change code here
     teams = fetch_teams_for_league(league_id)
     for t in teams:
         save_logo(t["team"]["name"], t["team"]["logo"])
