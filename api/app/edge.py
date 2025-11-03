@@ -629,18 +629,14 @@ def compute_edges(
         if p is None or p <= 0:
             continue
 
-        # Adjust model probability based on market direction
+        # --- EV-only flipping for NO/UNDER markets ---
         market_upper = norm_market.upper()
-        adj_p = p
-
-        # ✅ Flip for "No" or "Under" markets
-        if market_upper.endswith("_N"):
-            adj_p = 1.0 - p
-        elif market_upper.startswith("U") and any(x.isdigit() for x in market_upper):
-            adj_p = 1.0 - p
+        ev_prob = p
+        if market_upper.endswith("_N") or (market_upper.startswith("U") and any(x.isdigit() for x in market_upper)):
+            ev_prob = 1.0 - p
 
         # Compute expected value (edge)
-        ev = (adj_p * price) - 1.0
+        ev = (ev_prob * price) - 1.0
         ev = min(ev, 1.0)
 
         if ev >= min_edge:
@@ -650,7 +646,7 @@ def compute_edges(
                 bookmaker=o.bookmaker,
                 price=price,
                 model_source=source,
-                prob=adj_p,   # ✅ store flipped prob (market-correct)
+                prob=p,       # <- store TRUE side prob for display
                 edge=ev,
                 created_at=now,
             ))
