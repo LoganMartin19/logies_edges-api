@@ -13,9 +13,8 @@ from sqlalchemy import func, and_
 from sqlalchemy import or_
 
 from .models import Odds, ModelProb, Edge, Fixture, ClosingOdds, Prediction
-from .services.league_strength import get_team_strength  # (kept)
+from .services.league_strength import get_team_strength
 from .services.utils import confidence_from_prob
-# ✅ API-backed hybrid form (DB fallback)
 from .services.form import get_hybrid_form_for_fixture
 
 # ----------------------------
@@ -76,7 +75,7 @@ def _is_ice(comp: str | None) -> bool:
     cu = (comp or "").upper()
     return ("NHL" in cu) or ("ICE" in cu) or ("HOCKEY" in cu)
 
-# --- Market canonicalization (single source of truth) ------------------------
+# --- Market canonicalization -------------------------------------------------
 def _canon_market(m: str | None) -> str:
     if not m:
         return ""
@@ -93,17 +92,14 @@ def _canon_market(m: str | None) -> str:
         "X": "DRAW", "DRAW": "DRAW",
         "2": "AWAY_WIN", "AWAY": "AWAY_WIN", "AWAYWIN": "AWAY_WIN",
         "MATCHWINNERAWAY": "AWAY_WIN", "TEAM2": "AWAY_WIN",
-
-        # Double chance (usually already canonical)
+        # Double chance
         "1X": "1X", "12": "12", "X2": "X2",
-
         # BTTS
         "BTTSYES": "BTTS_Y", "BTTSY": "BTTS_Y", "BOTHTEAMSTOSCOREYES": "BTTS_Y",
         "BTTSNO": "BTTS_N",  "BTTSN": "BTTS_N", "BOTHTEAMSTOSCORENO":  "BTTS_N",
     }
     return SYN.get(x, x)
 
-# ✅ Complement helper (used only as a fallback when the exact market prob is missing)
 def _complement(m: str) -> Optional[str]:
     u = (m or "").upper()
     if u.endswith("_Y"): return u[:-2] + "_N"
@@ -113,7 +109,6 @@ def _complement(m: str) -> Optional[str]:
     return None
 
 # --- SAFE FORM HELPERS -------------------------------------------------------
-
 DEFAULT_SUMMARY: Dict[str, float | int] = {
     "played": 0, "wins": 0, "draws": 0, "losses": 0,
     "avg_goals_for": 0.0, "avg_goals_against": 0.0,
@@ -123,7 +118,6 @@ DEFAULT_SUMMARY: Dict[str, float | int] = {
 def _coerce_summary(raw: Optional[Dict[str, Any]]) -> Dict[str, float | int]:
     if not isinstance(raw, dict):
         return dict(DEFAULT_SUMMARY)
-
     out = dict(DEFAULT_SUMMARY)
     played = int(raw.get("played") or raw.get("matches") or 0)
     out["played"] = played
@@ -164,15 +158,12 @@ def _fallback_summary_from_db_recent(db: Session, team: str, comp: str, ko: date
     played = len(rows)
     wins = draws = losses = 0
     gf_total = ga_total = 0
-
     for f in rows:
         is_home = (f.home_team == team)
         gf = (f.full_time_home if is_home else f.full_time_away) or 0
         ga = (f.full_time_away if is_home else f.full_time_home) or 0
-
         gf_total += gf
         ga_total += ga
-
         if gf > ga: wins += 1
         elif gf == ga: draws += 1
         else: losses += 1
@@ -190,15 +181,12 @@ def _safe_get_forms(db: Session, f: Fixture, n: int = 5) -> tuple[dict, dict]:
         forms = get_hybrid_form_for_fixture(db, f, n=n, comp_scope=True) or {}
     except Exception:
         forms = {}
-
     home_raw = (forms.get("home") or {}).get("summary")
     away_raw = (forms.get("away") or {}).get("summary")
-
     if not home_raw:
         home_raw = _fallback_summary_from_db_recent(db, f.home_team, f.comp or "", f.kickoff_utc, limit=n)
     if not away_raw:
         away_raw = _fallback_summary_from_db_recent(db, f.away_team, f.comp or "", f.kickoff_utc, limit=n)
-
     return _coerce_summary(home_raw), _coerce_summary(away_raw)
 
 # ----------------------------
@@ -216,13 +204,10 @@ def _sigmoid(z: float) -> float:
         return ez / (1.0 + ez)
 
 def _form_score(f: dict) -> float:
-    # Matches your earlier weighting: Win +0.3, Draw 0.0, Loss -0.2 (normalized by sample size)
     n = max(1, int(f.get("played", 0) or 0))
     return (0.3 * float(f.get("wins", 0)) + 0.0 * float(f.get("draws", 0)) - 0.2 * float(f.get("losses", 0))) / n
 
 def _draw_prior_from_delta(delta: float) -> float:
-    # High when teams are close; lower when one side is much stronger
-    # Center around 0.25 with gentle decay
     closeness = max(0.0, 1.0 - min(1.5, abs(delta)) / 1.5)
     return 0.18 + 0.14 * closeness  # 0.18..0.32
 
@@ -314,7 +299,7 @@ def ensure_baseline_probs(
         if not prices:
             continue
 
-        # ✅ SAFE form summaries
+        # SAFE form summaries
         home_form, away_form = _safe_get_forms(db, f, n=5)
         is_grid = _is_gridiron(f.comp)
         is_ice  = _is_ice(f.comp)
@@ -326,7 +311,7 @@ def ensure_baseline_probs(
             return float(median(arr))
 
         # -------------------------
-        # Totals (All sports)
+        # Totals (All sports) — pairwise normalize after calibration
         # -------------------------
         totals_by_line: Dict[str, Dict[str, str]] = defaultdict(dict)
         for mkt in prices.keys():
@@ -354,14 +339,18 @@ def ensure_baseline_probs(
             p_over = (0.6 * form_over) + (0.4 * cons_over)
             p_under = 1.0 - p_over
 
-            p_over  = _apply_calibration(db, om, CAL_BOOK, p_over)
-            p_under = _apply_calibration(db, um, CAL_BOOK, p_under)
+            # Calibrate both, then renormalize to 1
+            po_cal = _apply_calibration(db, om, CAL_BOOK, p_over)
+            pu_cal = _apply_calibration(db, um, CAL_BOOK, p_under)
+            s = max(1e-9, po_cal + pu_cal)
+            po_final = po_cal / s
+            pu_final = pu_cal / s
 
-            if 0.0 < p_over < 1.0 and 0.0 < p_under < 1.0:
-                db.add(ModelProb(fixture_id=f.id, source=source, market=om, prob=p_over,  as_of=now))
-                db.add(ModelProb(fixture_id=f.id, source=source, market=um, prob=p_under, as_of=now))
+            if 0.0 < po_final < 1.0 and 0.0 < pu_final < 1.0:
+                db.add(ModelProb(fixture_id=f.id, source=source, market=om, prob=po_final, as_of=now))
+                db.add(ModelProb(fixture_id=f.id, source=source, market=um, prob=pu_final, as_of=now))
 
-                top_side, top_prob = (om, p_over) if p_over >= p_under else (um, p_under)
+                top_side, top_prob = (om, po_final) if po_final >= pu_final else (um, pu_final)
                 db.add(Prediction(
                     fixture_id=f.id,
                     market=f"TOTALS_{line}",
@@ -380,11 +369,9 @@ def ensure_baseline_probs(
             pa_price = median_price("AWAY_WIN", min_books=1)
             if ph_price and pa_price:
                 ph, pa = _devig_pair(ph_price, pa_price)
-
                 if 0.0 < ph < 1.0 and 0.0 < pa < 1.0:
                     db.add(ModelProb(fixture_id=f.id, source=source, market="HOME_WIN", prob=ph, as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="AWAY_WIN", prob=pa, as_of=now))
-
                     top_side, top_prob = ("HOME_WIN", ph) if ph >= pa else ("AWAY_WIN", pa)
                     db.add(Prediction(
                         fixture_id=f.id,
@@ -397,7 +384,7 @@ def ensure_baseline_probs(
                     ))
 
         # -------------------------
-        # BTTS  (soccer only)
+        # BTTS (soccer) — pairwise normalize after calibration
         # -------------------------
         if not is_grid and not is_ice:
             pa, pb = median_price("BTTS_Y"), median_price("BTTS_N")
@@ -418,14 +405,18 @@ def ensure_baseline_probs(
                 p_yes = (0.6 * form_yes) + (0.4 * cons_yes)
                 p_no = 1.0 - p_yes
 
-                p_yes = _apply_calibration(db, "BTTS_Y", CAL_BOOK, p_yes)
-                p_no  = _apply_calibration(db, "BTTS_N", CAL_BOOK, p_no)
+                # Calibrate both, then renormalize to 1
+                py_cal = _apply_calibration(db, "BTTS_Y", CAL_BOOK, p_yes)
+                pn_cal = _apply_calibration(db, "BTTS_N", CAL_BOOK, p_no)
+                s = max(1e-9, py_cal + pn_cal)
+                py_final = py_cal / s
+                pn_final = pn_cal / s
 
-                if 0.0 < p_yes < 1.0 and 0.0 < p_no < 1.0:
-                    db.add(ModelProb(fixture_id=f.id, source=source, market="BTTS_Y", prob=p_yes, as_of=now))
-                    db.add(ModelProb(fixture_id=f.id, source=source, market="BTTS_N", prob=p_no,  as_of=now))
+                if 0.0 < py_final < 1.0 and 0.0 < pn_final < 1.0:
+                    db.add(ModelProb(fixture_id=f.id, source=source, market="BTTS_Y", prob=py_final, as_of=now))
+                    db.add(ModelProb(fixture_id=f.id, source=source, market="BTTS_N", prob=pn_final, as_of=now))
 
-                    top_side, top_prob = ("BTTS_Y", p_yes) if p_yes >= p_no else ("BTTS_N", p_no)
+                    top_side, top_prob = ("BTTS_Y", py_final) if py_final >= pn_final else ("BTTS_N", pn_final)
                     db.add(Prediction(
                         fixture_id=f.id,
                         market="BTTS",
@@ -437,7 +428,7 @@ def ensure_baseline_probs(
                     ))
 
         # -------------------------
-        # Soccer 1X2 (3-way) — **FIXED / ENHANCED**
+        # Soccer 1X2 (3-way)
         # -------------------------
         if not is_grid and not is_ice:
             p_home_price = median_price("HOME_WIN", min_books=1)
@@ -447,7 +438,6 @@ def ensure_baseline_probs(
                 cons_h, cons_d, cons_a = _devig_three(p_home_price, p_draw_price, p_away_price)
 
                 if 0.0 < cons_h < 1.0 and 0.0 < cons_d < 1.0 and 0.0 < cons_a < 1.0:
-                    # ---- PRIOR from Form + Strength (home-centric) ----
                     h_form_score = _form_score(home_form)
                     a_form_score = _form_score(away_form)
 
@@ -460,55 +450,35 @@ def ensure_baseline_probs(
                     except Exception:
                         a_str = 0.5
 
-                    # Home field advantage ~ 0.06 logits (tunable)
                     HFA = 0.06
-
-                    # Positive = home advantage, negative = away advantage
                     delta_form = (h_form_score - a_form_score)
                     delta_str  = (h_str - a_str)
                     delta = (0.7 * delta_str) + (0.3 * delta_form) + HFA
 
-                    # Map to prior probs
-                    # Use sigmoid to get home prior; draw prior rises as delta -> 0
                     p_draw_prior = _clip(_draw_prior_from_delta(delta), 0.12, 0.35)
-                    # Convert remaining mass to home/away via sigmoid
-                    p_home_prior = _sigmoid(2.2 * delta)  # steeper = 2.2
+                    p_home_prior = _sigmoid(2.2 * delta)
                     p_away_prior = 1.0 - p_home_prior
-                    # Allocate only the non-draw mass
                     rem = max(1e-6, 1.0 - p_draw_prior)
                     p_home_prior *= rem
                     p_away_prior *= rem
                     p_home_prior, p_draw_prior, p_away_prior = _renorm3(p_home_prior, p_draw_prior, p_away_prior)
 
-                    # ---- Blend with market consensus (stable) ----
-                    ALPHA_PRIOR = 0.30  # 30% prior, 70% market
+                    ALPHA_PRIOR = 0.30
                     p_h = _clip((1 - ALPHA_PRIOR) * cons_h + ALPHA_PRIOR * p_home_prior)
                     p_d = _clip((1 - ALPHA_PRIOR) * cons_d + ALPHA_PRIOR * p_draw_prior)
                     p_a = _clip((1 - ALPHA_PRIOR) * cons_a + ALPHA_PRIOR * p_away_prior)
                     p_h, p_d, p_a = _renorm3(p_h, p_d, p_a)
 
-                    # ---- Sanity warnings (helps debugging) ----
-                    if (a_str - h_str) > 0.15 and (p_h - p_a) > 0.15:
-                        print(f"[warn] Strength says away>home but model favors home: "
-                              f"{f.id} {f.home_team} vs {f.away_team} | "
-                              f"str_h={h_str:.3f} str_a={a_str:.3f} pH={p_h:.3f} pA={p_a:.3f}")
-
-                    # Store probs
                     db.add(ModelProb(fixture_id=f.id, source=source, market="HOME_WIN", prob=p_h, as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="DRAW",     prob=p_d, as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="AWAY_WIN", prob=p_a, as_of=now))
 
-                    # --- Double Chance derived ---
-                    def _cap(x: float) -> float:
-                        return min(max(x, 0.0), 1.0)
+                    def _cap(x: float) -> float: return min(max(x, 0.0), 1.0)
                     db.add(ModelProb(fixture_id=f.id, source=source, market="1X", prob=_cap(p_h + p_d), as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="12", prob=_cap(p_h + p_a), as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="X2", prob=_cap(p_d + p_a), as_of=now))
 
-                    top_side, top_prob = max(
-                        [("HOME_WIN", p_h), ("DRAW", p_d), ("AWAY_WIN", p_a)],
-                        key=lambda x: x[1]
-                    )
+                    top_side, top_prob = max([("HOME_WIN", p_h), ("DRAW", p_d), ("AWAY_WIN", p_a)], key=lambda x: x[1])
                     db.add(Prediction(
                         fixture_id=f.id,
                         market="1X2",
@@ -522,7 +492,7 @@ def ensure_baseline_probs(
     db.commit()
 
 # ----------------------------
-# (UNCHANGED) Remaining helpers
+# Recent form (unchanged utility)
 # ----------------------------
 def get_recent_form(db: Session, team: str, comp: str, current_ko: datetime, limit: int = 5) -> dict:
     past_matches = db.query(Fixture).filter(
@@ -552,6 +522,9 @@ def get_recent_form(db: Session, team: str, comp: str, current_ko: datetime, lim
         "points": won * 3 + drawn,
     }
 
+# ----------------------------
+# Edge computation
+# ----------------------------
 def compute_edges(
     db: Session,
     now: datetime,
@@ -614,7 +587,36 @@ def compute_edges(
         for p in probs if p.market and p.prob is not None
     }
 
-    eff_book = prefer_book if prefer_book else PREFERRED_BOOK
+    def _get_prob(fid: int, market: str) -> Optional[float]:
+        """
+        Use exact market prob if it exists and pairs cleanly with its complement;
+        else try complement; else return exact if it exists anyway.
+        """
+        m = normalize_market(market)
+        exact = p_map.get((fid, m))
+        comp_m = _complement(m)
+        comp = p_map.get((fid, comp_m)) if comp_m else None
+
+        # If both exist and look like complements, trust exact
+        if exact is not None and comp is not None:
+            if abs((exact + comp) - 1.0) <= 0.05:
+                return exact
+            # If they don't complement, prefer the one that better matches the side:
+            # For "U"/"_N" prefer 1 - comp; for "O"/"_Y" prefer exact.
+            if m.startswith("U") or m.endswith("_N"):
+                return 1.0 - comp
+            else:
+                return exact
+
+        # If only exact exists, use it
+        if exact is not None:
+            return exact
+
+        # If only complement exists, derive
+        if comp is not None:
+            return 1.0 - comp
+
+        return None
 
     price_q = db.query(Odds).join(Fixture, Fixture.id == Odds.fixture_id)
     if fixture_id:
@@ -633,23 +635,10 @@ def compute_edges(
             continue
 
         norm_market = normalize_market(o.market)
-        key = (o.fixture_id, norm_market)
-
-        # 1) Use exact market prob if present
-        p = p_map.get(key)
-
-        # 2) Fallback: use complement once, flipped
-        if p is None or p <= 0:
-            comp = _complement(norm_market)
-            if comp:
-                p_comp = p_map.get((o.fixture_id, comp))
-                if p_comp and p_comp > 0:
-                    p = 1.0 - p_comp
-
-        if p is None or p <= 0:
+        p = _get_prob(o.fixture_id, norm_market)
+        if p is None or p <= 0.0:
             continue
 
-        # EV with the market-aligned probability (no extra flipping)
         ev = (p * price) - 1.0
         ev = min(ev, 1.0)
 
@@ -660,7 +649,7 @@ def compute_edges(
                 bookmaker=o.bookmaker,
                 price=price,
                 model_source=source,
-                prob=p,          # store the market-aligned prob we actually used
+                prob=p,      # the market-aligned probability actually used
                 edge=ev,
                 created_at=now,
             ))
@@ -712,7 +701,7 @@ def _apply_calibration(
     return _clip2(p)
 
 # ----------------------------
-# Team form helper (legacy reference) — unchanged
+# Legacy helpers (unchanged)
 # ----------------------------
 def get_team_form_features(db: Session, team: str, kickoff: datetime, n: int = 5) -> dict:
     rows = (
@@ -734,12 +723,12 @@ def get_team_form_features(db: Session, team: str, kickoff: datetime, n: int = 5
         gf = f.full_time_home if is_home else f.full_time_away
         ga = f.full_time_away if is_home else f.full_time_home
 
-        goals_for += gf
-        goals_against += ga
+    goals_for += gf
+    goals_against += ga
 
-        if gf > ga: wins += 1
-        elif gf == ga: draws += 1
-        else: losses += 1
+    if gf > ga: wins += 1
+    elif gf == ga: draws += 1
+    else: losses += 1
 
     return {
         "played": played, "wins": wins, "draws": draws, "losses": losses,
@@ -747,9 +736,6 @@ def get_team_form_features(db: Session, team: str, kickoff: datetime, n: int = 5
         "goal_diff": goals_for - goals_against,
     }
 
-# ----------------------------
-# Form adjustments (unchanged)
-# ----------------------------
 def adjust_prob_for_form(p: float, team_form: dict, opp_form: dict, market: str | None = None) -> float:
     def _clip3(x: float, lo: float = 0.01, hi: float = 0.99) -> float:
         return max(lo, min(hi, x))
