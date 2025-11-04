@@ -103,6 +103,15 @@ def _canon_market(m: str | None) -> str:
     }
     return SYN.get(x, x)
 
+# ✅ Complement helper (used only as a fallback when the exact market prob is missing)
+def _complement(m: str) -> Optional[str]:
+    u = (m or "").upper()
+    if u.endswith("_Y"): return u[:-2] + "_N"
+    if u.endswith("_N"): return u[:-2] + "_Y"
+    if u.startswith("O") and any(ch.isdigit() for ch in u[1:]): return "U" + u[1:]
+    if u.startswith("U") and any(ch.isdigit() for ch in u[1:]): return "O" + u[1:]
+    return None
+
 # --- SAFE FORM HELPERS -------------------------------------------------------
 
 DEFAULT_SUMMARY: Dict[str, float | int] = {
@@ -625,18 +634,23 @@ def compute_edges(
 
         norm_market = normalize_market(o.market)
         key = (o.fixture_id, norm_market)
+
+        # 1) Use exact market prob if present
         p = p_map.get(key)
+
+        # 2) Fallback: use complement once, flipped
+        if p is None or p <= 0:
+            comp = _complement(norm_market)
+            if comp:
+                p_comp = p_map.get((o.fixture_id, comp))
+                if p_comp and p_comp > 0:
+                    p = 1.0 - p_comp
+
         if p is None or p <= 0:
             continue
 
-        market_upper = norm_market.upper()
-
-        # Use market-correct probability for BOTH EV and display
-        adj_prob = p
-        if market_upper.endswith("_N") or (market_upper.startswith("U") and any(x.isdigit() for x in market_upper)):
-            adj_prob = 1.0 - p
-
-        ev = (adj_prob * price) - 1.0
+        # EV with the market-aligned probability (no extra flipping)
+        ev = (p * price) - 1.0
         ev = min(ev, 1.0)
 
         if ev >= min_edge:
@@ -646,7 +660,7 @@ def compute_edges(
                 bookmaker=o.bookmaker,
                 price=price,
                 model_source=source,
-                prob=adj_prob,   # <- store market-correct prob
+                prob=p,          # store the market-aligned prob we actually used
                 edge=ev,
                 created_at=now,
             ))
