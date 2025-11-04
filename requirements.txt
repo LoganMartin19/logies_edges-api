@@ -11,3 +11,5 @@ python-dotenv
 jinja2
 python-multipart
 openai
+firebase-admin>=6.5.0
+google-auth>=2.35.0
