@@ -1,0 +1,164 @@
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+
+from ..db import get_db
+from ..models.creator import Creator, CreatorPick
+from ..services.creator_perf import compute_creator_rolling_stats, model_edge_for_pick
+
+router = APIRouter(prefix="/api/creators", tags=["creators"])
+
+# --- Schemas ---
+class CreatorIn(BaseModel):
+    name: str
+    username: str
+    bio: str | None = None
+    avatar_url: str | None = None
+    sport_focus: str | None = None
+    social_links: dict | None = None
+
+class CreatorOut(BaseModel):
+    id: int
+    name: str
+    username: str
+    bio: str | None
+    avatar_url: str | None
+    sport_focus: str | None
+    roi_30d: float
+    winrate_30d: float
+    profit_30d: float
+    picks_30d: int
+
+class PickIn(BaseModel):
+    fixture_id: int
+    market: str
+    bookmaker: str | None = None
+    price: float
+    stake: float = 1.0
+
+class PickOut(BaseModel):
+    id: int
+    fixture_id: int
+    market: str
+    bookmaker: str | None
+    price: float
+    stake: float
+    created_at: datetime
+    result: str | None
+    profit: float
+    model_edge: float | None = None
+
+def _to_creator_out(c: Creator) -> dict:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "username": c.username,
+        "bio": c.bio,
+        "avatar_url": c.avatar_url,
+        "sport_focus": c.sport_focus,
+        "roi_30d": c.roi_30d or 0.0,
+        "winrate_30d": c.winrate_30d or 0.0,
+        "profit_30d": c.profit_30d or 0.0,
+        "picks_30d": c.picks_30d or 0,
+    }
+
+@router.post("", response_model=CreatorOut)
+def create_creator(payload: CreatorIn, db: Session = Depends(get_db)):
+    if db.query(Creator).filter(Creator.username == payload.username).first():
+        raise HTTPException(400, "username already exists")
+    c = Creator(**payload.model_dump())
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return _to_creator_out(c)
+
+@router.get("", response_model=list[CreatorOut])
+def list_creators(db: Session = Depends(get_db)):
+    rows = db.query(Creator).order_by(Creator.profit_30d.desc()).all()
+    return [_to_creator_out(c) for c in rows]
+
+@router.get("/{username}", response_model=CreatorOut)
+def get_creator(username: str, db: Session = Depends(get_db)):
+    c = db.query(Creator).filter(Creator.username == username).first()
+    if not c:
+        raise HTTPException(404, "creator not found")
+    return _to_creator_out(c)
+
+@router.post("/{username}/picks", response_model=PickOut)
+def create_pick(username: str, payload: PickIn, db: Session = Depends(get_db)):
+    c = db.query(Creator).filter(Creator.username == username).first()
+    if not c:
+        raise HTTPException(404, "creator not found")
+    p = CreatorPick(creator_id=c.id, **payload.model_dump())
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return {
+        "id": p.id, "fixture_id": p.fixture_id, "market": p.market,
+        "bookmaker": p.bookmaker, "price": p.price, "stake": p.stake,
+        "created_at": p.created_at, "result": p.result, "profit": p.profit,
+        "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price)
+    }
+
+@router.get("/{username}/picks", response_model=list[PickOut])
+def list_picks(username: str, db: Session = Depends(get_db)):
+    c = db.query(Creator).filter(Creator.username == username).first()
+    if not c:
+        raise HTTPException(404, "creator not found")
+    rows = (db.query(CreatorPick)
+              .filter(CreatorPick.creator_id == c.id)
+              .order_by(CreatorPick.created_at.desc()).all())
+    out = []
+    for p in rows:
+        out.append({
+            "id": p.id, "fixture_id": p.fixture_id, "market": p.market,
+            "bookmaker": p.bookmaker, "price": p.price, "stake": p.stake,
+            "created_at": p.created_at, "result": p.result, "profit": p.profit,
+            "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price)
+        })
+    return out
+
+# Quickly settle a pick (admin-lite)
+class SettleIn(BaseModel):
+    result: str  # WIN/LOSE/PUSH
+def _settle_profit(result: str, stake: float, price: float) -> float:
+    if result == "WIN": return stake * (price - 1.0)
+    if result == "LOSE": return -stake
+    return 0.0
+@router.post("/picks/{pick_id}/settle", response_model=PickOut)
+def settle_pick(pick_id: int, body: SettleIn, db: Session = Depends(get_db)):
+    p = db.query(CreatorPick).get(pick_id)
+    if not p:
+        raise HTTPException(404, "pick not found")
+    p.result = body.result
+    p.profit = _settle_profit(p.result, p.stake or 0.0, p.price or 0.0)
+    db.commit()
+    db.refresh(p)
+    return {
+        "id": p.id, "fixture_id": p.fixture_id, "market": p.market,
+        "bookmaker": p.bookmaker, "price": p.price, "stake": p.stake,
+        "created_at": p.created_at, "result": p.result, "profit": p.profit,
+        "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price)
+    }
+
+# Leaderboard
+class LeaderboardRow(BaseModel):
+    username: str
+    name: str
+    roi_30d: float
+    winrate_30d: float
+    profit_30d: float
+    picks_30d: int
+
+@router.get("/leaderboard/top", response_model=list[LeaderboardRow])
+def leaderboard_top(limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+    rows = (db.query(Creator)
+            .order_by(Creator.roi_30d.desc())
+            .limit(limit)
+            .all())
+    return [{
+        "username": c.username, "name": c.name,
+        "roi_30d": c.roi_30d or 0.0, "winrate_30d": c.winrate_30d or 0.0,
+        "profit_30d": c.profit_30d or 0.0, "picks_30d": c.picks_30d or 0
+    } for c in rows]

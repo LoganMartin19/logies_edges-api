@@ -464,3 +464,49 @@ class ExpertPrediction(Base):
         UniqueConstraint("fixture_id", "day", name="uq_expertpred_fixture_day"),
         Index("ix_expertpred_fixture_day", "fixture_id", "day"),
     )
+
+class Creator(Base):
+    __tablename__ = "creator"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=False)
+    bio = Column(String)
+    avatar_url = Column(String)
+    sport_focus = Column(String)  # e.g., "Football", "NFL"
+    social_links = Column(JSON, default=dict)
+    join_date = Column(DateTime, default=datetime.utcnow)
+    is_verified = Column(Boolean, default=False)
+
+    # rolling stats (denormalised for quick leaderboard)
+    roi_30d = Column(Float, default=0.0)
+    winrate_30d = Column(Float, default=0.0)
+    profit_30d = Column(Float, default=0.0)
+    picks_30d = Column(Integer, default=0)
+
+    # if you want orphan cleanup too, use delete-orphan
+    picks = relationship("CreatorPick", back_populates="creator", cascade="all, delete-orphan")
+
+
+class CreatorPick(Base):
+    __tablename__ = "creator_pick"
+    id = Column(Integer, primary_key=True)
+
+    creator_id = Column(Integer, ForeignKey("creator.id"), index=True, nullable=False)
+
+    # ✅ match type + table name of Fixture.id
+    fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="SET NULL"), index=True, nullable=True)
+
+    market = Column(String, index=True)         # "O2.5", "BTTS_Y", "HOME_WIN", etc
+    bookmaker = Column(String)                  # optional
+    price = Column(Float)                       # decimal odds
+    stake = Column(Float, default=1.0)          # £ units
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # settlement
+    result = Column(String, nullable=True)      # "WIN","LOSE","PUSH", None (unsettled)
+    profit = Column(Float, default=0.0)         # stake*(price-1) or -stake (push=0)
+
+    creator = relationship("Creator", back_populates="picks")
+
+    # ✅ handy relationship (optional but useful)
+    fixture = relationship("Fixture")

@@ -40082,3 +40082,32 @@ Enter selection: [FATAL] EOF when reading a line
 [HTTP-ERR] GET http://localhost:8000/shortlist/today: 500 Server Error: Internal Server Error for url: http://localhost:8000/shortlist/today?hours_ahead=96&min_edge=0.0&send_alerts=0
 [GET] http://localhost:8000/admin/last-http -> 200
 [GET] http://localhost:8000/admin/gridiron-last-http -> 200
+=== automate_value_alerts @ 2025-11-02T12:14:01+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] POST http://localhost:8000/admin/recompute: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] GET http://localhost:8000/admin/odds-gaps: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[gaps] none or endpoint missing
+[HTTP-ERR] GET http://localhost:8000/shortlist/today: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] GET http://localhost:8000/admin/last-http: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] GET http://localhost:8000/admin/gridiron-last-http: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+=== automate_value_alerts @ 2025-11-02T18:11:12+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: 500 Server Error: Internal Server Error for url: http://localhost:8000/admin/run-dates?days=2025-11-02&prefer_book=bet365&compute_after=0&cfb_uk_only=1
+[HTTP-ERR] POST http://localhost:8000/admin/recompute: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[GET] http://localhost:8000/admin/odds-gaps -> 404 (optional/missing endpoint)
+[gaps] none or endpoint missing
+[HTTP-ERR] GET http://localhost:8000/shortlist/today: 500 Server Error: Internal Server Error for url: http://localhost:8000/shortlist/today?hours_ahead=96&min_edge=0.0&send_alerts=0
+[GET] http://localhost:8000/admin/last-http -> 200
+[GET] http://localhost:8000/admin/gridiron-last-http -> 200
+=== automate_value_alerts @ 2025-11-04T12:14:24+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[POST] http://localhost:8000/admin/recompute -> 200
+[recompute v2] edges=0 model_probs=5370
+[GET] http://localhost:8000/admin/odds-gaps -> 404 (optional/missing endpoint)
+[gaps] none or endpoint missing
+[GET] http://localhost:8000/shortlist/today -> 200
+[shortlist] count=0
+[GET] http://localhost:8000/admin/last-http -> 200
+[GET] http://localhost:8000/admin/gridiron-last-http -> 200

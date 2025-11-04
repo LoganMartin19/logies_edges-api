@@ -243,3 +243,13 @@ def get_fixture_edges(
         })
 
     return result
+
+
+@router.post("/admin/refresh-creator-stats")
+def refresh_creator_stats(db: Session = Depends(get_db)):
+    for c in db.query(Creator).all():
+        stats = compute_creator_rolling_stats(db, c.id, days=30)
+        c.roi_30d = stats["roi"]; c.winrate_30d = stats["winrate"]
+        c.profit_30d = stats["profit"]; c.picks_30d = stats["picks"]
+    db.commit()
+    return {"ok": True}
