@@ -245,7 +245,7 @@ def get_fixture_edges(
     return result
 
 
-@router.post("/admin/refresh-creator-stats")
+@router.post("/admin/refresh-tipster-stats")
 def refresh_creator_stats(db: Session = Depends(get_db)):
     for c in db.query(Creator).all():
         stats = compute_creator_rolling_stats(db, c.id, days=30)

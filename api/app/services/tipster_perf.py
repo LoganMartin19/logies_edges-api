@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from ..models import CreatorPick, ModelProb, Fixture
+from ..models import TipsterPick, ModelProb, Fixture
 
 def settle_profit(result: str, stake: float, price: float) -> float:
     if result == "WIN":
@@ -10,11 +10,11 @@ def settle_profit(result: str, stake: float, price: float) -> float:
         return -stake
     return 0.0  # PUSH/None
 
-def compute_creator_rolling_stats(db: Session, creator_id: int, days: int = 30) -> dict:
+def compute_tipster_rolling_stats(db: Session, tipster_id: int, days: int = 30) -> dict:
     since = datetime.utcnow() - timedelta(days=days)
-    rows = (db.query(CreatorPick)
-            .filter(CreatorPick.creator_id == creator_id,
-                    CreatorPick.created_at >= since)
+    rows = (db.query(TipsterPick)
+            .filter(TipsterPick.tipster_id == tipster_id,
+                    TipsterPick.created_at >= since)
             .all())
     picks = len(rows)
     profit = sum((r.profit if r.result else 0.0) for r in rows)

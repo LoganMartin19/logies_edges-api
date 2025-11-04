@@ -465,8 +465,9 @@ class ExpertPrediction(Base):
         Index("ix_expertpred_fixture_day", "fixture_id", "day"),
     )
 
-class Creator(Base):
-    __tablename__ = "creator"
+class Tipster(Base):
+    __tablename__ = "tipsters"
+
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     username = Column(String, unique=True, index=True, nullable=False)
@@ -483,17 +484,16 @@ class Creator(Base):
     profit_30d = Column(Float, default=0.0)
     picks_30d = Column(Integer, default=0)
 
-    # if you want orphan cleanup too, use delete-orphan
-    picks = relationship("CreatorPick", back_populates="creator", cascade="all, delete-orphan")
+    # relationship
+    picks = relationship("TipsterPick", back_populates="tipster", cascade="all, delete-orphan")
 
 
-class CreatorPick(Base):
-    __tablename__ = "creator_pick"
+class TipsterPick(Base):
+    __tablename__ = "tipster_picks"
+
     id = Column(Integer, primary_key=True)
 
-    creator_id = Column(Integer, ForeignKey("creator.id"), index=True, nullable=False)
-
-    # ✅ match type + table name of Fixture.id
+    tipster_id = Column(Integer, ForeignKey("tipsters.id"), index=True, nullable=False)
     fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="SET NULL"), index=True, nullable=True)
 
     market = Column(String, index=True)         # "O2.5", "BTTS_Y", "HOME_WIN", etc
@@ -506,7 +506,5 @@ class CreatorPick(Base):
     result = Column(String, nullable=True)      # "WIN","LOSE","PUSH", None (unsettled)
     profit = Column(Float, default=0.0)         # stake*(price-1) or -stake (push=0)
 
-    creator = relationship("Creator", back_populates="picks")
-
-    # ✅ handy relationship (optional but useful)
+    tipster = relationship("Tipster", back_populates="picks")
     fixture = relationship("Fixture")

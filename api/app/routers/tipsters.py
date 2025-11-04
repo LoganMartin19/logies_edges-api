@@ -4,13 +4,13 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
 from ..db import get_db
-from ..models.creator import Creator, CreatorPick
-from ..services.creator_perf import compute_creator_rolling_stats, model_edge_for_pick
+from ..models.tipster import Tipster, TipsterPick
+from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 
-router = APIRouter(prefix="/api/creators", tags=["creators"])
+router = APIRouter(prefix="/api/tipsters", tags=["tipsters"])
 
 # --- Schemas ---
-class CreatorIn(BaseModel):
+class TipsterIn(BaseModel):
     name: str
     username: str
     bio: str | None = None
@@ -18,7 +18,7 @@ class CreatorIn(BaseModel):
     sport_focus: str | None = None
     social_links: dict | None = None
 
-class CreatorOut(BaseModel):
+class TipsterOut(BaseModel):
     id: int
     name: str
     username: str
@@ -49,7 +49,7 @@ class PickOut(BaseModel):
     profit: float
     model_edge: float | None = None
 
-def _to_creator_out(c: Creator) -> dict:
+def _to_tipster_out(c: Tipster) -> dict:
     return {
         "id": c.id,
         "name": c.name,
@@ -63,34 +63,34 @@ def _to_creator_out(c: Creator) -> dict:
         "picks_30d": c.picks_30d or 0,
     }
 
-@router.post("", response_model=CreatorOut)
-def create_creator(payload: CreatorIn, db: Session = Depends(get_db)):
-    if db.query(Creator).filter(Creator.username == payload.username).first():
+@router.post("", response_model=TipsterOut)
+def create_tipster(payload: TipsterIn, db: Session = Depends(get_db)):
+    if db.query(Tipster).filter(Tipster.username == payload.username).first():
         raise HTTPException(400, "username already exists")
-    c = Creator(**payload.model_dump())
+    c = Tipster(**payload.model_dump())
     db.add(c)
     db.commit()
     db.refresh(c)
-    return _to_creator_out(c)
+    return _to_tipster_out(c)
 
-@router.get("", response_model=list[CreatorOut])
-def list_creators(db: Session = Depends(get_db)):
-    rows = db.query(Creator).order_by(Creator.profit_30d.desc()).all()
-    return [_to_creator_out(c) for c in rows]
+@router.get("", response_model=list[TipsterOut])
+def list_tipsters(db: Session = Depends(get_db)):
+    rows = db.query(Tipster).order_by(Tipster.profit_30d.desc()).all()
+    return [_to_tipster_out(c) for c in rows]
 
-@router.get("/{username}", response_model=CreatorOut)
-def get_creator(username: str, db: Session = Depends(get_db)):
-    c = db.query(Creator).filter(Creator.username == username).first()
+@router.get("/{username}", response_model=TipsterOut)
+def get_tipster(username: str, db: Session = Depends(get_db)):
+    c = db.query(Tipster).filter(Tipster.username == username).first()
     if not c:
-        raise HTTPException(404, "creator not found")
-    return _to_creator_out(c)
+        raise HTTPException(404, "tipster not found")
+    return _to_tipster_out(c)
 
 @router.post("/{username}/picks", response_model=PickOut)
 def create_pick(username: str, payload: PickIn, db: Session = Depends(get_db)):
-    c = db.query(Creator).filter(Creator.username == username).first()
+    c = db.query(Tipster).filter(Tipster.username == username).first()
     if not c:
-        raise HTTPException(404, "creator not found")
-    p = CreatorPick(creator_id=c.id, **payload.model_dump())
+        raise HTTPException(404, "tipster not found")
+    p = TipsterPick(tipster_id=c.id, **payload.model_dump())
     db.add(p)
     db.commit()
     db.refresh(p)
@@ -103,12 +103,12 @@ def create_pick(username: str, payload: PickIn, db: Session = Depends(get_db)):
 
 @router.get("/{username}/picks", response_model=list[PickOut])
 def list_picks(username: str, db: Session = Depends(get_db)):
-    c = db.query(Creator).filter(Creator.username == username).first()
+    c = db.query(Tipster).filter(Tipster.username == username).first()
     if not c:
-        raise HTTPException(404, "creator not found")
-    rows = (db.query(CreatorPick)
-              .filter(CreatorPick.creator_id == c.id)
-              .order_by(CreatorPick.created_at.desc()).all())
+        raise HTTPException(404, "tipster not found")
+    rows = (db.query(TipsterPick)
+              .filter(TipsterPick.tipster_id == c.id)
+              .order_by(TipsterPick.created_at.desc()).all())
     out = []
     for p in rows:
         out.append({
@@ -128,7 +128,7 @@ def _settle_profit(result: str, stake: float, price: float) -> float:
     return 0.0
 @router.post("/picks/{pick_id}/settle", response_model=PickOut)
 def settle_pick(pick_id: int, body: SettleIn, db: Session = Depends(get_db)):
-    p = db.query(CreatorPick).get(pick_id)
+    p = db.query(TipsterPick).get(pick_id)
     if not p:
         raise HTTPException(404, "pick not found")
     p.result = body.result
@@ -153,8 +153,8 @@ class LeaderboardRow(BaseModel):
 
 @router.get("/leaderboard/top", response_model=list[LeaderboardRow])
 def leaderboard_top(limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
-    rows = (db.query(Creator)
-            .order_by(Creator.roi_30d.desc())
+    rows = (db.query(Tipster)
+            .order_by(Tipster.roi_30d.desc())
             .limit(limit)
             .all())
     return [{
