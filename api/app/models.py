@@ -404,41 +404,63 @@ class FixturePlayersCache(Base):
     __table_args__ = (UniqueConstraint("fixture_provider_id", name="uq_fpc_fixture"),)
 
 # api/app/models.py  (add near FeaturedPick)
+# --- Accas (shared by model + tipsters) --------------------------------------
+
 class AccaTicket(Base):
     __tablename__ = "acca_tickets"
 
     id = Column(BigInteger, primary_key=True)
-    day = Column(Date, index=True, nullable=False)              # UTC date of tip
+
+    # who/what created it
+    source = Column(String, nullable=False, default="model")      # "model" | "tipster"
+    tipster_id = Column(Integer, ForeignKey("tipsters.id", ondelete="CASCADE"),
+                        index=True, nullable=True)                 # null for model accas
+
+    day = Column(Date, index=True, nullable=False)                 # UTC calendar date
     sport = Column(String, index=True, nullable=False, default="football")
-    title = Column(String, nullable=True)                       # e.g. "Saturday 2-Leg ACCA"
-    note = Column(String, nullable=True)                        # optional blurb
-    stake_units = Column(Float, nullable=False, default=1.0)    # "units" staked
+    title = Column(String, nullable=True)
+    note = Column(String, nullable=True)
+    stake_units = Column(Float, nullable=False, default=1.0)
     is_public = Column(Boolean, nullable=False, default=False)
 
-    # derived fields (optional but handy for fast UI)
-    combined_price = Column(Float, nullable=True)               # product of leg prices (dec odds)
-    est_edge = Column(Float, nullable=True)                     # optional if you compute it
+    # derived for fast UI
+    combined_price = Column(Float, nullable=True)                  # product of leg odds
+    est_edge = Column(Float, nullable=True)
+
+    # settlement (optional summary)
+    result = Column(String, nullable=True)                         # "WON"|"LOST"|"VOID"|None
+    profit = Column(Float, nullable=True)                          # stake_units*(combined-1) or -stake_units
+    settled_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
+    # relationships
     legs = relationship("AccaLeg", back_populates="ticket", cascade="all, delete-orphan")
+    tipster = relationship("Tipster", back_populates="accas")
+
 
 class AccaLeg(Base):
     __tablename__ = "acca_legs"
 
     id = Column(BigInteger, primary_key=True)
-    ticket_id = Column(BigInteger, ForeignKey("acca_tickets.id", ondelete="CASCADE"), index=True, nullable=False)
+    ticket_id = Column(BigInteger, ForeignKey("acca_tickets.id", ondelete="CASCADE"),
+                       index=True, nullable=False)
 
     fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="SET NULL"))
-    market = Column(String, nullable=False)                # "BTTS_N", "HOME_WIN", "O2.5", etc
+    # denormalised for quick display (what your UI shows)
+    home_name = Column(String, nullable=True)
+    away_name = Column(String, nullable=True)
+
+    market = Column(String, nullable=False)                         # "HOME_WIN","BTTS_Y","O2.5", ...
     bookmaker = Column(String, nullable=True)
-    price = Column(Float, nullable=False)                  # decimal odds of this leg
+    price = Column(Float, nullable=False)
     note = Column(String, nullable=True)
 
-    # settlement (optional for record page)
-    result = Column(String, nullable=True)                 # "WON" | "LOST" | "VOID" | None
+    # per-leg settlement (optional)
+    result = Column(String, nullable=True)                          # "WON"|"LOST"|"VOID"|None
 
     ticket = relationship("AccaTicket", back_populates="legs")
+    fixture = relationship("Fixture")
 
 class ExpertPrediction(Base):
     __tablename__ = "expert_predictions"
@@ -477,7 +499,7 @@ class Tipster(Base):
     social_links = Column(JSON, default=dict)
     join_date = Column(DateTime, default=datetime.utcnow)
     is_verified = Column(Boolean, default=False)
-
+    accas = relationship("AccaTicket", back_populates="tipster", cascade="all, delete-orphan")
     # rolling stats (denormalised for quick leaderboard)
     roi_30d = Column(Float, default=0.0)
     winrate_30d = Column(Float, default=0.0)
