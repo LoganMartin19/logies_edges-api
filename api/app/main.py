@@ -152,8 +152,8 @@ app.include_router(preview_dispatch_pub, prefix="/api")              # /public/a
 from .routes.picks import pub as picks_public_router
 from .routes.accas import pub as accas_public_router
 
-app.include_router(picks_public_router, prefix="/api")   # /api/public/picks
-app.include_router(accas_public_router, prefix="/api")   # /api/public/accas
+app.include_router(picks_public_router, prefix="/api")   # keep this (its pub prefix starts with /public/...)
+app.include_router(accas_public_router)                  # <-- remove prefix to avoid /api/api/...
 # --- Debug route for visibility ---
 @app.get("/debug/routes")
 def list_routes():
