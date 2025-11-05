@@ -406,38 +406,36 @@ class FixturePlayersCache(Base):
 # api/app/models.py  (add near FeaturedPick)
 # --- Accas (shared by model + tipsters) --------------------------------------
 
-# models.py  — replace your AccaTicket/AccaLeg with this
+# --- AccaTicket / AccaLeg --------------------------------------------------
 
 class AccaTicket(Base):
     __tablename__ = "acca_tickets"
 
     id = Column(BigInteger, primary_key=True)
-
-    # who/what created this acca (we filter on 'tipster' for the UI)
     source = Column(String, nullable=False, default="tipster", index=True)
-
-    # owner when source='tipster'
     tipster_id = Column(Integer, ForeignKey("tipsters.id", ondelete="CASCADE"), index=True, nullable=True)
 
-    day = Column(Date, index=True, nullable=False)                 # UTC date
+    day = Column(Date, index=True, nullable=False)
     sport = Column(String, index=True, nullable=False, default="football")
     title = Column(String, nullable=True)
     note = Column(String, nullable=True)
     stake_units = Column(Float, nullable=False, default=1.0)
     is_public = Column(Boolean, nullable=False, default=False)
 
-    # derived
     combined_price = Column(Float, nullable=True)
     est_edge = Column(Float, nullable=True)
 
-    # settlement summary (optional)
-    result = Column(String, nullable=True)                         # WON | LOST | VOID | PART_LOST | PART_WON
+    result = Column(String, nullable=True)
     profit = Column(Float, nullable=True)
     settled_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
+    # ✅ NEW: back-reference to Tipster
+    tipster = relationship("Tipster", back_populates="accas")
+
     legs = relationship("AccaLeg", back_populates="ticket", cascade="all, delete-orphan")
+
 
 class AccaLeg(Base):
     __tablename__ = "acca_legs"
@@ -451,7 +449,7 @@ class AccaLeg(Base):
     price = Column(Float, nullable=False)
     note = Column(String, nullable=True)
 
-    result = Column(String, nullable=True)                         # WON | LOST | VOID | None
+    result = Column(String, nullable=True)
 
     ticket = relationship("AccaTicket", back_populates="legs")
 
@@ -480,6 +478,8 @@ class ExpertPrediction(Base):
         Index("ix_expertpred_fixture_day", "fixture_id", "day"),
     )
 
+# --- Tipster ---------------------------------------------------------------
+
 class Tipster(Base):
     __tablename__ = "tipsters"
 
@@ -488,19 +488,21 @@ class Tipster(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     bio = Column(String)
     avatar_url = Column(String)
-    sport_focus = Column(String)  # e.g., "Football", "NFL"
+    sport_focus = Column(String)
     social_links = Column(JSON, default=dict)
     join_date = Column(DateTime, default=datetime.utcnow)
     is_verified = Column(Boolean, default=False)
-    accas = relationship("AccaTicket", back_populates="tipster", cascade="all, delete-orphan")
-    # rolling stats (denormalised for quick leaderboard)
+
     roi_30d = Column(Float, default=0.0)
     winrate_30d = Column(Float, default=0.0)
     profit_30d = Column(Float, default=0.0)
     picks_30d = Column(Integer, default=0)
 
-    # relationship
+    # existing
     picks = relationship("TipsterPick", back_populates="tipster", cascade="all, delete-orphan")
+
+    # ✅ NEW: link to acca tickets this tipster owns
+    accas = relationship("AccaTicket", back_populates="tipster", cascade="all, delete-orphan")
 
 
 class TipsterPick(Base):
