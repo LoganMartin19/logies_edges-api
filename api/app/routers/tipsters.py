@@ -214,3 +214,15 @@ def leaderboard_top(limit: int = Query(20, ge=1, le=100), db: Session = Depends(
         "roi_30d": c.roi_30d or 0.0, "winrate_30d": c.winrate_30d or 0.0,
         "profit_30d": c.profit_30d or 0.0, "picks_30d": c.picks_30d or 0
     } for c in rows]
+
+@router.get("/me", response_model=TipsterOut | None)
+def get_my_tipster(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    email = (user.get("email") or "").lower()
+    if not email:
+        return None
+    # Portable lookup (works even if JSON field isn’t queryable in your DB)
+    rows = db.query(Tipster).all()
+    for c in rows:
+        if ((c.social_links or {}).get("email") or "").lower() == email:
+            return _to_tipster_out(c)
+    return None
