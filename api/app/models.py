@@ -406,61 +406,54 @@ class FixturePlayersCache(Base):
 # api/app/models.py  (add near FeaturedPick)
 # --- Accas (shared by model + tipsters) --------------------------------------
 
+# models.py  — replace your AccaTicket/AccaLeg with this
+
 class AccaTicket(Base):
     __tablename__ = "acca_tickets"
 
     id = Column(BigInteger, primary_key=True)
 
-    # who/what created it
-    source = Column(String, nullable=False, default="model")      # "model" | "tipster"
-    tipster_id = Column(Integer, ForeignKey("tipsters.id", ondelete="CASCADE"),
-                        index=True, nullable=True)                 # null for model accas
+    # who/what created this acca (we filter on 'tipster' for the UI)
+    source = Column(String, nullable=False, default="tipster", index=True)
 
-    day = Column(Date, index=True, nullable=False)                 # UTC calendar date
+    # owner when source='tipster'
+    tipster_id = Column(Integer, ForeignKey("tipsters.id", ondelete="CASCADE"), index=True, nullable=True)
+
+    day = Column(Date, index=True, nullable=False)                 # UTC date
     sport = Column(String, index=True, nullable=False, default="football")
     title = Column(String, nullable=True)
     note = Column(String, nullable=True)
     stake_units = Column(Float, nullable=False, default=1.0)
     is_public = Column(Boolean, nullable=False, default=False)
 
-    # derived for fast UI
-    combined_price = Column(Float, nullable=True)                  # product of leg odds
+    # derived
+    combined_price = Column(Float, nullable=True)
     est_edge = Column(Float, nullable=True)
 
-    # settlement (optional summary)
-    result = Column(String, nullable=True)                         # "WON"|"LOST"|"VOID"|None
-    profit = Column(Float, nullable=True)                          # stake_units*(combined-1) or -stake_units
+    # settlement summary (optional)
+    result = Column(String, nullable=True)                         # WON | LOST | VOID | PART_LOST | PART_WON
+    profit = Column(Float, nullable=True)
     settled_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
-    # relationships
     legs = relationship("AccaLeg", back_populates="ticket", cascade="all, delete-orphan")
-    tipster = relationship("Tipster", back_populates="accas")
-
 
 class AccaLeg(Base):
     __tablename__ = "acca_legs"
 
     id = Column(BigInteger, primary_key=True)
-    ticket_id = Column(BigInteger, ForeignKey("acca_tickets.id", ondelete="CASCADE"),
-                       index=True, nullable=False)
+    ticket_id = Column(BigInteger, ForeignKey("acca_tickets.id", ondelete="CASCADE"), index=True, nullable=False)
 
     fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="SET NULL"))
-    # denormalised for quick display (what your UI shows)
-    home_name = Column(String, nullable=True)
-    away_name = Column(String, nullable=True)
-
-    market = Column(String, nullable=False)                         # "HOME_WIN","BTTS_Y","O2.5", ...
+    market = Column(String, nullable=False)
     bookmaker = Column(String, nullable=True)
     price = Column(Float, nullable=False)
     note = Column(String, nullable=True)
 
-    # per-leg settlement (optional)
-    result = Column(String, nullable=True)                          # "WON"|"LOST"|"VOID"|None
+    result = Column(String, nullable=True)                         # WON | LOST | VOID | None
 
     ticket = relationship("AccaTicket", back_populates="legs")
-    fixture = relationship("Fixture")
 
 class ExpertPrediction(Base):
     __tablename__ = "expert_predictions"
