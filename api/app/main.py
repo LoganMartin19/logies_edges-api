@@ -23,6 +23,7 @@ from .routers import fixtures as fixtures_router
 from .routers import basketball as basketball_router
 from .routers.football_admin import admin as football_admin_router
 from .routers import auth as auth_router
+from .routers import tipsters as tipsters_router
 
 from .routes import (
     pages as pages_router,
@@ -111,6 +112,7 @@ app.include_router(fixtures_router.router)
 app.include_router(basketball_router.router)
 app.include_router(football_admin_router)
 app.include_router(auth_router.router)
+app.include_router(tipsters_router.router)
 
 # Split routes
 app.include_router(pages_router.router)

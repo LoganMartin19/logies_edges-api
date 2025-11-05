@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
 from ..db import get_db
-from ..models.tipster import Tipster, TipsterPick
+from ..models import Tipster, TipsterPick
 from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 from ..auth_firebase import get_current_user
 
