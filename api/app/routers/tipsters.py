@@ -1,5 +1,5 @@
 # api/app/routers/tipsters.py
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
@@ -8,6 +8,8 @@ from ..db import get_db
 from ..models import Tipster, TipsterPick
 from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 from ..auth_firebase import get_current_user
+# 👇 optional viewer lookup (doesn't 401 if missing)
+from ..services.firebase import get_current_user as get_user_from_header
 
 router = APIRouter(prefix="/api/tipsters", tags=["tipsters"])
 
@@ -31,6 +33,8 @@ class TipsterOut(BaseModel):
     winrate_30d: float
     profit_30d: float
     picks_30d: int
+    # 👇 add is_owner so the frontend can conditionally show owner-only UI
+    is_owner: bool = False
 
 class PickIn(BaseModel):
     fixture_id: int
@@ -63,6 +67,7 @@ def _to_tipster_out(c: Tipster) -> dict:
         "winrate_30d": c.winrate_30d or 0.0,
         "profit_30d": c.profit_30d or 0.0,
         "picks_30d": c.picks_30d or 0,
+        # is_owner added in GET handler when we know the viewer
     }
 
 # --- helpers ---
@@ -99,7 +104,9 @@ def create_tipster(payload: TipsterIn, db: Session = Depends(get_db), user=Depen
             existing.sport_focus = payload.sport_focus
             existing.social_links = (payload.social_links or {}) | {"email": email}
             db.commit(); db.refresh(existing)
-            return _to_tipster_out(existing)
+            out = _to_tipster_out(existing)
+            out["is_owner"] = True
+            return out
         raise HTTPException(400, "username already exists")
 
     c = Tipster(**payload.model_dump())
@@ -107,19 +114,31 @@ def create_tipster(payload: TipsterIn, db: Session = Depends(get_db), user=Depen
     db.add(c)
     db.commit()
     db.refresh(c)
-    return _to_tipster_out(c)
+    out = _to_tipster_out(c)
+    out["is_owner"] = True
+    return out
 
 @router.get("", response_model=list[TipsterOut])
 def list_tipsters(db: Session = Depends(get_db)):
     rows = db.query(Tipster).order_by(Tipster.profit_30d.desc()).all()
-    return [_to_tipster_out(c) for c in rows]
+    # public list: is_owner always False here
+    return [{**_to_tipster_out(c), "is_owner": False} for c in rows]
 
 @router.get("/{username}", response_model=TipsterOut)
-def get_tipster(username: str, db: Session = Depends(get_db)):
+def get_tipster(username: str, request: Request, db: Session = Depends(get_db)):
     c = db.query(Tipster).filter(Tipster.username == username).first()
     if not c:
         raise HTTPException(404, "tipster not found")
-    return _to_tipster_out(c)
+
+    # optional auth: if an Authorization header is present & valid, compute ownership
+    viewer = get_user_from_header(request.headers.get("Authorization"))
+    viewer_email = (viewer or {}).get("email", "").lower()
+    tipster_email = ((_email_of_tipster(c) or "")).lower()
+    is_owner = bool(viewer_email and viewer_email == tipster_email)
+
+    out = _to_tipster_out(c)
+    out["is_owner"] = is_owner
+    return out
 
 @router.post("/{username}/picks", response_model=PickOut)
 def create_pick(username: str, payload: PickIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
