@@ -40421,3 +40421,12 @@ Select edges to send to Telegram (max 5). Enter indexes separated by comma (e.g.
 147) Botafogo vs Vasco DA Gama | AWAY_WIN @ williamhill | 3.9 (4.0%)
 
 Enter selection: [FATAL] EOF when reading a line
+=== automate_value_alerts @ 2025-11-05T18:15:49+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] POST http://localhost:8000/admin/recompute: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[GET] http://localhost:8000/admin/odds-gaps -> 404 (optional/missing endpoint)
+[gaps] none or endpoint missing
+[HTTP-ERR] GET http://localhost:8000/shortlist/today: 500 Server Error: Internal Server Error for url: http://localhost:8000/shortlist/today?hours_ahead=96&min_edge=0.0&send_alerts=0
+[GET] http://localhost:8000/admin/last-http -> 200
+[GET] http://localhost:8000/admin/gridiron-last-http -> 200

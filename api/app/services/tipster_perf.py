@@ -25,12 +25,35 @@ def compute_tipster_rolling_stats(db: Session, tipster_id: int, days: int = 30) 
     winrate = (wins / settled) if settled > 0 else 0.0
     return {"picks": picks, "profit": profit, "roi": roi, "winrate": winrate}
 
-def model_edge_for_pick(db: Session, fixture_id: int, market: str, price: float) -> float | None:
-    # Look up latest model prob for that market on fixture
+# api/app/services/tipster_perf.py
+
+from decimal import Decimal
+from typing import Optional
+
+def _to_float(x) -> Optional[float]:
+    if x is None:
+        return None
+    try:
+        # handles Decimal, str, int, float
+        return float(x)
+    except Exception:
+        return None
+
+def model_edge_for_pick(db: Session, fixture_id: int, market: str, price) -> float | None:
+    """
+    edge = prob * price - 1
+    Cast Decimals to float to avoid Decimal*float TypeError.
+    """
     mp = (db.query(ModelProb)
           .filter(ModelProb.fixture_id == fixture_id, ModelProb.market == market)
           .order_by(ModelProb.as_of.desc())
           .first())
-    if not mp or not (0 < (mp.prob or 0) < 1):
+    if not mp:
         return None
-    return (mp.prob * price) - 1.0
+
+    p = _to_float(mp.prob)
+    q = _to_float(price)
+    if p is None or q is None or not (0 < p < 1):
+        return None
+
+    return round(p * q - 1.0, 4)
