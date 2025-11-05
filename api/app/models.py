@@ -508,3 +508,95 @@ class TipsterPick(Base):
 
     tipster = relationship("Tipster", back_populates="picks")
     fixture = relationship("Fixture")
+
+# --- Users, Follows, Bet Log, Subscriptions ---------------------------------
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(BigInteger, primary_key=True)
+    firebase_uid = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, index=True)
+    display_name = Column(String)
+    avatar_url = Column(String)
+    is_admin = Column(Boolean, default=False)
+
+    # optional: if this user is also a tipster account
+    tipster_id = Column(Integer, ForeignKey("tipsters.id", ondelete="SET NULL"), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    follows = relationship("UserFollow", back_populates="user", cascade="all, delete-orphan")
+    subscriptions = relationship("TipsterSubscription", back_populates="user", cascade="all, delete-orphan")
+    bets = relationship("UserBet", back_populates="user", cascade="all, delete-orphan")
+
+    __table_args__ = (Index("ix_users_uid_email", "firebase_uid", "email"),)
+
+
+class UserFollow(Base):
+    __tablename__ = "user_follows"
+
+    id = Column(BigInteger, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    tipster_id = Column(Integer, ForeignKey("tipsters.id", ondelete="CASCADE"), index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    user = relationship("User", back_populates="follows")
+    tipster = relationship("Tipster")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "tipster_id", name="uq_user_follow"),
+        Index("ix_follow_user_tipster", "user_id", "tipster_id"),
+    )
+
+
+class UserBet(Base):
+    __tablename__ = "user_bets"
+
+    id = Column(BigInteger, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="SET NULL"), index=True, nullable=True)
+    source_tipster_id = Column(Integer, ForeignKey("tipsters.id", ondelete="SET NULL"), nullable=True)
+
+    market = Column(String, index=True)     # "O2.5","BTTS_Y","HOME_WIN", etc
+    bookmaker = Column(String, index=True)
+    price = Column(Float, nullable=False)
+    stake = Column(Float, nullable=False, default=1.0)
+    placed_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    result = Column(String, nullable=True)  # "WON","LOST","VOID" (null = unsettled)
+    ret = Column(Float, nullable=True)
+    pnl = Column(Float, nullable=True)
+
+    user = relationship("User", back_populates="bets")
+    fixture = relationship("Fixture")
+    source_tipster = relationship("Tipster")
+
+    __table_args__ = (Index("ix_userbets_user_time", "user_id", "placed_at"),)
+
+
+class TipsterSubscription(Base):
+    __tablename__ = "tipster_subscriptions"
+
+    id = Column(BigInteger, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    tipster_id = Column(Integer, ForeignKey("tipsters.id", ondelete="CASCADE"), index=True, nullable=False)
+
+    plan_name = Column(String, nullable=True)       # e.g. "Monthly"
+    price_cents = Column(Integer, nullable=True)    # 1500 = £15.00
+    status = Column(String, nullable=False, default="active")  # active|canceled|past_due
+    provider = Column(String, nullable=True, default="manual") # "stripe" later
+    provider_sub_id = Column(String, nullable=True)
+
+    started_at = Column(DateTime, default=datetime.utcnow, index=True)
+    renews_at = Column(DateTime, nullable=True, index=True)
+    canceled_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="subscriptions")
+    tipster = relationship("Tipster")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "tipster_id", name="uq_user_tipster_sub"),
+        Index("ix_subs_status", "status"),
+    )
