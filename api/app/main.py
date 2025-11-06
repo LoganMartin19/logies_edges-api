@@ -153,7 +153,7 @@ from .routes.picks import pub as picks_public_router
 from .routes.accas import pub as accas_public_router
 
 app.include_router(picks_public_router, prefix="/api")   # keep this (its pub prefix starts with /public/...)
-app.include_router(accas_public_router)                  # <-- remove prefix to avoid /api/api/...
+app.include_router(accas_public_router, prefix="/api")                  # <-- remove prefix to avoid /api/api/...
 # --- Debug route for visibility ---
 @app.get("/debug/routes")
 def list_routes():
