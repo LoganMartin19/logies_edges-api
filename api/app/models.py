@@ -444,6 +444,10 @@ class AccaLeg(Base):
     ticket_id = Column(BigInteger, ForeignKey("acca_tickets.id", ondelete="CASCADE"), index=True, nullable=False)
 
     fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="SET NULL"))
+    # ✅ denormalised names for fast UI (optional, nullable)
+    home_name = Column(String, nullable=True)
+    away_name = Column(String, nullable=True)
+
     market = Column(String, nullable=False)
     bookmaker = Column(String, nullable=True)
     price = Column(Float, nullable=False)

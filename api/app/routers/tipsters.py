@@ -70,7 +70,7 @@ class PickOut(BaseModel):
     home_name: str | None = None
     away_name: str | None = None
 
-# ----- ACCA schemas (shared for tipster-created tickets) -----
+# ----- ACCA schemas (tipster-created tickets) -----
 
 class AccaLegIn(BaseModel):
     fixture_id: int
@@ -330,7 +330,6 @@ def settle_pick(
 # ---------- routes: ACCAs (tipster-created) ----------
 
 def _to_acca_out(db: Session, t: AccaTicket) -> dict:
-    # tipster username (if attached)
     tip_user = None
     if t.tipster_id:
         tip = db.query(Tipster).get(t.tipster_id)
@@ -378,6 +377,9 @@ def create_tipster_acca(
 ):
     tip = _require_owner(username, db, user)
 
+    if not payload.legs or len(payload.legs) < 2:
+        raise HTTPException(400, "Acca needs at least 2 legs")
+
     t = AccaTicket(
         source="tipster",
         tipster_id=tip.id,
@@ -390,26 +392,28 @@ def create_tipster_acca(
     )
     db.add(t); db.flush()  # get t.id
 
-    # create legs; also denormalise names for fast UI
+    # Build legs and compute combined price
+    combined = 1.0
     for leg in payload.legs:
-        home_name = None
-        away_name = None
         fx = db.query(Fixture).get(leg.fixture_id)
-        if fx:
-            home_name = fx.home_team
-            away_name = fx.away_team
+        home_name = fx.home_team if fx else None
+        away_name = fx.away_team if fx else None
+
+        price = float(leg.price or 0.0)
+        combined *= price if price > 0 else 1.0
 
         db.add(AccaLeg(
             ticket_id=t.id,
             fixture_id=leg.fixture_id,
-            home_name=home_name,
-            away_name=away_name,
+            home_name=home_name,   # denormalised for fast UI
+            away_name=away_name,   # denormalised for fast UI
             market=leg.market,
             bookmaker=leg.bookmaker,
-            price=leg.price,
+            price=price,
             note=leg.note,
         ))
 
+    t.combined_price = round(combined, 4)
     db.commit(); db.refresh(t)
     return _to_acca_out(db, t)
 
@@ -429,7 +433,7 @@ def list_tipster_accas(username: str, db: Session = Depends(get_db)):
 
 class AccaSettleIn(BaseModel):
     result: str  # "WON" | "LOST" | "VOID"
-    profit: Optional[float] = None  # optional manual override
+    profit: Optional[float] = None  # manual override
 
 @router.post("/accas/{ticket_id}/settle", response_model=AccaOut)
 def settle_tipster_acca(
@@ -461,7 +465,6 @@ def settle_tipster_acca(
     if body.profit is not None:
         t.profit = body.profit
     else:
-        # simple default: stake*(combined-1) for WON, -stake for LOST, 0 for VOID
         if result == "WON" and t.combined_price:
             t.profit = (t.stake_units or 1.0) * (float(t.combined_price) - 1.0)
         elif result == "LOST":
