@@ -11,7 +11,7 @@ from ..db import get_db
 from ..models import Fixture, AccaTicket, AccaLeg
 
 router = APIRouter(prefix="/admin/accas", tags=["accas"])
-pub = APIRouter(prefix="/public/accas", tags=["public-accas"])
+pub = APIRouter(prefix="api/public/accas", tags=["public-accas"])
 
 def _day_bounds(day_str: str):
     d = date_cls.fromisoformat(day_str)
