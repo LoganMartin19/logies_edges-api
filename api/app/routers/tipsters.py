@@ -1,7 +1,7 @@
 # api/app/routers/tipsters.py
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone as _tz
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -69,6 +69,9 @@ class PickOut(BaseModel):
     sport: str | None = None
     home_name: str | None = None
     away_name: str | None = None
+    # deletion helpers
+    kickoff_utc: str | None = None
+    can_delete: bool = False
 
 # ----- ACCA schemas (tipster-created tickets) -----
 
@@ -115,6 +118,9 @@ class AccaOut(BaseModel):
     profit: Optional[float] = None
     settled_at: Optional[datetime] = None
     created_at: datetime
+    # deletion helpers
+    earliest_kickoff_utc: Optional[str] = None
+    can_delete: bool = False
     legs: List[AccaLegOut]
 
 # ---------- helpers ----------
@@ -180,12 +186,60 @@ def _fixture_info(db: Session, fixture_id: int) -> dict:
         "away_name": away or None,
     }
 
+def _pick_kickoff_iso(db: Session, fixture_id: int) -> str | None:
+    fx = db.query(Fixture).get(fixture_id)
+    if not fx or not fx.kickoff_utc:
+        return None
+    dt = fx.kickoff_utc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_tz.utc)
+    return dt.isoformat()
+
+def _pick_can_delete(db: Session, p: TipsterPick) -> bool:
+    # no deletes after settlement or after kickoff
+    if p.result:
+        return False
+    fx = db.query(Fixture).get(p.fixture_id)
+    if not fx or not fx.kickoff_utc:
+        return True  # if no KO recorded, allow (change to False if you prefer)
+    now = datetime.now(_tz.utc)
+    ko = fx.kickoff_utc if fx.kickoff_utc.tzinfo else fx.kickoff_utc.replace(tzinfo=_tz.utc)
+    return now < ko
+
+def _acca_can_delete(db: Session, t: AccaTicket) -> bool:
+    if t.result:
+        return False
+    now = datetime.now(_tz.utc)
+    for lg in t.legs or []:
+        if not lg.fixture_id:
+            continue
+        fx = db.query(Fixture).get(lg.fixture_id)
+        if not fx or not fx.kickoff_utc:
+            continue
+        ko = fx.kickoff_utc if fx.kickoff_utc.tzinfo else fx.kickoff_utc.replace(tzinfo=_tz.utc)
+        if now >= ko:
+            return False
+    return True
+
+def _acca_earliest_ko_iso(db: Session, t: AccaTicket) -> Optional[str]:
+    kos: list[str] = []
+    for lg in t.legs or []:
+        if not lg.fixture_id:
+            continue
+        fx = db.query(Fixture).get(lg.fixture_id)
+        if fx and fx.kickoff_utc:
+            dt = fx.kickoff_utc
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_tz.utc)
+            kos.append(dt.isoformat())
+    return sorted(kos)[0] if kos else None
+
 def _settle_profit(result: str, stake: float, price: float) -> float:
     if result == "WIN":
         return stake * (price - 1.0)
     if result == "LOSE":
         return -stake
-    return 0.0  # PUSH/None
+    return 0.0  # PUSH/VOID/None
 
 # ---------- routes: tipster profile ----------
 
@@ -256,6 +310,8 @@ def create_pick(username: str, payload: PickIn, db: Session = Depends(get_db), u
         "bookmaker": p.bookmaker, "price": p.price, "stake": p.stake,
         "created_at": p.created_at, "result": p.result, "profit": p.profit,
         "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price),
+        "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
+        "can_delete": _pick_can_delete(db, p),
         **extra,
     }
 
@@ -278,12 +334,14 @@ def list_picks(username: str, db: Session = Depends(get_db)):
             "bookmaker": p.bookmaker, "price": p.price, "stake": p.stake,
             "created_at": p.created_at, "result": p.result, "profit": p.profit,
             "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price),
+            "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
+            "can_delete": _pick_can_delete(db, p),
             **extra,
         })
     return out
 
 class SettleIn(BaseModel):
-    result: str  # WIN | LOSE | PUSH
+    result: str  # WIN | LOSE | PUSH | VOID
 
 @router.post("/picks/{pick_id}/settle", response_model=PickOut)
 def settle_pick(
@@ -293,8 +351,8 @@ def settle_pick(
     user=Depends(get_current_user),
 ):
     result = (body.result or "").upper()
-    if result not in ("WIN", "LOSE", "PUSH"):
-        raise HTTPException(400, "result must be WIN, LOSE, or PUSH")
+    if result not in ("WIN", "LOSE", "PUSH", "VOID"):
+        raise HTTPException(400, "result must be WIN, LOSE, PUSH or VOID")
 
     p = db.query(TipsterPick).get(pick_id)
     if not p:
@@ -309,7 +367,12 @@ def settle_pick(
         raise HTTPException(403, "not your pick")
 
     p.result = result
-    p.profit = _settle_profit(p.result, p.stake or 0.0, p.price or 0.0)
+    if result == "WIN":
+        p.profit = _settle_profit("WIN", p.stake or 0.0, p.price or 0.0)
+    elif result == "LOSE":
+        p.profit = _settle_profit("LOSE", p.stake or 0.0, p.price or 0.0)
+    else:  # PUSH or VOID
+        p.profit = 0.0
     db.commit(); db.refresh(p)
 
     extra = _fixture_info(db, p.fixture_id)
@@ -324,8 +387,36 @@ def settle_pick(
         "result": p.result,
         "profit": p.profit,
         "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price),
+        "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
+        "can_delete": _pick_can_delete(db, p),
         **extra,
     }
+
+@router.delete("/picks/{pick_id}")
+def delete_pick(
+    pick_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    p = db.query(TipsterPick).get(pick_id)
+    if not p:
+        raise HTTPException(404, "pick not found")
+
+    tip = db.query(Tipster).get(p.tipster_id)
+    if not tip:
+        raise HTTPException(404, "tipster not found for pick")
+
+    email_claim = (user.get("email") or "").lower()
+    tip_email   = ((tip.social_links or {}).get("email") or "").lower()
+    if email_claim != tip_email:
+        raise HTTPException(403, "not your pick")
+
+    if not _pick_can_delete(db, p):
+        raise HTTPException(403, "cannot delete after kickoff or once settled")
+
+    db.delete(p)
+    db.commit()
+    return {"ok": True, "deleted": pick_id}
 
 # ---------- routes: ACCAs (tipster-created) ----------
 
@@ -365,6 +456,8 @@ def _to_acca_out(db: Session, t: AccaTicket) -> dict:
         "profit": t.profit,
         "settled_at": t.settled_at,
         "created_at": t.created_at,
+        "earliest_kickoff_utc": _acca_earliest_ko_iso(db, t),
+        "can_delete": _acca_can_delete(db, t),
         "legs": legs,
     }
 
@@ -475,3 +568,31 @@ def settle_tipster_acca(
 
     db.commit(); db.refresh(t)
     return _to_acca_out(db, t)
+
+@router.delete("/accas/{ticket_id}")
+def delete_tipster_acca(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    t = db.query(AccaTicket).get(ticket_id)
+    if not t:
+        raise HTTPException(404, "acca not found")
+    if t.source != "tipster":
+        raise HTTPException(400, "only tipster accas can be deleted here")
+
+    tip = db.query(Tipster).get(t.tipster_id) if t.tipster_id else None
+    if not tip:
+        raise HTTPException(404, "tipster not found for acca")
+
+    email_claim = (user.get("email") or "").lower()
+    tip_email   = ((tip.social_links or {}).get("email") or "").lower()
+    if email_claim != tip_email:
+        raise HTTPException(403, "not your acca")
+
+    if not _acca_can_delete(db, t):
+        raise HTTPException(403, "cannot delete after any leg has kicked off or once settled")
+
+    db.delete(t)
+    db.commit()
+    return {"ok": True, "deleted": ticket_id}

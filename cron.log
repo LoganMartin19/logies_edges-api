@@ -40439,3 +40439,13 @@ Enter selection: [FATAL] EOF when reading a line
 [HTTP-ERR] GET http://localhost:8000/shortlist/today: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
 [HTTP-ERR] GET http://localhost:8000/admin/last-http: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
 [HTTP-ERR] GET http://localhost:8000/admin/gridiron-last-http: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+=== automate_value_alerts @ 2025-11-06T12:10:00+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[POST] http://localhost:8000/admin/recompute -> 200
+[recompute v2] edges=425 model_probs=6156
+[GET] http://localhost:8000/admin/odds-gaps -> 404 (optional/missing endpoint)
+[gaps] none or endpoint missing
+[HTTP-ERR] GET http://localhost:8000/shortlist/today: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[GET] http://localhost:8000/admin/last-http -> 200
+[GET] http://localhost:8000/admin/gridiron-last-http -> 200
