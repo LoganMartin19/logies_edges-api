@@ -227,6 +227,15 @@ def _confidence_label(prob: float) -> str:
     elif prob >= 0.55: return "Medium"
     return "Low"
 
+# --- single-side calibration for complements ---------------------------------
+def _calibrate_pair_single(db: Session, market_yes: str, p_yes: float, book: str = CAL_BOOK) -> tuple[float, float]:
+    """Calibrate YES/Over only, derive NO/Under as complement. Prevents asymmetric flip."""
+    p_yes = _clip(p_yes)
+    py = _apply_calibration(db, market_yes, book, p_yes)
+    py = _clip(py)
+    pn = 1.0 - py
+    return py, pn
+
 def ensure_baseline_probs(
     db: Session,
     now: datetime,
@@ -311,7 +320,7 @@ def ensure_baseline_probs(
             return float(median(arr))
 
         # -------------------------
-        # Totals (All sports) — pairwise normalize after calibration
+        # Totals (All sports) — calibrate Over only, Under = 1 - Over
         # -------------------------
         totals_by_line: Dict[str, Dict[str, str]] = defaultdict(dict)
         for mkt in prices.keys():
@@ -335,16 +344,16 @@ def ensure_baseline_probs(
                 continue
 
             cons_over, cons_under = _devig_pair(po, pu)
-            form_over = adjust_prob_for_goals(home_form, away_form)
-            p_over = (0.6 * form_over) + (0.4 * cons_over)
-            p_under = 1.0 - p_over
 
-            # Calibrate both, then renormalize to 1
-            po_cal = _apply_calibration(db, om, CAL_BOOK, p_over)
-            pu_cal = _apply_calibration(db, um, CAL_BOOK, p_under)
-            s = max(1e-9, po_cal + pu_cal)
-            po_final = po_cal / s
-            pu_final = pu_cal / s
+            # line-aware form adjustment (start from consensus)
+            form_adj_over = adjust_prob_for_form(cons_over, home_form, away_form, market=om)
+
+            # blend (keep market anchor strong but allow form to move it)
+            p_over = (0.6 * form_adj_over) + (0.4 * cons_over)
+            p_over = _clip(p_over)
+
+            # single-side calibration
+            po_final, pu_final = _calibrate_pair_single(db, om, p_over, CAL_BOOK)
 
             if 0.0 < po_final < 1.0 and 0.0 < pu_final < 1.0:
                 db.add(ModelProb(fixture_id=f.id, source=source, market=om, prob=po_final, as_of=now))
@@ -384,7 +393,7 @@ def ensure_baseline_probs(
                     ))
 
         # -------------------------
-        # BTTS (soccer) — pairwise normalize after calibration
+        # BTTS (soccer) — calibrate YES only, NO = 1 - YES
         # -------------------------
         if not is_grid and not is_ice:
             pa, pb = median_price("BTTS_Y"), median_price("BTTS_N")
@@ -402,15 +411,11 @@ def ensure_baseline_probs(
                 goals_factor = max(0.5, min(avg_goals_potential / 2.5, 1.5))
 
                 form_yes = min(0.90, max(0.10, cons_yes * goals_factor))
-                p_yes = (0.6 * form_yes) + (0.4 * cons_yes)
-                p_no = 1.0 - p_yes
+                p_yes_blend = (0.6 * form_yes) + (0.4 * cons_yes)
+                p_yes_blend = _clip(p_yes_blend)
 
-                # Calibrate both, then renormalize to 1
-                py_cal = _apply_calibration(db, "BTTS_Y", CAL_BOOK, p_yes)
-                pn_cal = _apply_calibration(db, "BTTS_N", CAL_BOOK, p_no)
-                s = max(1e-9, py_cal + pn_cal)
-                py_final = py_cal / s
-                pn_final = pn_cal / s
+                # single-side calibration (YES only)
+                py_final, pn_final = _calibrate_pair_single(db, "BTTS_Y", p_yes_blend, CAL_BOOK)
 
                 if 0.0 < py_final < 1.0 and 0.0 < pn_final < 1.0:
                     db.add(ModelProb(fixture_id=f.id, source=source, market="BTTS_Y", prob=py_final, as_of=now))
@@ -492,7 +497,7 @@ def ensure_baseline_probs(
     db.commit()
 
 # ----------------------------
-# Recent form (unchanged utility)
+# Recent form (unchanged interface; fixed loop)
 # ----------------------------
 def get_recent_form(db: Session, team: str, comp: str, current_ko: datetime, limit: int = 5) -> dict:
     past_matches = db.query(Fixture).filter(
@@ -502,15 +507,17 @@ def get_recent_form(db: Session, team: str, comp: str, current_ko: datetime, lim
         ((Fixture.home_team == team) | (Fixture.away_team == team))
     ).order_by(Fixture.kickoff_utc.desc()).limit(limit).all()
 
-    played = won = drawn = lost = goals_scored = goals_conceded = 0
+    played = wins = drawn = lost = goals_scored = goals_conceded = 0
     for match in past_matches:
         played += 1
         is_home = match.home_team == team
-        scored = match.full_time_home if is_home else match.full_time_away
-        conceded = match.full_time_away if is_home else match.full_time_home
+        scored = (match.full_time_home if is_home else match.full_time_away) or 0
+        conceded = (match.full_time_away if is_home else match.full_time_home) or 0
+
         goals_scored += scored
         goals_conceded += conceded
-        if scored > conceded: won += 1
+
+        if scored > conceded: wins += 1
         elif scored == conceded: drawn += 1
         else: lost += 1
 
@@ -701,7 +708,7 @@ def _apply_calibration(
     return _clip2(p)
 
 # ----------------------------
-# Legacy helpers (unchanged)
+# Legacy helpers (unchanged signatures)
 # ----------------------------
 def get_team_form_features(db: Session, team: str, kickoff: datetime, n: int = 5) -> dict:
     rows = (
@@ -719,16 +726,16 @@ def get_team_form_features(db: Session, team: str, kickoff: datetime, n: int = 5
     played = wins = draws = losses = goals_for = goals_against = 0
     for f in rows:
         played += 1
-        is_home = f.home_team == team
-        gf = f.full_time_home if is_home else f.full_time_away
-        ga = f.full_time_away if is_home else f.full_time_home
+        is_home = (f.home_team == team)
+        gf = (f.full_time_home if is_home else f.full_time_away) or 0
+        ga = (f.full_time_away if is_home else f.full_time_home) or 0
 
-    goals_for += gf
-    goals_against += ga
+        goals_for     += gf
+        goals_against += ga
 
-    if gf > ga: wins += 1
-    elif gf == ga: draws += 1
-    else: losses += 1
+        if gf > ga: wins += 1
+        elif gf == ga: draws += 1
+        else: losses += 1
 
     return {
         "played": played, "wins": wins, "draws": draws, "losses": losses,
