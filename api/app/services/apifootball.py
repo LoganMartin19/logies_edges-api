@@ -36,6 +36,7 @@ LEAGUE_MAP = {
     "SCO1": 183, "SCO2": 184,
     "SCO_SC": 250, "Scottish Cup": 250,
     "SCO_LC": 185, "Scottish League Cup": 185,
+    "SCO_CHAL": 182, "Scottish Challenge Cup": 182,
 
     # Spain 🇪🇸
     "LA_LIGA": 140, "La Liga": 140,

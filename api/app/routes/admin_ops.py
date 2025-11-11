@@ -89,7 +89,7 @@ def _partition_leagues(leagues_csv: str) -> Dict[str, List[str]]:
 def run_daily(
     db: Session = Depends(get_db),
     leagues: str = Query(
-        "EPL,CHAMP,LG1,LG2,SCO_PREM,SCO_CHAMP,SCO1,SCO2,"
+        "EPL,CHAMP,LG1,LG2,SCO_PREM,SCO_CHAMP,SCO1,SCO2,SCO_CHAL,"
         "LA_LIGA,BUNDES,BUNDES2,SERIE_A,SERIE_B,LIGUE1,"
         "UCL,UEL,UECL,WCQ_EUR,MLS,NFL,NHL"  # ⬅️ added MLS here (was in other endpoints) + NHL
     ),
@@ -194,7 +194,7 @@ def admin_run_dates(
         # England + Cups
         "EPL,CHAMP,LG1,LG2,ENG_FA,EFL_CUP,EFL_TROPHY,"
         # Scotland + Cups
-        "SCO_PREM,SCO_CHAMP,SCO1,SCO2,SCO_SC,SCO_LC,"
+        "SCO_PREM,SCO_CHAMP,SCO1,SCO2,SCO_SC,SCO_LC,SCO_CHAL,"
         # Spain + Cup
         "LA_LIGA,LA_LIGA2,ESP_CDR,"
         # Germany + Cup
