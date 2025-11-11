@@ -598,7 +598,7 @@ def delete_tipster_acca(
     return {"ok": True, "deleted": ticket_id}
 
 
-    def _with_live_metrics(db: Session, c: Tipster) -> dict:
+def _with_live_metrics(db: Session, c: Tipster) -> dict:
     out = _to_tipster_out(c)
     live = compute_tipster_rolling_stats(db, c.id, days=30)
     # live = {"picks","profit","roi","winrate"}
