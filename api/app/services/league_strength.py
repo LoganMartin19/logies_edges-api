@@ -32,6 +32,8 @@ _ALIAS = {
     "league two": "LG2",
     "premier league": "EPL",
     "scottish championship": "SCO_CHAMP",
+    "scottish premiership": "SCO_PREM",
+    "challenge cup": "SCO_CHAL",
     "bundesliga": "BUNDES",
     "2. bundesliga": "BUNDES2",
     "serie b": "SERIE_B",
