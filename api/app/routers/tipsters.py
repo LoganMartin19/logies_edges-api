@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone as _tz
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -201,7 +201,7 @@ def _pick_can_delete(db: Session, p: TipsterPick) -> bool:
         return False
     fx = db.query(Fixture).get(p.fixture_id)
     if not fx or not fx.kickoff_utc:
-        return True  # if no KO recorded, allow (change to False if you prefer)
+        return True  # if no KO recorded, allow
     now = datetime.now(_tz.utc)
     ko = fx.kickoff_utc if fx.kickoff_utc.tzinfo else fx.kickoff_utc.replace(tzinfo=_tz.utc)
     return now < ko
@@ -266,34 +266,6 @@ def create_tipster(payload: TipsterIn, db: Session = Depends(get_db), user=Depen
     c.social_links = (payload.social_links or {}) | {"email": email}
     db.add(c); db.commit(); db.refresh(c)
     out = _to_tipster_out(c); out["is_owner"] = True
-    return out
-
-@router.get("", response_model=list[TipsterOut])
-def list_tipsters(db: Session = Depends(get_db)):
-    rows = db.query(Tipster).order_by(Tipster.profit_30d.desc()).all()
-    return [{**_to_tipster_out(c), "is_owner": False} for c in rows]
-
-@router.get("/me", response_model=TipsterOut | None)
-def get_my_tipster(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    email = (user.get("email") or "").lower()
-    if not email:
-        return None
-    rows = db.query(Tipster).all()
-    for c in rows:
-        if ((c.social_links or {}).get("email") or "").lower() == email:
-            return _to_tipster_out(c)
-    return None
-
-@router.get("/{username}", response_model=TipsterOut)
-def get_tipster(username: str, request: Request, db: Session = Depends(get_db)):
-    c = db.query(Tipster).filter(Tipster.username == username).first()
-    if not c:
-        raise HTTPException(404, "tipster not found")
-    viewer = get_user_from_header(request.headers.get("Authorization"))
-    viewer_email = (viewer or {}).get("email", "").lower()
-    tipster_email = ((_email_of_tipster(c) or "")).lower()
-    out = _to_tipster_out(c)
-    out["is_owner"] = bool(viewer_email and viewer_email == tipster_email)
     return out
 
 # ---------- routes: picks ----------
@@ -597,13 +569,14 @@ def delete_tipster_acca(
     db.commit()
     return {"ok": True, "deleted": ticket_id}
 
+# ---------- LIVE METRICS VIEWS (single source of truth) ----------
 
 def _with_live_metrics(db: Session, c: Tipster) -> dict:
     out = _to_tipster_out(c)
-    live = compute_tipster_rolling_stats(db, c.id, days=30)
-    # live = {"picks","profit","roi","winrate"}
-    out["roi_30d"]     = float(live.get("roi") or 0.0)
-    out["winrate_30d"] = float(live.get("winrate") or 0.0)
+    live = compute_tipster_rolling_stats(db, c.id, days=30)  # returns ratios
+    # Convert ratios -> percents so UI can append "%"
+    out["roi_30d"]     = float(live.get("roi") or 0.0) * 100.0
+    out["winrate_30d"] = float(live.get("winrate") or 0.0) * 100.0
     out["profit_30d"]  = float(live.get("profit") or 0.0)
     out["picks_30d"]   = int(live.get("picks") or 0)
     return out
@@ -611,9 +584,9 @@ def _with_live_metrics(db: Session, c: Tipster) -> dict:
 @router.get("", response_model=list[TipsterOut])
 def list_tipsters(db: Session = Depends(get_db)):
     rows = db.query(Tipster).all()
-    # sort by live profit desc
     enriched = [_with_live_metrics(db, c) for c in rows]
-    enriched.sort(key=lambda x: x["profit_30d"], reverse=True)
+    # Rank by ROI% desc; change to profit_30d if preferred
+    enriched.sort(key=lambda x: x.get("roi_30d", 0.0), reverse=True)
     return [{**r, "is_owner": False} for r in enriched]
 
 @router.get("/{username}", response_model=TipsterOut)
