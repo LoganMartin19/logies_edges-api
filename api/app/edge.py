@@ -446,12 +446,13 @@ def ensure_baseline_probs(
                     h_form_score = _form_score(home_form)
                     a_form_score = _form_score(away_form)
 
+                    # ✅ FIX: correct arg order + pass db
                     try:
-                        h_str = float(get_team_strength(f.comp or "", f.home_team) or 0.5)
+                        h_str = float(get_team_strength(f.home_team, f.comp or "", db) or 0.5)
                     except Exception:
                         h_str = 0.5
                     try:
-                        a_str = float(get_team_strength(f.comp or "", f.away_team) or 0.5)
+                        a_str = float(get_team_strength(f.away_team, f.comp or "", db) or 0.5)
                     except Exception:
                         a_str = 0.5
 

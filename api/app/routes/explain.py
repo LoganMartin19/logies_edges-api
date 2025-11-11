@@ -19,6 +19,7 @@ from ..edge import build_why_from_form as _build_why_from_form
 
 router = APIRouter(prefix="/explain", tags=["explain"])
 
+
 # ---- small normalizer so FE can pass HOMEWIN / BTTSYES etc. ----
 def _normalize_market(m: str) -> str:
     if not m:
@@ -39,6 +40,15 @@ def _normalize_market(m: str) -> str:
     if x.startswith("U") and x[1:].replace(".", "", 1).isdigit():
         return x
     return synonyms.get(x, x)
+
+
+def _btts_hint_from_total_xg(total_xg: float) -> str:
+    """Conservative bands to avoid whipsawing on middling totals."""
+    if total_xg >= 2.40:
+        return "Form blend leans higher scoring → BTTS Yes more plausible."
+    if total_xg <= 1.90:
+        return "Form blend leans lower scoring → BTTS No more plausible."
+    return "Form blend is borderline for BTTS (mixed signals)."
 
 
 @router.get("/probability")
@@ -92,7 +102,7 @@ def explain_probability(
         "home_strength": round(home_strength, 3),
         "away_strength": round(away_strength, 3),
         "strength_delta": round(strength_delta, 3),
-        "explanation": why_text,                  # ✅ new: paragraph based on hybrid form
+        "explanation": why_text,                  # ✅ paragraph based on hybrid form
         "form": {
             "home": home_sum,                     # includes GFpg/GApg, W-D-L, etc.
             "away": away_sum,
@@ -134,37 +144,46 @@ def explain_probability(
             explanation["recommendation"] = f"Bet {side} only if odds > {fair_odds:.2f}"
 
     # -------------------
-       # -------------------
     # BTTS
     # -------------------
-    elif market in ["BTTS_Y", "BTTS_N"]:
-        # Use the exact same data path as the form widget (API-first with DB fallback),
-        # and scope to the fixture's competition to keep things consistent.
-        hybrid = get_hybrid_form_for_fixture(db, fixture, n=5, comp_scope=True)
+    elif norm_market in {"BTTS_Y", "BTTS_N"}:
+        # Reuse hybrid (already fetched above as form_payload), scoped to competition.
+        recent_home = form_payload.get("home", {}).get("recent", []) or []
+        recent_away = form_payload.get("away", {}).get("recent", []) or []
 
-        recent_home = hybrid.get("home", {}).get("recent", []) or []
-        recent_away = hybrid.get("away", {}).get("recent", []) or []
-
-        home_played = len(recent_home)
-        away_played = len(recent_away)
+        home_played = len(recent_home) or 1  # avoid div-by-zero
+        away_played = len(recent_away) or 1
 
         home_scored   = sum(1 for m in recent_home if (m.get("goals_for") or 0) > 0)
         away_scored   = sum(1 for m in recent_away if (m.get("goals_for") or 0) > 0)
         home_conceded = sum(1 for m in recent_home if (m.get("goals_against") or 0) > 0)
         away_conceded = sum(1 for m in recent_away if (m.get("goals_against") or 0) > 0)
 
-        explanation["notes"].append(f"{fixture.home_team} scored in {home_scored}/{home_played} games.")
-        explanation["notes"].append(f"{fixture.away_team} scored in {away_scored}/{away_played} games.")
-        explanation["notes"].append(f"{fixture.home_team} conceded in {home_conceded}/{home_played} games.")
-        explanation["notes"].append(f"{fixture.away_team} conceded in {away_conceded}/{away_played} games.")
+        # Percentages
+        hs_rate = home_scored   / home_played
+        as_rate = away_scored   / away_played
+        hc_rate = home_conceded / home_played
+        ac_rate = away_conceded / away_played
 
-        # Simple qualitative read:
-        if home_scored and away_scored and home_conceded and away_conceded:
-            explanation["notes"].append("Both teams frequently score and concede → BTTS Yes more plausible.")
+        explanation["notes"].append(f"{fixture.home_team} scored in {home_scored}/{home_played} games ({hs_rate*100:.0f}%).")
+        explanation["notes"].append(f"{fixture.away_team} scored in {away_scored}/{away_played} games ({as_rate*100:.0f}%).")
+        explanation["notes"].append(f"{fixture.home_team} conceded in {home_conceded}/{home_played} games ({hc_rate*100:.0f}%).")
+        explanation["notes"].append(f"{fixture.away_team} conceded in {away_conceded}/{away_played} games ({ac_rate*100:.0f}%).")
+
+        # Qualitative read using rates
+        high = lambda x: x >= 0.6  # tweak threshold if you like
+        if high(hs_rate) and high(as_rate) and high(hc_rate) and high(ac_rate):
+            explanation["notes"].append("Both teams often score AND concede → qualitative lean to BTTS Yes.")
+        elif (hs_rate < 0.4) or (as_rate < 0.4):
+            explanation["notes"].append("At least one side scores too rarely → qualitative lean to BTTS No.")
         else:
-            explanation["notes"].append("At least one team is inconsistent (scoring or conceding) → BTTS No more plausible.")
+            explanation["notes"].append("Mixed recent scoring patterns.")
 
-        # If the model prob was present at top, we already added fair_price & confidence.
+        # Add an xG-based hint (uses exp_goals computed above)
+        total_xg = float(explanation["form"]["expected_goals"]["total"] or 0.0)
+        explanation["notes"].append(_btts_hint_from_total_xg(total_xg))
+
+        # Probability/fair_price already added above if present.
 
     # -------------------
     # 1X2 (Win/Draw/Loss)
