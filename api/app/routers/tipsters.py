@@ -596,3 +596,35 @@ def delete_tipster_acca(
     db.delete(t)
     db.commit()
     return {"ok": True, "deleted": ticket_id}
+
+
+    def _with_live_metrics(db: Session, c: Tipster) -> dict:
+    out = _to_tipster_out(c)
+    live = compute_tipster_rolling_stats(db, c.id, days=30)
+    # live = {"picks","profit","roi","winrate"}
+    out["roi_30d"]     = float(live.get("roi") or 0.0)
+    out["winrate_30d"] = float(live.get("winrate") or 0.0)
+    out["profit_30d"]  = float(live.get("profit") or 0.0)
+    out["picks_30d"]   = int(live.get("picks") or 0)
+    return out
+
+@router.get("", response_model=list[TipsterOut])
+def list_tipsters(db: Session = Depends(get_db)):
+    rows = db.query(Tipster).all()
+    # sort by live profit desc
+    enriched = [_with_live_metrics(db, c) for c in rows]
+    enriched.sort(key=lambda x: x["profit_30d"], reverse=True)
+    return [{**r, "is_owner": False} for r in enriched]
+
+@router.get("/{username}", response_model=TipsterOut)
+def get_tipster(username: str, request: Request, db: Session = Depends(get_db)):
+    c = db.query(Tipster).filter(Tipster.username == username).first()
+    if not c:
+        raise HTTPException(404, "tipster not found")
+    viewer = get_user_from_header(request.headers.get("Authorization"))
+    viewer_email = (viewer or {}).get("email", "").lower()
+    tipster_email = ((_email_of_tipster(c) or "")).lower()
+
+    out = _with_live_metrics(db, c)
+    out["is_owner"] = bool(viewer_email and viewer_email == tipster_email)
+    return out
