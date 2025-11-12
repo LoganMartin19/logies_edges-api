@@ -41535,3 +41535,69 @@ Select edges to send to Telegram (max 5). Enter indexes separated by comma (e.g.
 156) Chesterfield vs Liverpool U21 | DRAW @ unibet | 4.4 (4.2%)
 
 Enter selection: [FATAL] EOF when reading a line
+=== automate_value_alerts @ 2025-11-12T18:10:02+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[POST] http://localhost:8000/admin/recompute -> 200
+[recompute v2] edges=32 model_probs=9010
+[GET] http://localhost:8000/admin/odds-gaps -> 404 (optional/missing endpoint)
+[gaps] none or endpoint missing
+[GET] http://localhost:8000/shortlist/today -> 200
+[shortlist] count=32
+[CANDIDATE] SL Benfica vs Twente W | O2.5 @ williamhill 5.00 (p=0.581, edge=100.0%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | O2.5 @ williamhill 5.50 (p=0.570, edge=100.0%)
+[CANDIDATE] Manchester United W vs Paris Saint Germain W | O2.5 @ williamhill 5.80 (p=0.548, edge=100.0%)
+[CANDIDATE] SL Benfica vs Twente W | BTTS_N @ betfair 2.60 (p=0.539, edge=40.2%)
+[CANDIDATE] SL Benfica vs Twente W | BTTS_N @ williamhill 2.45 (p=0.539, edge=32.1%)
+[CANDIDATE] SL Benfica vs Twente W | BTTS_N @ bet365 2.38 (p=0.539, edge=28.3%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | BTTS_N @ betfair 2.20 (p=0.573, edge=26.1%)
+[CANDIDATE] Atletico-MG vs Fortaleza EC | BTTS_N @ betfair 1.90 (p=0.661, edge=25.6%)
+[CANDIDATE] Manchester United W vs Paris Saint Germain W | BTTS_N @ betfair 1.95 (p=0.635, edge=23.9%)
+[CANDIDATE] Manchester United W vs Paris Saint Germain W | BTTS_N @ williamhill 1.95 (p=0.635, edge=23.9%)
+[CANDIDATE] SL Benfica vs Twente W | BTTS_N @ unibet 2.28 (p=0.539, edge=22.9%)
+[CANDIDATE] Manchester United W vs Paris Saint Germain W | BTTS_N @ unibet 1.88 (p=0.635, edge=19.4%)
+[CANDIDATE] Atletico-MG vs Fortaleza EC | BTTS_N @ williamhill 1.80 (p=0.661, edge=19.0%)
+[CANDIDATE] Atletico-MG vs Fortaleza EC | BTTS_N @ bet365 1.80 (p=0.661, edge=19.0%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | BTTS_N @ williamhill 2.05 (p=0.573, edge=17.5%)
+[CANDIDATE] Atletico-MG vs Fortaleza EC | BTTS_N @ unibet 1.76 (p=0.661, edge=16.3%)
+[CANDIDATE] Manchester United W vs Paris Saint Germain W | BTTS_N @ bet365 1.83 (p=0.635, edge=16.2%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | BTTS_N @ bet365 2.00 (p=0.573, edge=14.6%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | BTTS_N @ unibet 1.98 (p=0.573, edge=13.5%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | DRAW @ bet365 4.33 (p=0.255, edge=10.2%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | X2 @ bet365 2.25 (p=0.479, edge=7.8%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | AWAY_WIN @ williamhill 4.75 (p=0.224, edge=6.6%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | AWAY_WIN @ bet365 4.75 (p=0.224, edge=6.6%)
+[CANDIDATE] Manchester United W vs Paris Saint Germain W | DRAW @ bet365 4.50 (p=0.235, edge=5.7%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | AWAY_WIN @ unibet 4.70 (p=0.224, edge=5.5%)
+[CANDIDATE] Atletico Madrid W vs Juventus W | X2 @ williamhill 2.20 (p=0.479, edge=5.4%)
+
+Select edges to send to Telegram (max 5). Enter indexes separated by comma (e.g. 0,2,3):
+
+0) SL Benfica vs Twente W | O2.5 @ williamhill | 5.0 (100.0%)
+1) Atletico Madrid W vs Juventus W | O2.5 @ williamhill | 5.5 (100.0%)
+2) Manchester United W vs Paris Saint Germain W | O2.5 @ williamhill | 5.8 (100.0%)
+3) SL Benfica vs Twente W | BTTS_N @ betfair | 2.6 (40.2%)
+4) SL Benfica vs Twente W | BTTS_N @ williamhill | 2.45 (32.1%)
+5) SL Benfica vs Twente W | BTTS_N @ bet365 | 2.38 (28.3%)
+6) Atletico Madrid W vs Juventus W | BTTS_N @ betfair | 2.2 (26.1%)
+7) Atletico-MG vs Fortaleza EC | BTTS_N @ betfair | 1.9 (25.6%)
+8) Manchester United W vs Paris Saint Germain W | BTTS_N @ betfair | 1.95 (23.9%)
+9) Manchester United W vs Paris Saint Germain W | BTTS_N @ williamhill | 1.95 (23.9%)
+10) SL Benfica vs Twente W | BTTS_N @ unibet | 2.28 (22.9%)
+11) Manchester United W vs Paris Saint Germain W | BTTS_N @ unibet | 1.88 (19.4%)
+12) Atletico-MG vs Fortaleza EC | BTTS_N @ williamhill | 1.8 (19.0%)
+13) Atletico-MG vs Fortaleza EC | BTTS_N @ bet365 | 1.8 (19.0%)
+14) Atletico Madrid W vs Juventus W | BTTS_N @ williamhill | 2.05 (17.5%)
+15) Atletico-MG vs Fortaleza EC | BTTS_N @ unibet | 1.76 (16.3%)
+16) Manchester United W vs Paris Saint Germain W | BTTS_N @ bet365 | 1.83 (16.2%)
+17) Atletico Madrid W vs Juventus W | BTTS_N @ bet365 | 2.0 (14.6%)
+18) Atletico Madrid W vs Juventus W | BTTS_N @ unibet | 1.98 (13.5%)
+19) Atletico Madrid W vs Juventus W | DRAW @ bet365 | 4.33 (10.2%)
+20) Atletico Madrid W vs Juventus W | X2 @ bet365 | 2.25 (7.8%)
+21) Atletico Madrid W vs Juventus W | AWAY_WIN @ williamhill | 4.75 (6.6%)
+22) Atletico Madrid W vs Juventus W | AWAY_WIN @ bet365 | 4.75 (6.6%)
+23) Manchester United W vs Paris Saint Germain W | DRAW @ bet365 | 4.5 (5.7%)
+24) Atletico Madrid W vs Juventus W | AWAY_WIN @ unibet | 4.7 (5.5%)
+25) Atletico Madrid W vs Juventus W | X2 @ williamhill | 2.2 (5.4%)
+
+Enter selection: [FATAL] EOF when reading a line
