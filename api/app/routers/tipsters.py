@@ -45,7 +45,7 @@ class TipsterOut(BaseModel):
   winrate_30d: float
   profit_30d: float
   picks_30d: int
-  social_links: dict | None = None   # 👈 NEW: public socials (no email)
+  social_links: dict | None = None   # public socials (no email)
   follower_count: int = 0
   is_following: bool = False
   is_owner: bool = False
@@ -153,6 +153,28 @@ def _public_social_links(c: Tipster) -> dict | None:
     return None
 
 
+def _follower_count(db: Session, tipster_id: int) -> int:
+  return (
+    db.query(TipsterFollow)
+    .filter(TipsterFollow.tipster_id == tipster_id)
+    .count()
+  )
+
+
+def _is_user_following(db: Session, tipster_id: int, email: str) -> bool:
+  if not email:
+    return False
+  return (
+    db.query(TipsterFollow)
+    .filter(
+      TipsterFollow.tipster_id == tipster_id,
+      TipsterFollow.user_email == email.lower(),
+    )
+    .first()
+    is not None
+  )
+
+
 def _to_tipster_out(c: Tipster) -> dict:
   return {
     "id": c.id,
@@ -165,7 +187,7 @@ def _to_tipster_out(c: Tipster) -> dict:
     "winrate_30d": c.winrate_30d or 0.0,
     "profit_30d": c.profit_30d or 0.0,
     "picks_30d": c.picks_30d or 0,
-    "social_links": _public_social_links(c),   # 👈 NEW
+    "social_links": _public_social_links(c),
   }
 
 
@@ -318,6 +340,9 @@ def create_tipster(
       db.refresh(existing)
       out = _with_live_metrics(db, existing)
       out["is_owner"] = True
+      # follower info (owner never "follows" themselves)
+      out["follower_count"] = _follower_count(db, existing.id)
+      out["is_following"] = False
       return out
     raise HTTPException(400, "username already exists")
 
@@ -328,6 +353,8 @@ def create_tipster(
   db.refresh(c)
   out = _with_live_metrics(db, c)
   out["is_owner"] = True
+  out["follower_count"] = 0
+  out["is_following"] = False
   return out
 
 
@@ -346,6 +373,8 @@ def get_my_tipster(
     if tip_email == email:
       out = _with_live_metrics(db, c)
       out["is_owner"] = True
+      out["follower_count"] = _follower_count(db, c.id)
+      out["is_following"] = False
       return out
   return None
 
@@ -353,9 +382,16 @@ def get_my_tipster(
 @router.get("", response_model=list[TipsterOut])
 def list_tipsters(db: Session = Depends(get_db)):
   rows = db.query(Tipster).all()
-  enriched = [_with_live_metrics(db, c) for c in rows]
+  enriched = []
+  for c in rows:
+    base = _with_live_metrics(db, c)
+    base["follower_count"] = _follower_count(db, c.id)
+    base["is_following"] = False  # leaderboard doesn't know viewer; keep false
+    base["is_owner"] = False
+    enriched.append(base)
+
   enriched.sort(key=lambda x: x["profit_30d"], reverse=True)
-  return [{**r, "is_owner": False} for r in enriched]
+  return enriched
 
 
 @router.get("/{username}", response_model=TipsterOut)
@@ -370,7 +406,76 @@ def get_tipster(username: str, request: Request, db: Session = Depends(get_db)):
 
   out = _with_live_metrics(db, c)
   out["is_owner"] = bool(viewer_email and viewer_email == tipster_email)
+  out["follower_count"] = _follower_count(db, c.id)
+  out["is_following"] = _is_user_following(db, c.id, viewer_email)
   return out
+
+
+# ---------- routes: follow / unfollow ----------
+
+@router.post("/{username}/follow")
+def follow_tipster(
+  username: str,
+  db: Session = Depends(get_db),
+  user=Depends(get_current_user),
+):
+  email = (user.get("email") or "").lower()
+  if not email:
+    raise HTTPException(400, "missing email")
+
+  c = db.query(Tipster).filter(Tipster.username == username).first()
+  if not c:
+    raise HTTPException(404, "tipster not found")
+
+  # prevent following yourself
+  tip_email = (_email_of_tipster(c) or "").lower()
+  if email == tip_email:
+    raise HTTPException(400, "cannot follow yourself")
+
+  exists = (
+    db.query(TipsterFollow)
+    .filter(
+      TipsterFollow.tipster_id == c.id,
+      TipsterFollow.user_email == email,
+    )
+    .first()
+  )
+  if exists:
+    return {"ok": True, "already": True}
+
+  db.add(TipsterFollow(tipster_id=c.id, user_email=email))
+  db.commit()
+  return {"ok": True, "followed": username}
+
+
+@router.post("/{username}/unfollow")
+def unfollow_tipster(
+  username: str,
+  db: Session = Depends(get_db),
+  user=Depends(get_current_user),
+):
+  email = (user.get("email") or "").lower()
+  if not email:
+    raise HTTPException(400, "missing email")
+
+  c = db.query(Tipster).filter(Tipster.username == username).first()
+  if not c:
+    raise HTTPException(404, "tipster not found")
+
+  row = (
+    db.query(TipsterFollow)
+    .filter(
+      TipsterFollow.tipster_id == c.id,
+      TipsterFollow.user_email == email,
+    )
+    .first()
+  )
+  if not row:
+    return {"ok": True, "was_following": False}
+
+  db.delete(row)
+  db.commit()
+  return {"ok": True, "unfollowed": username}
 
 
 # ---------- routes: picks ----------
