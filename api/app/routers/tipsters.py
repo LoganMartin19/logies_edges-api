@@ -153,28 +153,6 @@ def _public_social_links(c: Tipster) -> dict | None:
     return None
 
 
-def _follower_count(db: Session, tipster_id: int) -> int:
-  return (
-    db.query(TipsterFollow)
-    .filter(TipsterFollow.tipster_id == tipster_id)
-    .count()
-  )
-
-
-def _is_user_following(db: Session, tipster_id: int, email: str) -> bool:
-  if not email:
-    return False
-  return (
-    db.query(TipsterFollow)
-    .filter(
-      TipsterFollow.tipster_id == tipster_id,
-      TipsterFollow.user_email == email.lower(),
-    )
-    .first()
-    is not None
-  )
-
-
 def _to_tipster_out(c: Tipster) -> dict:
   return {
     "id": c.id,
@@ -305,6 +283,30 @@ def _settle_profit(result: str, stake: float, price: float) -> float:
   return 0.0  # PUSH/VOID/None
 
 
+# ---- follower helpers ----
+
+def _follower_count(db: Session, tipster_id: int) -> int:
+  return (
+    db.query(TipsterFollow)
+    .filter(TipsterFollow.tipster_id == tipster_id)
+    .count()
+  )
+
+
+def _is_user_following(db: Session, tipster_id: int, email: str) -> bool:
+  if not email:
+    return False
+  return (
+    db.query(TipsterFollow)
+    .filter(
+      TipsterFollow.tipster_id == tipster_id,
+      TipsterFollow.follower_email == email.lower(),
+    )
+    .first()
+    is not None
+  )
+
+
 def _with_live_metrics(db: Session, c: Tipster) -> dict:
   out = _to_tipster_out(c)
   live = compute_tipster_rolling_stats(db, c.id, days=30)
@@ -313,6 +315,8 @@ def _with_live_metrics(db: Session, c: Tipster) -> dict:
   out["winrate_30d"] = float(live.get("winrate") or 0.0)
   out["profit_30d"] = float(live.get("profit") or 0.0)
   out["picks_30d"] = int(live.get("picks") or 0)
+  # followers (for leaderboard + detail)
+  out["follower_count"] = _follower_count(db, c.id)
   return out
 
 
@@ -340,8 +344,7 @@ def create_tipster(
       db.refresh(existing)
       out = _with_live_metrics(db, existing)
       out["is_owner"] = True
-      # follower info (owner never "follows" themselves)
-      out["follower_count"] = _follower_count(db, existing.id)
+      # owner isn't "following" themselves
       out["is_following"] = False
       return out
     raise HTTPException(400, "username already exists")
@@ -353,7 +356,6 @@ def create_tipster(
   db.refresh(c)
   out = _with_live_metrics(db, c)
   out["is_owner"] = True
-  out["follower_count"] = 0
   out["is_following"] = False
   return out
 
@@ -373,8 +375,7 @@ def get_my_tipster(
     if tip_email == email:
       out = _with_live_metrics(db, c)
       out["is_owner"] = True
-      out["follower_count"] = _follower_count(db, c.id)
-      out["is_following"] = False
+      out["is_following"] = False  # you don't "follow" yourself
       return out
   return None
 
@@ -382,16 +383,10 @@ def get_my_tipster(
 @router.get("", response_model=list[TipsterOut])
 def list_tipsters(db: Session = Depends(get_db)):
   rows = db.query(Tipster).all()
-  enriched = []
-  for c in rows:
-    base = _with_live_metrics(db, c)
-    base["follower_count"] = _follower_count(db, c.id)
-    base["is_following"] = False  # leaderboard doesn't know viewer; keep false
-    base["is_owner"] = False
-    enriched.append(base)
-
+  enriched = [_with_live_metrics(db, c) for c in rows]
   enriched.sort(key=lambda x: x["profit_30d"], reverse=True)
-  return enriched
+  # leaderboard view – we don't care about is_following/is_owner here
+  return [{**r, "is_owner": False, "is_following": False} for r in enriched]
 
 
 @router.get("/{username}", response_model=TipsterOut)
@@ -406,7 +401,6 @@ def get_tipster(username: str, request: Request, db: Session = Depends(get_db)):
 
   out = _with_live_metrics(db, c)
   out["is_owner"] = bool(viewer_email and viewer_email == tipster_email)
-  out["follower_count"] = _follower_count(db, c.id)
   out["is_following"] = _is_user_following(db, c.id, viewer_email)
   return out
 
@@ -421,34 +415,49 @@ def follow_tipster(
 ):
   email = (user.get("email") or "").lower()
   if not email:
-    raise HTTPException(400, "missing email")
+    raise HTTPException(400, "Email missing in Firebase token")
 
   c = db.query(Tipster).filter(Tipster.username == username).first()
   if not c:
     raise HTTPException(404, "tipster not found")
 
-  # prevent following yourself
-  tip_email = (_email_of_tipster(c) or "").lower()
-  if email == tip_email:
-    raise HTTPException(400, "cannot follow yourself")
+  tip_email = ((_email_of_tipster(c) or "")).lower()
+  if tip_email == email:
+    raise HTTPException(400, "You cannot follow yourself")
 
-  exists = (
+  existing = (
     db.query(TipsterFollow)
     .filter(
       TipsterFollow.tipster_id == c.id,
-      TipsterFollow.user_email == email,
+      TipsterFollow.follower_email == email,
     )
     .first()
   )
-  if exists:
-    return {"ok": True, "already": True}
+  if existing:
+    # already following; return current count
+    return {
+      "ok": True,
+      "status": "already_following",
+      "follower_count": _follower_count(db, c.id),
+    }
 
-  db.add(TipsterFollow(tipster_id=c.id, user_email=email))
+  db.add(
+    TipsterFollow(
+      tipster_id=c.id,
+      follower_email=email,
+      created_at=datetime.utcnow(),
+    )
+  )
   db.commit()
-  return {"ok": True, "followed": username}
+
+  return {
+    "ok": True,
+    "status": "following",
+    "follower_count": _follower_count(db, c.id),
+  }
 
 
-@router.post("/{username}/unfollow")
+@router.delete("/{username}/follow")
 def unfollow_tipster(
   username: str,
   db: Session = Depends(get_db),
@@ -456,7 +465,7 @@ def unfollow_tipster(
 ):
   email = (user.get("email") or "").lower()
   if not email:
-    raise HTTPException(400, "missing email")
+    raise HTTPException(400, "Email missing in Firebase token")
 
   c = db.query(Tipster).filter(Tipster.username == username).first()
   if not c:
@@ -466,16 +475,19 @@ def unfollow_tipster(
     db.query(TipsterFollow)
     .filter(
       TipsterFollow.tipster_id == c.id,
-      TipsterFollow.user_email == email,
+      TipsterFollow.follower_email == email,
     )
     .first()
   )
-  if not row:
-    return {"ok": True, "was_following": False}
+  if row:
+    db.delete(row)
+    db.commit()
 
-  db.delete(row)
-  db.commit()
-  return {"ok": True, "unfollowed": username}
+  return {
+    "ok": True,
+    "status": "not_following",
+    "follower_count": _follower_count(db, c.id),
+  }
 
 
 # ---------- routes: picks ----------
