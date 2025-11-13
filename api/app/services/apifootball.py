@@ -101,6 +101,7 @@ LEAGUE_MAP = {
     "UEL": 3, "UEFA Europa League": 3,
     "UECL": 848, "UEFA Europa Conference League": 848,
     "UWCL": 525, "UEFA Women's Champions League": 525,
+    "WCQ_EUR": 32, "FIFA World Cup Qualifiers - Europe": 32,
 }
 
 def canonicalize_comp(league_obj: dict) -> str:
