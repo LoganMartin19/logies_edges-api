@@ -621,3 +621,13 @@ class TipsterSubscription(Base):
         UniqueConstraint("user_id", "tipster_id", name="uq_user_tipster_sub"),
         Index("ix_subs_status", "status"),
     )
+
+class TipsterFollow(Base):
+    __tablename__ = "tipster_follows"
+
+    id = Column(Integer, primary_key=True)
+    tipster_id = Column(Integer, ForeignKey("tipsters.id"), nullable=False, index=True)
+    follower_email = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    tipster = relationship("Tipster", backref="followers")
