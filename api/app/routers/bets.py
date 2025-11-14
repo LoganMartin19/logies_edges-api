@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, Body
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from typing import Optional, List
 from datetime import datetime, timezone
-from fastapi.templating import Jinja2Templates
 
 from ..db import get_db
-from ..models import Bet, Fixture
+from ..models import Bet, Fixture, UserBet, User
+from ..auth_firebase import get_current_user
 
 router = APIRouter(tags=["bets"])
 templates = Jinja2Templates(directory="api/app/templates")
@@ -208,7 +209,7 @@ def delete_bet(
     return HTMLResponse("")
 
 
-# -------------------- JSON (for React) --------------------
+# -------------------- JSON (for React - global Bet) --------------------
 
 class BetIn(BaseModel):
     fixture_id: Optional[int] = None
@@ -221,14 +222,16 @@ class BetIn(BaseModel):
     teams: Optional[str] = None
     notes: Optional[str] = None
 
+
 class BetPatch(BaseModel):
     # allow partial updates
     stake: Optional[float] = None
     result: Optional[str] = None   # "won"|"lost"|"push"|"pending" or "PENDING"/"WON"/"LOST"/"VOID"
     notes: Optional[str] = None
 
+
 def _bet_to_json(bet: Bet, fx: Fixture | None) -> dict:
-    """Shape used by the React BetTracker table."""
+    """Shape used by the React BetTracker table (legacy/global)."""
     teams = f"{fx.home_team} vs {fx.away_team}" if fx else getattr(bet, "teams", None)
     comp  = fx.comp if fx else getattr(bet, "comp", None)
     return {
@@ -247,6 +250,7 @@ def _bet_to_json(bet: Bet, fx: Fixture | None) -> dict:
         "placed_at": bet.placed_at.isoformat() if getattr(bet, "placed_at", None) else None,
     }
 
+
 @router.get("/bets.json")
 def list_bets_json(db: Session = Depends(get_db)) -> List[dict]:
     """
@@ -264,12 +268,12 @@ def list_bets_json(db: Session = Depends(get_db)) -> List[dict]:
         out.append(_bet_to_json(b, f))
     return out
 
+
 @router.post("/bets.json")
 def create_bet_json(payload: BetIn, db: Session = Depends(get_db)) -> dict:
     """
     Ignore unknown Bet fields (`comp`, `teams`) to avoid SQLA TypeError.
     """
-    # Build only allowed/known fields
     b = Bet(
         fixture_id=payload.fixture_id,
         market=payload.market,
@@ -284,9 +288,9 @@ def create_bet_json(payload: BetIn, db: Session = Depends(get_db)) -> dict:
     db.commit()
     db.refresh(b)
 
-    # Return with comp/teams derived from Fixture (if exists)
     fx = db.query(Fixture).filter(Fixture.id == b.fixture_id).one_or_none()
     return _bet_to_json(b, fx)
+
 
 @router.patch("/bets/{bet_id}.json")
 def patch_bet_json(bet_id: int, payload: BetPatch, db: Session = Depends(get_db)) -> dict:
@@ -328,6 +332,7 @@ def patch_bet_json(bet_id: int, payload: BetPatch, db: Session = Depends(get_db)
     fx = db.query(Fixture).filter(Fixture.id == b.fixture_id).one_or_none()
     return _bet_to_json(b, fx)
 
+
 @router.delete("/bets/{bet_id}.json")
 def delete_bet_json(bet_id: int, db: Session = Depends(get_db)) -> dict:
     b = db.query(Bet).filter(Bet.id == bet_id).one_or_none()
@@ -337,7 +342,8 @@ def delete_bet_json(bet_id: int, db: Session = Depends(get_db)) -> dict:
     db.commit()
     return {"ok": True}
 
-# --- JSON helpers + cleanup endpoints ---------------------------------------
+
+# --- JSON helpers + cleanup endpoints (global Bet) --------------------------
 
 def _bet_to_json_legacy(bet: Bet, fx: Fixture) -> dict:
     return {
@@ -355,6 +361,7 @@ def _bet_to_json_legacy(bet: Bet, fx: Fixture) -> dict:
         "pnl": None if bet.pnl is None else float(bet.pnl),
     }
 
+
 @router.get("/bets/json")
 def bets_json(db: Session = Depends(get_db)):
     rows = (
@@ -364,6 +371,7 @@ def bets_json(db: Session = Depends(get_db)):
         .all()
     )
     return [_bet_to_json_legacy(b, f) for (b, f) in rows]
+
 
 @router.post("/bets/cleanup")
 def bets_cleanup(
@@ -380,17 +388,17 @@ def bets_cleanup(
 
     q = db.query(Bet)
     if action == "delete_zero_pending":
-        q = q.filter(or_(Bet.result == None, Bet.result == "PENDING"), Bet.stake == 0)
+        q = q.filter(or_(Bet.result == None, Bet.result == "PENDING"), Bet.stake == 0)  # noqa: E711
     elif action == "delete_pending":
-        q = q.filter(or_(Bet.result == None, Bet.result == "PENDING"))
+        q = q.filter(or_(Bet.result == None, Bet.result == "PENDING"))  # noqa: E711
     else:  # delete_all
         pass
 
-    # count first for return value
     to_delete = q.count()
     q.delete(synchronize_session=False)
     db.commit()
     return {"ok": True, "deleted": to_delete}
+
 
 @router.post("/bets/bulk-delete")
 def bets_bulk_delete(
@@ -400,5 +408,234 @@ def bets_bulk_delete(
     if not ids:
         return {"ok": True, "deleted": 0}
     deleted = db.query(Bet).filter(Bet.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True, "deleted": deleted}
+
+
+# ===================== USER-BETS (per-account JSON API) =====================
+
+class UserBetIn(BaseModel):
+    fixture_id: Optional[int] = None
+    market: str
+    bookmaker: Optional[str] = None
+    price: float
+    stake: float
+    notes: Optional[str] = None   # if you add notes column on UserBet
+
+
+class UserBetPatch(BaseModel):
+    stake: Optional[float] = None
+    result: Optional[str] = None   # "won"|"lost"|"void"|"pending"
+    notes: Optional[str] = None
+
+
+def _get_or_create_user_from_claims(db: Session, claims: dict) -> User:
+    """
+    Map Firebase claims -> local User row.
+    Adjust field names to match your User model.
+    """
+    uid = (claims.get("uid") or "").strip()
+    email = (claims.get("email") or "").lower()
+
+    if not uid and not email:
+        raise HTTPException(400, "Missing Firebase UID/email")
+
+    q = db.query(User)
+    if hasattr(User, "firebase_uid"):
+        q = q.filter(User.firebase_uid == uid)
+    elif hasattr(User, "uid"):
+        q = q.filter(User.uid == uid)
+    elif hasattr(User, "email") and email:
+        q = q.filter(User.email == email)
+
+    user = q.first()
+    if user:
+        return user
+
+    # Create a light user row if missing (adjust fields to your schema)
+    kwargs = {}
+    if hasattr(User, "firebase_uid"):
+        kwargs["firebase_uid"] = uid
+    if hasattr(User, "email") and email:
+        kwargs["email"] = email
+
+    user = User(**kwargs)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _userbet_to_json(b: UserBet, fx: Fixture | None) -> dict:
+    teams = None
+    comp = None
+    if fx:
+        teams = f"{fx.home_team} vs {fx.away_team}"
+        comp = fx.comp
+
+    return {
+        "id": b.id,
+        "fixture_id": b.fixture_id,
+        "teams": teams,
+        "comp": comp,
+        "market": b.market,
+        "bookmaker": b.bookmaker,
+        "price": float(b.price or 0),
+        "stake": float(b.stake or 0),
+        "result": b.result or None,   # WON/LOST/VOID/None
+        "ret": None if b.ret is None else float(b.ret),
+        "pnl": None if b.pnl is None else float(b.pnl),
+        "notes": getattr(b, "notes", None),
+        "placed_at": b.placed_at.isoformat() if b.placed_at else None,
+    }
+
+
+@router.get("/api/user-bets")
+def list_user_bets(
+    db: Session = Depends(get_db),
+    user_claims=Depends(get_current_user),
+):
+    u = _get_or_create_user_from_claims(db, user_claims)
+
+    rows = (
+        db.query(UserBet, Fixture)
+        .outerjoin(Fixture, Fixture.id == UserBet.fixture_id)
+        .filter(UserBet.user_id == u.id)
+        .order_by(UserBet.placed_at.desc())
+        .all()
+    )
+
+    return [_userbet_to_json(b, f) for (b, f) in rows]
+
+
+@router.post("/api/user-bets")
+def create_user_bet(
+    payload: UserBetIn,
+    db: Session = Depends(get_db),
+    user_claims=Depends(get_current_user),
+):
+    u = _get_or_create_user_from_claims(db, user_claims)
+
+    b = UserBet(
+        user_id=u.id,
+        fixture_id=payload.fixture_id,
+        market=payload.market,
+        bookmaker=payload.bookmaker,
+        price=float(payload.price),
+        stake=float(payload.stake),
+        placed_at=datetime.now(timezone.utc),
+    )
+    if hasattr(UserBet, "notes") and payload.notes is not None:
+        b.notes = payload.notes
+
+    db.add(b)
+    db.commit()
+    db.refresh(b)
+
+    fx = db.query(Fixture).filter(Fixture.id == b.fixture_id).one_or_none()
+    return _userbet_to_json(b, fx)
+
+
+@router.patch("/api/user-bets/{bet_id}")
+def patch_user_bet(
+    bet_id: int,
+    payload: UserBetPatch,
+    db: Session = Depends(get_db),
+    user_claims=Depends(get_current_user),
+):
+    u = _get_or_create_user_from_claims(db, user_claims)
+
+    b: UserBet | None = (
+        db.query(UserBet)
+        .filter(UserBet.id == bet_id, UserBet.user_id == u.id)
+        .one_or_none()
+    )
+    if not b:
+        raise HTTPException(status_code=404, detail="Bet not found")
+
+    if payload.stake is not None:
+        b.stake = float(payload.stake)
+
+    if payload.notes is not None and hasattr(UserBet, "notes"):
+        b.notes = payload.notes
+
+    if payload.result is not None:
+        r = payload.result.upper()
+        if r not in ("WON", "LOST", "VOID", "PENDING"):
+            raise HTTPException(status_code=400, detail="Invalid result")
+
+        stake = float(b.stake or 0)
+        price = float(b.price or 0)
+
+        if r == "WON":
+            b.ret = stake * price
+            b.pnl = b.ret - stake
+        elif r == "LOST":
+            b.ret = 0.0
+            b.pnl = -stake
+        elif r == "VOID":
+            b.ret = stake
+            b.pnl = 0.0
+        else:  # PENDING
+            b.ret = None
+            b.pnl = None
+
+        # store None for pending, actual codes for settled
+        b.result = None if r == "PENDING" else r
+
+    db.commit()
+    db.refresh(b)
+    fx = db.query(Fixture).filter(Fixture.id == b.fixture_id).one_or_none()
+    return _userbet_to_json(b, fx)
+
+
+@router.delete("/api/user-bets/{bet_id}")
+def delete_user_bet(
+    bet_id: int,
+    db: Session = Depends(get_db),
+    user_claims=Depends(get_current_user),
+):
+    u = _get_or_create_user_from_claims(db, user_claims)
+
+    b: UserBet | None = (
+        db.query(UserBet)
+        .filter(UserBet.id == bet_id, UserBet.user_id == u.id)
+        .one_or_none()
+    )
+    if not b:
+        raise HTTPException(status_code=404, detail="Bet not found")
+
+    db.delete(b)
+    db.commit()
+    return {"ok": True, "deleted": bet_id}
+
+
+@router.post("/api/user-bets/cleanup")
+def cleanup_user_bets(
+    action: str = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    user_claims=Depends(get_current_user),
+):
+    """
+    delete_zero_pending : delete PENDING bets with stake == 0
+    delete_pending      : delete ALL PENDING bets
+    delete_all          : delete *all* bets for this user
+    """
+    if action not in {"delete_zero_pending", "delete_pending", "delete_all"}:
+        raise HTTPException(status_code=400, detail="unknown action")
+
+    u = _get_or_create_user_from_claims(db, user_claims)
+
+    q = db.query(UserBet).filter(UserBet.user_id == u.id)
+
+    if action == "delete_zero_pending":
+        q = q.filter(
+            or_(UserBet.result == None, UserBet.result == "PENDING"),  # noqa: E711
+            UserBet.stake == 0,
+        )
+    elif action == "delete_pending":
+        q = q.filter(or_(UserBet.result == None, UserBet.result == "PENDING"))  # noqa: E711
+
+    deleted = q.delete(synchronize_session=False)
     db.commit()
     return {"ok": True, "deleted": deleted}
