@@ -44,6 +44,7 @@ from .routes import (
     public as public_router,
     preview as preview_router,              # ⚽ sport-specific (football) private/admin
     accas as accas_router,
+    user_bets as user_bets_router,
 )
 
 # --- NEW: sport-aware preview dispatch + other sports (NFL/NHL) ---
@@ -156,6 +157,8 @@ from .routes.accas import pub as accas_public_router
 
 app.include_router(picks_public_router, prefix="/api")   # keep this (its pub prefix starts with /public/...)
 app.include_router(accas_public_router)                  # <-- remove prefix to avoid /api/api/...
+app.include_router(user_bets_router.router, prefix="/api")
+
 # --- Debug route for visibility ---
 @app.get("/debug/routes")
 def list_routes():
