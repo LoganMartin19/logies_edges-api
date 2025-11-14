@@ -489,6 +489,94 @@ def unfollow_tipster(
     "follower_count": _follower_count(db, c.id),
   }
 
+  # ---------- routes: following feed & list ----------
+
+@router.get("/following/list")
+def list_following(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    email = (user.get("email") or "").lower()
+    if not email:
+        raise HTTPException(400, "Email missing in Firebase token")
+
+    # all relationships
+    rows = (
+        db.query(TipsterFollow)
+        .filter(TipsterFollow.follower_email == email)
+        .all()
+    )
+    tipster_ids = [r.tipster_id for r in rows]
+
+    if not tipster_ids:
+        return []
+
+    tipsters = (
+        db.query(Tipster)
+        .filter(Tipster.id.in_(tipster_ids))
+        .all()
+    )
+
+    out = []
+    for t in tipsters:
+        row = _with_live_metrics(db, t)
+        row["is_owner"] = False
+        row["is_following"] = True
+        out.append(row)
+
+    return out
+
+
+@router.get("/following/feed")
+def following_feed(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    email = (user.get("email") or "").lower()
+    if not email:
+        raise HTTPException(400, "Email missing in Firebase token")
+
+    # find whom the user follows
+    rows = (
+        db.query(TipsterFollow)
+        .filter(TipsterFollow.follower_email == email)
+        .all()
+    )
+    tipster_ids = [r.tipster_id for r in rows]
+
+    if not tipster_ids:
+        return []
+
+    # get latest picks from followed tipsters
+    picks = (
+        db.query(TipsterPick)
+        .filter(TipsterPick.tipster_id.in_(tipster_ids))
+        .order_by(TipsterPick.created_at.desc())
+        .limit(200)
+        .all()
+    )
+
+    out = []
+    for p in picks:
+        extra = _fixture_info(db, p.fixture_id)
+        tipster = db.query(Tipster).get(p.tipster_id)
+        out.append({
+            "pick_id": p.id,
+            "tipster_username": tipster.username if tipster else None,
+            "tipster_name": tipster.name if tipster else None,
+            "created_at": p.created_at,
+            "market": p.market,
+            "fixture_id": p.fixture_id,
+            "price": p.price,
+            "stake": p.stake,
+            "result": p.result,
+            "profit": p.profit,
+            "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price),
+            **extra
+        })
+
+    return out
+
 
 # ---------- routes: picks ----------
 
