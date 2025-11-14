@@ -64,6 +64,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "https://logies-edges-site.vercel.app",
         "https://logies-edges-dashboard.vercel.app",
+        "https://charteredsportsbetting.com",
+        "https://www.charteredsportsbetting.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
