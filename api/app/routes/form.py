@@ -85,64 +85,44 @@ def _is_grid_or_ice(comp: Optional[str]) -> bool:
 def get_fixture_form_json(
     fixture_id: int = Query(...),
     n: int = Query(5, ge=1, le=20),
-    all_comps: int = Query(0, description="0 = scope to fixture competition, 1 = all competitions"),
+    all_comps: int = Query(
+        0,
+        description="0 = scope to fixture competition, 1 = all competitions"
+    ),
     db: Session = Depends(get_db),
 ):
     """
-    Unified hybrid form endpoint:
-      - ⚽️ Football → DB + API (get_recent_form_api_first)
-      - 🏈/🏒 Gridiron/Hockey → hybrid (provider fetch if wired, else DB)
-    Hardened: never subscripts None, always returns normalized summaries.
+    Unified hybrid form endpoint for ALL sports.
+
+    Uses services.form.get_hybrid_form_for_fixture under the hood, which:
+      - For football uses API-Football + DB and the WCQ-aware season inference
+      - For NFL / CFB / NHL uses their respective APIs + DB
+      - Falls back to DB-only if provider data is missing
+
+    Always returns normalized summaries so the frontend is safe.
     """
     fixture = db.query(Fixture).filter(Fixture.id == fixture_id).first()
     if not fixture:
         return {"error": "Fixture not found"}
 
+    # If all_comps == 1, ignore fixture.comp and use all competitions.
     comp_scope = None if all_comps else (fixture.comp or None)
-    as_of = fixture.kickoff_utc or datetime.now(timezone.utc)
-    in_grid_or_ice = _is_grid_or_ice(fixture.comp)
 
-    if in_grid_or_ice:
-        # Hybrid path (safe)
-        form_data = get_hybrid_form_for_fixture(db, fixture, n=n, comp_scope=(comp_scope is not None)) or {}
-        home_blk = (form_data.get("home") or {})
-        away_blk = (form_data.get("away") or {})
-
-        home_summary = _norm_summary(home_blk.get("summary"))
-        away_summary = _norm_summary(away_blk.get("summary"))
-        home_recent = list(home_blk.get("recent") or [])
-        away_recent = list(away_blk.get("recent") or [])
-
-        return {
-            "fixture_id": fixture.id,
-            "home_team": fixture.home_team,
-            "away_team": fixture.away_team,
-            "competition": fixture.comp,
-            "scope": "all" if comp_scope is None else "competition",
-            "home_form": home_summary,
-            "away_form": away_summary,
-            "home_recent": home_recent,
-            "away_recent": away_recent,
-            "n": n,
-        }
-
-    # ⚽️ Football: API-first with DB fallback; normalize summaries
-    home = get_recent_form_api_first(
+    # 🔑 Single source of truth: hybrid helper does the heavy lifting
+    form_data = get_hybrid_form_for_fixture(
         db=db,
-        team_name=fixture.home_team,
-        team_provider_id=getattr(fixture, "provider_home_team_id", None),
-        before=as_of,
+        fixture=fixture,
         n=n,
-        comp=comp_scope,
+        comp_scope=(comp_scope is not None),  # True = restrict to fixture.comp, False = all comps
     ) or {}
-    away = get_recent_form_api_first(
-        db=db,
-        team_name=fixture.away_team,
-        team_provider_id=getattr(fixture, "provider_away_team_id", None),
-        before=as_of,
-        n=n,
-        comp=comp_scope,
-    ) or {}
+
+    home_blk = (form_data.get("home") or {})
+    away_blk = (form_data.get("away") or {})
+
+    home_summary = _norm_summary(home_blk.get("summary"))
+    away_summary = _norm_summary(away_blk.get("summary"))
+    home_recent = list(home_blk.get("recent") or [])
+    away_recent = list(away_blk.get("recent") or [])
 
     return {
         "fixture_id": fixture.id,
@@ -150,10 +130,10 @@ def get_fixture_form_json(
         "away_team": fixture.away_team,
         "competition": fixture.comp,
         "scope": "all" if comp_scope is None else "competition",
-        "home_form": _norm_summary(home.get("summary")),
-        "away_form": _norm_summary(away.get("summary")),
-        "home_recent": list(home.get("recent") or []),
-        "away_recent": list(away.get("recent") or []),
+        "home_form": home_summary,
+        "away_form": away_summary,
+        "home_recent": home_recent,
+        "away_recent": away_recent,
         "n": n,
     }
 
