@@ -185,7 +185,6 @@ def admin_refresh_fixture(
 
     return {"ok": True, "fixture_id": fixture_id, "updated": updated}
 
-# Ad-hoc date runners
 @router.post("/run-dates")
 def admin_run_dates(
     db: Session = Depends(get_db),
@@ -231,18 +230,19 @@ def admin_run_dates(
     compute_after: int = Query(1),
     cfb_uk_only: int = Query(1),
 ):
-
-    
-
+    # --- parse day list ---
     day_list = [
         datetime.fromisoformat(d.strip()).date()
         for d in (days or "").split(",")
         if d.strip()
     ]
-    parts = _partition_leagues(leagues)
+    if not day_list:
+        return {"ok": False, "error": "No valid days provided"}
 
+    parts = _partition_leagues(leagues)
     ingested = []
 
+    # --- ingest per day / league group ---
     for d in day_list:
         if parts["soccer"]:
             ingested.append(
@@ -265,7 +265,7 @@ def admin_run_dates(
                     odds_delay_sec=0.30,
                 )
             )
-        if parts["nba"]:   # ✅ new section for NBA
+        if parts["nba"]:
             ingested.append(
                 ingest_nba_and_odds(
                     db, d, parts["nba"],
@@ -275,12 +275,50 @@ def admin_run_dates(
                 )
             )
 
+    computed = False
+
     if compute_after:
         now = datetime.now(timezone.utc)
-        ensure_baseline_probs(db, now, source="team_form")
-        compute_edges(db, now, settings.EDGE_MIN, source="team_form")
 
-    return {"ok": True, "ingested": ingested, "computed": bool(compute_after)}
+        # --- restrict modelprob + edges to just around these days ---
+        window_start_date = min(day_list) - timedelta(days=1)
+        window_end_date = max(day_list) + timedelta(days=1)
+
+        window_start = datetime.combine(
+            window_start_date, datetime.min.time(), tzinfo=timezone.utc
+        )
+        window_end = datetime.combine(
+            window_end_date, datetime.max.time(), tzinfo=timezone.utc
+        )
+
+        # soccer comps for team_form – adjust if you want others
+        soccer_leagues = list(parts["soccer"]) if parts["soccer"] else None
+
+        # 1) ensure baseline model probabilities only for this window
+        ensure_baseline_probs(
+            db=db,
+            now=now,
+            source="team_form",
+            time_window=(window_start, window_end),
+            league_comp_filter=soccer_leagues,
+            use_closing_when_past=True,
+        )
+
+        # 2) compute edges only for fixtures from this window onwards
+        compute_edges(
+            db=db,
+            now=now,
+            since=window_start,            # ✅ proper datetime window
+            min_edge=settings.EDGE_MIN,    # ✅ passed as the correct param
+            source="team_form",
+            # you can also override hours_ahead / staleness_hours here if desired:
+            # hours_ahead=HOURS_AHEAD,
+            # staleness_hours=STALE_ODDS_HOURS,
+        )
+
+        computed = True
+
+    return {"ok": True, "ingested": ingested, "computed": computed}
 
 @router.post("/run-range")
 def admin_run_range(
