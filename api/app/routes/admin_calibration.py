@@ -73,13 +73,14 @@ def admin_apply_calibration(
 @router.post("/backfill-modelprobs")
 def admin_backfill_model_probs(
     source: str = Query("team_form"),
-    days_back: int = Query(60, ge=1, le=365),
+    days_back: int = Query(60, ge=0, le=365),
+    days_forward: int = Query(0, ge=0, le=365),   # ⭐ NEW
     comps: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days_back)
-    end = now
+    end = now + timedelta(days=days_forward)      # ⭐ extend into the future
 
     comp_list = [c.strip() for c in (comps or "").split(",") if c.strip()] or None
 
@@ -91,7 +92,14 @@ def admin_backfill_model_probs(
         league_comp_filter=comp_list,
         use_closing_when_past=True,
     )
-    return {"ok": True, "message": f"Backfilled modelprobs for source={source} over {days_back} days."}
+
+    return {
+        "ok": True,
+        "message": (
+            f"Backfilled modelprobs for source={source} over "
+            f"{days_back} days back and {days_forward} days forward."
+        ),
+    }
 
 
 # -------------------------------------------------------------
