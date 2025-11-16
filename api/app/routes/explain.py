@@ -43,12 +43,17 @@ def _normalize_market(m: str) -> str:
 
 
 def _btts_hint_from_total_xg(total_xg: float) -> str:
-    """Conservative bands to avoid whipsawing on middling totals."""
+    """
+    Conservative bands to avoid whipsawing on middling totals.
+
+    NOTE: keep this neutral – it just describes goal environment.
+    The actual BTTS lean comes from model probabilities.
+    """
     if total_xg >= 2.40:
-        return "Form blend leans higher scoring → BTTS Yes more plausible."
+        return "Form blend points toward an above-average goals environment."
     if total_xg <= 1.90:
-        return "Form blend leans lower scoring → BTTS No more plausible."
-    return "Form blend is borderline for BTTS (mixed signals)."
+        return "Form blend points toward a below-average goals environment."
+    return "Form blend is borderline for BTTS (mixed scoring signals)."
 
 
 @router.get("/probability")
@@ -144,46 +149,129 @@ def explain_probability(
             explanation["recommendation"] = f"Bet {side} only if odds > {fair_odds:.2f}"
 
     # -------------------
+        # -------------------
     # BTTS
     # -------------------
     elif norm_market in {"BTTS_Y", "BTTS_N"}:
-        # Reuse hybrid (already fetched above as form_payload), scoped to competition.
+        # Hybrid recent fixtures (already fetched above)
         recent_home = form_payload.get("home", {}).get("recent", []) or []
         recent_away = form_payload.get("away", {}).get("recent", []) or []
 
-        home_played = len(recent_home) or 1  # avoid div-by-zero
-        away_played = len(recent_away) or 1
+        # How many games actually played (can be < n if early season / missing data)
+        home_played = len(recent_home)
+        away_played = len(recent_away)
 
+        # Denominators to avoid div-by-zero in percentages
+        home_denom = home_played or 1
+        away_denom = away_played or 1
+
+        # Basic scored / conceded counts
         home_scored   = sum(1 for m in recent_home if (m.get("goals_for") or 0) > 0)
         away_scored   = sum(1 for m in recent_away if (m.get("goals_for") or 0) > 0)
         home_conceded = sum(1 for m in recent_home if (m.get("goals_against") or 0) > 0)
         away_conceded = sum(1 for m in recent_away if (m.get("goals_against") or 0) > 0)
 
-        # Percentages
-        hs_rate = home_scored   / home_played
-        as_rate = away_scored   / away_played
-        hc_rate = home_conceded / home_played
-        ac_rate = away_conceded / away_played
+        # Percentages (per-team)
+        hs_rate = home_scored   / home_denom
+        as_rate = away_scored   / away_denom
+        hc_rate = home_conceded / home_denom
+        ac_rate = away_conceded / away_denom
 
-        explanation["notes"].append(f"{fixture.home_team} scored in {home_scored}/{home_played} games ({hs_rate*100:.0f}%).")
-        explanation["notes"].append(f"{fixture.away_team} scored in {away_scored}/{away_played} games ({as_rate*100:.0f}%).")
-        explanation["notes"].append(f"{fixture.home_team} conceded in {home_conceded}/{home_played} games ({hc_rate*100:.0f}%).")
-        explanation["notes"].append(f"{fixture.away_team} conceded in {away_conceded}/{away_played} games ({ac_rate*100:.0f}%).")
-
-        # Qualitative read using rates
-        high = lambda x: x >= 0.6  # tweak threshold if you like
-        if high(hs_rate) and high(as_rate) and high(hc_rate) and high(ac_rate):
-            explanation["notes"].append("Both teams often score AND concede → qualitative lean to BTTS Yes.")
-        elif (hs_rate < 0.4) or (as_rate < 0.4):
-            explanation["notes"].append("At least one side scores too rarely → qualitative lean to BTTS No.")
+        if home_played > 0:
+            explanation["notes"].append(
+                f"{fixture.home_team} scored in {home_scored}/{home_played} games ({hs_rate*100:.0f}%)."
+            )
+            explanation["notes"].append(
+                f"{fixture.home_team} conceded in {home_conceded}/{home_played} games ({hc_rate*100:.0f}%)."
+            )
         else:
-            explanation["notes"].append("Mixed recent scoring patterns.")
+            explanation["notes"].append(
+                f"No recent games available for {fixture.home_team} → scoring stats are based on league/longer-term form."
+            )
 
-        # Add an xG-based hint (uses exp_goals computed above)
+        if away_played > 0:
+            explanation["notes"].append(
+                f"{fixture.away_team} scored in {away_scored}/{away_played} games ({as_rate*100:.0f}%)."
+            )
+            explanation["notes"].append(
+                f"{fixture.away_team} conceded in {away_conceded}/{away_played} games ({ac_rate*100:.0f}%)."
+            )
+        else:
+            explanation["notes"].append(
+                f"No recent games available for {fixture.away_team} → scoring stats are based on league/longer-term form."
+            )
+
+        # --- NEW: BTTS Yes/No counts in last N games (per team perspective) ---
+        home_btts_yes = sum(
+            1
+            for m in recent_home
+            if (m.get("goals_for") or 0) > 0 and (m.get("goals_against") or 0) > 0
+        )
+        away_btts_yes = sum(
+            1
+            for m in recent_away
+            if (m.get("goals_for") or 0) > 0 and (m.get("goals_against") or 0) > 0
+        )
+
+        if home_played > 0:
+            explanation["notes"].append(
+                f"BTTS landed in {fixture.home_team}'s games {home_btts_yes}/{home_played} times "
+                f"({home_btts_yes / home_denom * 100:.0f}%) in the last {home_played} matches."
+            )
+        if away_played > 0:
+            explanation["notes"].append(
+                f"BTTS landed in {fixture.away_team}'s games {away_btts_yes}/{away_played} times "
+                f"({away_btts_yes / away_denom * 100:.0f}%) in the last {away_played} matches."
+            )
+
+        # Qualitative read using rates – this is FORM ONLY
+        high = lambda x: x >= 0.6
+        if high(hs_rate) and high(as_rate) and high(hc_rate) and high(ac_rate):
+            explanation["notes"].append(
+                "On recent form both teams often score AND concede → form alone would lean toward BTTS Yes."
+            )
+        elif (hs_rate < 0.4) or (as_rate < 0.4):
+            explanation["notes"].append(
+                "At least one side scores too rarely → form alone leans toward BTTS No."
+            )
+        else:
+            explanation["notes"].append("Recent scoring patterns are mixed.")
+
+        # xG-based environment hint
         total_xg = float(explanation["form"]["expected_goals"]["total"] or 0.0)
         explanation["notes"].append(_btts_hint_from_total_xg(total_xg))
 
-        # Probability/fair_price already added above if present.
+        # --- Model probabilities for BOTH sides ---
+        # We've already fetched `prob` for norm_market above.
+        other_mkt = "BTTS_N" if norm_market == "BTTS_Y" else "BTTS_Y"
+        other_row = (
+            db.query(ModelProb.prob)
+            .filter(ModelProb.fixture_id == fixture.id, ModelProb.market == other_mkt)
+            .order_by(ModelProb.as_of.desc())
+            .first()
+        )
+        other_prob = float(other_row[0]) if other_row else None
+
+        if prob is not None and other_prob is not None:
+            p_yes = prob if norm_market == "BTTS_Y" else other_prob
+            p_no  = prob if norm_market == "BTTS_N" else other_prob
+            explanation["notes"].append(
+                f"Model probabilities: BTTS Yes {p_yes*100:.1f}%, BTTS No {p_no*100:.1f}%."
+            )
+        elif prob is not None:
+            side_label = "BTTS Yes" if norm_market == "BTTS_Y" else "BTTS No"
+            explanation["notes"].append(
+                f"Model probability for {side_label} ≈ {prob*100:.1f}%."
+            )
+
+        if prob and fair_odds:
+            side_label = "BTTS Yes" if norm_market == "BTTS_Y" else "BTTS No"
+            explanation["notes"].append(
+                f"Model fair price for {side_label} ≈ {fair_odds:.2f}."
+            )
+            explanation["recommendation"] = (
+                f"Bet {side_label} only if odds > {fair_odds:.2f}."
+            )
 
     # -------------------
     # 1X2 (Win/Draw/Loss)

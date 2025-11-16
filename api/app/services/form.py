@@ -130,6 +130,30 @@ def _infer_season(as_of: datetime) -> int:
     return as_of.year if as_of.month >= 7 else as_of.year - 1
 
 
+def _infer_season_for_fixture(fixture: Fixture, as_of: datetime) -> int:
+    """
+    Wraps _infer_season but patches awkward tournament seasons like
+    World Cup - Qualification Europe, which API-Football tags as
+    season 2024 even for games played in 2025.
+    """
+    base = _infer_season(as_of)
+
+    comp_upper = (fixture.comp or "").upper()
+    league_id = getattr(fixture, "provider_league_id", None)
+
+    # World Cup - Qualification Europe (API-Football league_id = 32, season = 2024)
+    if league_id == 32:
+        return 2024
+
+    # Fallback text-based detection if league_id isn't set
+    if "WCQ" in comp_upper and "EURO" in comp_upper:
+        return 2024
+    if "WORLD CUP" in comp_upper and "QUAL" in comp_upper and "EUROPE" in comp_upper:
+        return 2024
+
+    return base
+
+
 def _recent_from_api(
     team_provider_id: int,
     as_of: datetime,
@@ -324,7 +348,8 @@ def get_hybrid_form_for_fixture(
     home_pid = getattr(fixture, "provider_home_team_id", None)
     away_pid = getattr(fixture, "provider_away_team_id", None)
 
-    season = _infer_season(as_of)
+    # 🔑 season now respects awkward comps like WCQ Europe
+    season = _infer_season_for_fixture(fixture, as_of)
 
     # --- Resolve missing provider team IDs (multi-sport) ---
     if not (home_pid and away_pid) and getattr(fixture, "provider_fixture_id", None):
@@ -541,6 +566,7 @@ def get_hybrid_form_for_fixture(
         "away": {"summary": away_summary, "recent": away_recent},
         "season": season,
     }
+
 
 def get_fixture_form_summary(db: Session, fixture_id: int, n: int = 5) -> dict:
     """Convenience wrapper for expert predictions and analytics."""
