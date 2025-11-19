@@ -42374,3 +42374,157 @@ Enter selection: [FATAL] EOF when reading a line
 [shortlist] count=0
 [GET] http://localhost:8000/admin/last-http -> 200
 [GET] http://localhost:8000/admin/gridiron-last-http -> 200
+=== automate_value_alerts @ 2025-11-18T12:16:01+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[POST] http://localhost:8000/admin/recompute -> 200
+[recompute v2] edges=0 model_probs=10202
+[GET] http://localhost:8000/admin/odds-gaps -> 404 (optional/missing endpoint)
+[gaps] none or endpoint missing
+[GET] http://localhost:8000/shortlist/today -> 200
+[shortlist] count=0
+[GET] http://localhost:8000/admin/last-http -> 200
+[GET] http://localhost:8000/admin/gridiron-last-http -> 200
+=== automate_value_alerts @ 2025-11-18T18:10:06+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[POST] http://localhost:8000/admin/recompute -> 200
+[recompute v2] edges=80 model_probs=10274
+[GET] http://localhost:8000/admin/odds-gaps -> 404 (optional/missing endpoint)
+[gaps] none or endpoint missing
+[GET] http://localhost:8000/shortlist/today -> 200
+[shortlist] count=80
+[CANDIDATE] Spain vs Türkiye | O2.5 @ williamhill 3.90 (p=0.737, edge=100.0%)
+[CANDIDATE] Botafogo vs Sport Recife | O2.5 @ williamhill 5.00 (p=0.599, edge=100.0%)
+[CANDIDATE] Romania vs San Marino | O2.5 @ williamhill 2.62 (p=0.837, edge=100.0%)
+[CANDIDATE] Belarus vs Greece | O2.5 @ williamhill 4.80 (p=0.629, edge=100.0%)
+[CANDIDATE] Austria vs Bosnia & Herzegovina | O2.5 @ williamhill 5.00 (p=0.608, edge=100.0%)
+[CANDIDATE] Belgium vs Liechtenstein | BTTS_N @ betfair 1.62 (p=0.813, edge=31.7%)
+[CANDIDATE] Sweden vs Slovenia | BTTS_N @ betfair 1.87 (p=0.662, edge=23.8%)
+[CANDIDATE] Kosovo vs Switzerland | BTTS_N @ unibet 1.88 (p=0.653, edge=22.8%)
+[CANDIDATE] Kosovo vs Switzerland | BTTS_N @ betfair 1.87 (p=0.653, edge=22.1%)
+[CANDIDATE] Wales vs FYR Macedonia | AWAY_WIN @ betfair 5.50 (p=0.219, edge=20.6%)
+[CANDIDATE] Sweden vs Slovenia | AWAY_WIN @ unibet 5.30 (p=0.227, edge=20.2%)
+[CANDIDATE] Bulgaria vs Georgia | HOME_WIN @ unibet 4.80 (p=0.248, edge=19.2%)
+[CANDIDATE] Sweden vs Slovenia | BTTS_N @ bet365 1.80 (p=0.662, edge=19.2%)
+[CANDIDATE] Sweden vs Slovenia | BTTS_N @ williamhill 1.80 (p=0.662, edge=19.2%)
+[CANDIDATE] Sweden vs Slovenia | AWAY_WIN @ bet365 5.25 (p=0.227, edge=19.1%)
+[CANDIDATE] Wales vs FYR Macedonia | AWAY_WIN @ unibet 5.40 (p=0.219, edge=18.4%)
+[CANDIDATE] Bulgaria vs Georgia | HOME_WIN @ betfair 4.75 (p=0.248, edge=18.0%)
+[CANDIDATE] Kosovo vs Switzerland | BTTS_N @ bet365 1.80 (p=0.653, edge=17.5%)
+[CANDIDATE] Kosovo vs Switzerland | BTTS_N @ williamhill 1.80 (p=0.653, edge=17.5%)
+[CANDIDATE] Botafogo vs Sport Recife | BTTS_N @ williamhill 1.73 (p=0.678, edge=17.2%)
+[CANDIDATE] Bulgaria vs Georgia | BTTS_N @ betfair 2.00 (p=0.583, edge=16.5%)
+[CANDIDATE] Botafogo vs Sport Recife | BTTS_N @ unibet 1.70 (p=0.678, edge=15.2%)
+[CANDIDATE] Wales vs FYR Macedonia | AWAY_WIN @ bet365 5.25 (p=0.219, edge=15.1%)
+[CANDIDATE] Wales vs FYR Macedonia | BTTS_N @ betfair 1.80 (p=0.639, edge=15.0%)
+[CANDIDATE] Wales vs FYR Macedonia | BTTS_N @ williamhill 1.80 (p=0.639, edge=15.0%)
+[CANDIDATE] Wales vs FYR Macedonia | BTTS_N @ bet365 1.80 (p=0.639, edge=15.0%)
+[CANDIDATE] Kosovo vs Switzerland | HOME_WIN @ betfair 4.50 (p=0.255, edge=14.7%)
+[CANDIDATE] Kosovo vs Switzerland | HOME_WIN @ unibet 4.50 (p=0.255, edge=14.7%)
+[CANDIDATE] Sweden vs Slovenia | BTTS_N @ unibet 1.72 (p=0.662, edge=13.9%)
+[CANDIDATE] Bulgaria vs Georgia | BTTS_N @ williamhill 1.95 (p=0.583, edge=13.6%)
+[CANDIDATE] Bulgaria vs Georgia | BTTS_N @ bet365 1.95 (p=0.583, edge=13.6%)
+[CANDIDATE] Bulgaria vs Georgia | BTTS_N @ unibet 1.95 (p=0.583, edge=13.6%)
+[CANDIDATE] Belarus vs Greece | BTTS_N @ betfair 2.05 (p=0.554, edge=13.5%)
+[CANDIDATE] Sweden vs Slovenia | AWAY_WIN @ betfair 5.00 (p=0.227, edge=13.4%)
+[CANDIDATE] Scotland vs Denmark | BTTS_N @ williamhill 1.95 (p=0.579, edge=12.9%)
+[CANDIDATE] Scotland vs Denmark | BTTS_N @ bet365 1.95 (p=0.579, edge=12.9%)
+[CANDIDATE] Austria vs Bosnia & Herzegovina | BTTS_N @ betfair 2.00 (p=0.561, edge=12.3%)
+[CANDIDATE] Botafogo vs Sport Recife | BTTS_N @ betfair 1.65 (p=0.678, edge=11.8%)
+[CANDIDATE] Bulgaria vs Georgia | HOME_WIN @ bet365 4.50 (p=0.248, edge=11.8%)
+[CANDIDATE] Scotland vs Denmark | BTTS_N @ unibet 1.93 (p=0.579, edge=11.8%)
+[CANDIDATE] Wales vs FYR Macedonia | BTTS_N @ unibet 1.73 (p=0.639, edge=10.5%)
+[CANDIDATE] Kosovo vs Switzerland | HOME_WIN @ bet365 4.33 (p=0.255, edge=10.3%)
+[CANDIDATE] Scotland vs Denmark | BTTS_N @ betfair 1.90 (p=0.579, edge=10.0%)
+[CANDIDATE] Wales vs FYR Macedonia | X2 @ bet365 2.25 (p=0.488, edge=9.8%)
+[CANDIDATE] Botafogo vs Sport Recife | BTTS_N @ bet365 1.62 (p=0.678, edge=9.8%)
+[CANDIDATE] Wales vs FYR Macedonia | AWAY_WIN @ williamhill 5.00 (p=0.219, edge=9.7%)
+[CANDIDATE] Austria vs Bosnia & Herzegovina | BTTS_N @ williamhill 1.95 (p=0.561, edge=9.5%)
+[CANDIDATE] Bulgaria vs Georgia | HOME_WIN @ williamhill 4.40 (p=0.248, edge=9.3%)
+[CANDIDATE] Kosovo vs Switzerland | 1X @ unibet 2.00 (p=0.543, edge=8.7%)
+[CANDIDATE] Bulgaria vs Georgia | 1X @ unibet 2.08 (p=0.522, edge=8.5%)
+[CANDIDATE] Bulgaria vs Georgia | 1X @ williamhill 2.05 (p=0.522, edge=7.0%)
+[CANDIDATE] Belarus vs Greece | BTTS_N @ williamhill 1.91 (p=0.554, edge=5.7%)
+[CANDIDATE] Belarus vs Greece | BTTS_N @ bet365 1.91 (p=0.554, edge=5.7%)
+[CANDIDATE] Sweden vs Slovenia | X2 @ williamhill 2.05 (p=0.515, edge=5.6%)
+[CANDIDATE] Wales vs FYR Macedonia | X2 @ unibet 2.16 (p=0.488, edge=5.4%)
+[CANDIDATE] Sweden vs Slovenia | X2 @ unibet 2.04 (p=0.515, edge=5.1%)
+[CANDIDATE] Wales vs FYR Macedonia | X2 @ williamhill 2.15 (p=0.488, edge=4.9%)
+[CANDIDATE] Wales vs FYR Macedonia | DRAW @ bet365 3.90 (p=0.269, edge=4.8%)
+[CANDIDATE] Sweden vs Slovenia | AWAY_WIN @ williamhill 4.60 (p=0.227, edge=4.3%)
+
+Select edges to send to Telegram (max 5). Enter indexes separated by comma (e.g. 0,2,3):
+
+0) Spain vs Türkiye | O2.5 @ williamhill | 3.9 (100.0%)
+1) Botafogo vs Sport Recife | O2.5 @ williamhill | 5.0 (100.0%)
+2) Romania vs San Marino | O2.5 @ williamhill | 2.62 (100.0%)
+3) Belarus vs Greece | O2.5 @ williamhill | 4.8 (100.0%)
+4) Austria vs Bosnia & Herzegovina | O2.5 @ williamhill | 5.0 (100.0%)
+5) Belgium vs Liechtenstein | BTTS_N @ betfair | 1.62 (31.7%)
+6) Sweden vs Slovenia | BTTS_N @ betfair | 1.87 (23.8%)
+7) Kosovo vs Switzerland | BTTS_N @ unibet | 1.88 (22.8%)
+8) Kosovo vs Switzerland | BTTS_N @ betfair | 1.87 (22.1%)
+9) Wales vs FYR Macedonia | AWAY_WIN @ betfair | 5.5 (20.6%)
+10) Sweden vs Slovenia | AWAY_WIN @ unibet | 5.3 (20.2%)
+11) Bulgaria vs Georgia | HOME_WIN @ unibet | 4.8 (19.2%)
+12) Sweden vs Slovenia | BTTS_N @ bet365 | 1.8 (19.2%)
+13) Sweden vs Slovenia | BTTS_N @ williamhill | 1.8 (19.2%)
+14) Sweden vs Slovenia | AWAY_WIN @ bet365 | 5.25 (19.1%)
+15) Wales vs FYR Macedonia | AWAY_WIN @ unibet | 5.4 (18.4%)
+16) Bulgaria vs Georgia | HOME_WIN @ betfair | 4.75 (18.0%)
+17) Kosovo vs Switzerland | BTTS_N @ bet365 | 1.8 (17.5%)
+18) Kosovo vs Switzerland | BTTS_N @ williamhill | 1.8 (17.5%)
+19) Botafogo vs Sport Recife | BTTS_N @ williamhill | 1.73 (17.2%)
+20) Bulgaria vs Georgia | BTTS_N @ betfair | 2.0 (16.5%)
+21) Botafogo vs Sport Recife | BTTS_N @ unibet | 1.7 (15.2%)
+22) Wales vs FYR Macedonia | AWAY_WIN @ bet365 | 5.25 (15.1%)
+23) Wales vs FYR Macedonia | BTTS_N @ betfair | 1.8 (15.0%)
+24) Wales vs FYR Macedonia | BTTS_N @ williamhill | 1.8 (15.0%)
+25) Wales vs FYR Macedonia | BTTS_N @ bet365 | 1.8 (15.0%)
+26) Kosovo vs Switzerland | HOME_WIN @ betfair | 4.5 (14.7%)
+27) Kosovo vs Switzerland | HOME_WIN @ unibet | 4.5 (14.7%)
+28) Sweden vs Slovenia | BTTS_N @ unibet | 1.72 (13.9%)
+29) Bulgaria vs Georgia | BTTS_N @ williamhill | 1.95 (13.6%)
+30) Bulgaria vs Georgia | BTTS_N @ bet365 | 1.95 (13.6%)
+31) Bulgaria vs Georgia | BTTS_N @ unibet | 1.95 (13.6%)
+32) Belarus vs Greece | BTTS_N @ betfair | 2.05 (13.5%)
+33) Sweden vs Slovenia | AWAY_WIN @ betfair | 5.0 (13.4%)
+34) Scotland vs Denmark | BTTS_N @ williamhill | 1.95 (12.9%)
+35) Scotland vs Denmark | BTTS_N @ bet365 | 1.95 (12.9%)
+36) Austria vs Bosnia & Herzegovina | BTTS_N @ betfair | 2.0 (12.3%)
+37) Botafogo vs Sport Recife | BTTS_N @ betfair | 1.65 (11.8%)
+38) Bulgaria vs Georgia | HOME_WIN @ bet365 | 4.5 (11.8%)
+39) Scotland vs Denmark | BTTS_N @ unibet | 1.93 (11.8%)
+40) Wales vs FYR Macedonia | BTTS_N @ unibet | 1.73 (10.5%)
+41) Kosovo vs Switzerland | HOME_WIN @ bet365 | 4.33 (10.3%)
+42) Scotland vs Denmark | BTTS_N @ betfair | 1.9 (10.0%)
+43) Wales vs FYR Macedonia | X2 @ bet365 | 2.25 (9.8%)
+44) Botafogo vs Sport Recife | BTTS_N @ bet365 | 1.62 (9.8%)
+45) Wales vs FYR Macedonia | AWAY_WIN @ williamhill | 5.0 (9.7%)
+46) Austria vs Bosnia & Herzegovina | BTTS_N @ williamhill | 1.95 (9.5%)
+47) Bulgaria vs Georgia | HOME_WIN @ williamhill | 4.4 (9.3%)
+48) Kosovo vs Switzerland | 1X @ unibet | 2.0 (8.7%)
+49) Bulgaria vs Georgia | 1X @ unibet | 2.08 (8.5%)
+50) Bulgaria vs Georgia | 1X @ williamhill | 2.05 (7.0%)
+51) Belarus vs Greece | BTTS_N @ williamhill | 1.91 (5.7%)
+52) Belarus vs Greece | BTTS_N @ bet365 | 1.91 (5.7%)
+53) Sweden vs Slovenia | X2 @ williamhill | 2.05 (5.6%)
+54) Wales vs FYR Macedonia | X2 @ unibet | 2.16 (5.4%)
+55) Sweden vs Slovenia | X2 @ unibet | 2.04 (5.1%)
+56) Wales vs FYR Macedonia | X2 @ williamhill | 2.15 (4.9%)
+57) Wales vs FYR Macedonia | DRAW @ bet365 | 3.9 (4.8%)
+58) Sweden vs Slovenia | AWAY_WIN @ williamhill | 4.6 (4.3%)
+
+Enter selection: [FATAL] EOF when reading a line
+=== automate_value_alerts @ 2025-11-19T12:10:02+00:00 ===
+[POST] http://localhost:8000/admin/telegram/test -> 404 (optional/missing endpoint)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[POST] http://localhost:8000/admin/recompute -> 200
+[recompute v2] edges=0 model_probs=10274
+[GET] http://localhost:8000/admin/odds-gaps -> 404 (optional/missing endpoint)
+[gaps] none or endpoint missing
+[GET] http://localhost:8000/shortlist/today -> 200
+[shortlist] count=0
+[GET] http://localhost:8000/admin/last-http -> 200
+[GET] http://localhost:8000/admin/gridiron-last-http -> 200

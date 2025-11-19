@@ -523,6 +523,9 @@ class TipsterPick(Base):
     stake = Column(Float, default=1.0)          # £ units
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # ⭐️ NEW: premium gating
+    is_premium_only = Column(Boolean, default=False, nullable=False)
+
     # settlement
     result = Column(String, nullable=True)      # "WIN","LOSE","PUSH", None (unsettled)
     profit = Column(Float, default=0.0)         # stake*(price-1) or -stake (push=0)
@@ -547,6 +550,11 @@ class User(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    # ⭐️ NEW: Stripe + premium
+    stripe_customer_id = Column(String, nullable=True)
+    is_premium = Column(Boolean, default=False)
+    premium_activated_at = Column(DateTime, nullable=True)
 
     follows = relationship("UserFollow", back_populates="user", cascade="all, delete-orphan")
     subscriptions = relationship("TipsterSubscription", back_populates="user", cascade="all, delete-orphan")
@@ -631,3 +639,21 @@ class TipsterFollow(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     tipster = relationship("Tipster", backref="followers")
+
+
+class PlayerPropModel(Base):
+    __tablename__ = "player_prop_models"
+
+    id = Column(Integer, primary_key=True)
+    player_odds_id = Column(Integer, ForeignKey("player_odds.id", ondelete="CASCADE"), index=True)
+
+    model_source = Column(String, nullable=False)   # e.g. "player_form_v1"
+    prob = Column(Float, nullable=False)            # 0..1
+    fair_price = Column(Float, nullable=False)      # 1/prob
+    edge = Column(Float, nullable=False)            # prob * price - 1
+
+    is_premium_only = Column(Boolean, default=True, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    player_odds = relationship("PlayerOdds", backref="models")
