@@ -13,3 +13,4 @@ python-multipart
 openai
 firebase-admin>=6.5.0
 google-auth>=2.35.0
+stripe>=10.0.0,<12.0.0
