@@ -1,28 +1,31 @@
 # api/app/auth_firebase.py
+from __future__ import annotations
+
 from typing import Optional
+from datetime import datetime
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
 from .services.firebase import verify_id_token
 from .db import get_db
 from .models import User
 
-# Bearer auth scheme (reads "Authorization: Bearer <token>")
 bearer = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
-    db=Depends(get_db),
-) -> User:
+    db: Session = Depends(get_db),
+):
     """
     Strict auth:
       - Requires a valid Firebase ID token
-      - Resolves (or auto-creates) a local User row
-      - Returns the SQLAlchemy User instance
+      - Ensures a local User row exists (auto-create)
+      - Returns a DICT of Firebase claims + db_user_id + is_premium
 
-    Use this for routes that MUST be logged in.
+    All callers should treat the return as a dict, e.g. user.get("email").
     """
     if not creds or not creds.scheme.lower().startswith("bearer"):
         raise HTTPException(
@@ -31,73 +34,110 @@ def get_current_user(
         )
 
     try:
-        decoded = verify_id_token(creds.credentials)  # Firebase decoded token
+        claims = verify_id_token(creds.credentials)  # Firebase decoded token (dict)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Firebase token",
         )
 
-    firebase_uid = decoded.get("uid")
-    if not firebase_uid:
+    uid = claims.get("uid")
+    if not uid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing UID",
+            detail="Invalid Firebase token (uid missing)",
         )
 
-    # Look up local user
-    user: Optional[User] = (
-        db.query(User).filter(User.firebase_uid == firebase_uid).first()
-    )
+    email = (claims.get("email") or "").lower()
+    display_name = claims.get("name")
+    avatar_url = claims.get("picture")
 
-    # Option A: auto-create if missing
-    if not user:
-        user = User(
-            firebase_uid=firebase_uid,
-            email=decoded.get("email"),
-            display_name=decoded.get("name"),
-            avatar_url=decoded.get("picture"),
-        )
-        db.add(user)
+    # Sync / upsert local User row
+    try:
+        user = db.query(User).filter(User.firebase_uid == uid).first()
+        now = datetime.utcnow()
+
+        if not user:
+            user = User(
+                firebase_uid=uid,
+                email=email,
+                display_name=display_name,
+                avatar_url=avatar_url,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(user)
+        else:
+            changed = False
+            if email and user.email != email:
+                user.email = email
+                changed = True
+            if display_name and user.display_name != display_name:
+                user.display_name = display_name
+                changed = True
+            if avatar_url and user.avatar_url != avatar_url:
+                user.avatar_url = avatar_url
+                changed = True
+            if changed:
+                user.updated_at = now
+
         db.commit()
         db.refresh(user)
 
-    return user
+        claims["db_user_id"] = user.id
+        claims["is_premium"] = bool(user.is_premium)
+        claims["is_admin"] = bool(user.is_admin)
+
+    except Exception:
+        db.rollback()
+        # Fallback – still let them through with claims only
+        claims.setdefault("db_user_id", None)
+        claims.setdefault("is_premium", False)
+        claims.setdefault("is_admin", False)
+
+    return claims
 
 
 def optional_user(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
-    db=Depends(get_db),
-) -> Optional[User]:
+    db: Session = Depends(get_db),
+) -> Optional[dict]:
     """
     Soft auth:
       - If no/invalid token → returns None
-      - If valid → returns User row
-
-    Use this on endpoints where login is OPTIONAL:
-      e.g. featured picks, tipster cards, dashboard, etc.
+      - If valid → returns the SAME claims dict as get_current_user
     """
     if not creds or not creds.scheme.lower().startswith("bearer"):
         return None
 
     try:
-        decoded = verify_id_token(creds.credentials)
+        claims = verify_id_token(creds.credentials)
     except Exception:
         return None
 
-    firebase_uid = decoded.get("uid")
-    if not firebase_uid:
+    uid = claims.get("uid")
+    if not uid:
         return None
 
-    return db.query(User).filter(User.firebase_uid == firebase_uid).first()
+    user = db.query(User).filter(User.firebase_uid == uid).first()
+    if user:
+        claims["db_user_id"] = user.id
+        claims["is_premium"] = bool(user.is_premium)
+        claims["is_admin"] = bool(user.is_admin)
+    else:
+        claims["db_user_id"] = None
+        claims["is_premium"] = False
+        claims["is_admin"] = False
+
+    return claims
 
 
-def require_premium(user: User = Depends(get_current_user)) -> User:
+def require_premium(user=Depends(get_current_user)):
     """
     Guard for premium-only endpoints.
-    Use like: Depends(require_premium)
+    Use in routes as:  user = Depends(require_premium)
     """
-    if not user.is_premium:
+    if not user.get("is_premium"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Premium subscription required",
