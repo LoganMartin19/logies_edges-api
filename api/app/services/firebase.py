@@ -38,29 +38,22 @@ def _ensure_init():
     _initialized = True
 
 
-def verify_id_token(id_token: str) -> dict:
+# api/app/services/firebase.py
+
+def verify_id_token(id_token: str) -> Optional[dict]:
     """
-    STRICT verify:
-
-    - Ensures Firebase Admin is initialised
-    - Verifies the token
-    - Returns decoded claims (dict)
-    - Raises on failure
-
-    This is what auth_firebase.get_current_user expects: an exception
-    when the token is invalid / missing / Firebase not configured.
+    Returns decoded claims or None if invalid/unavailable.
+    Keeps API alive even if Firebase isn't configured yet.
     """
-    _ensure_init()
-
-    if auth is None:
-        raise RuntimeError("Firebase Admin SDK not configured")
-
-    claims = auth.verify_id_token(id_token)
-    if not claims:
-        # Defensive: if verify_id_token returned falsy
-        raise ValueError("Invalid Firebase token")
-
-    return claims
+    try:
+        _ensure_init()
+        if auth is None:
+            print("Firebase admin not initialised (auth is None)")
+            return None
+        return auth.verify_id_token(id_token)
+    except Exception as e:
+        print("verify_id_token() error:", repr(e))
+        return None
 
 
 def get_current_user(authorization_header: Optional[str]) -> Optional[dict]:

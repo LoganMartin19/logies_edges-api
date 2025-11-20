@@ -18,14 +18,12 @@ bearer = HTTPBearer(auto_error=False)
 def get_current_user(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
     db: Session = Depends(get_db),
-):
+) -> dict:
     """
     Strict auth:
       - Requires a valid Firebase ID token
       - Ensures a local User row exists (auto-create)
-      - Returns a DICT of Firebase claims + db_user_id + is_premium
-
-    All callers should treat the return as a dict, e.g. user.get("email").
+      - Returns a DICT of Firebase claims + db_user_id + is_premium/is_admin
     """
     if not creds or not creds.scheme.lower().startswith("bearer"):
         raise HTTPException(
@@ -33,21 +31,16 @@ def get_current_user(
             detail="Missing Bearer token",
         )
 
-    try:
-        claims = verify_id_token(creds.credentials)  # Firebase decoded token (dict)
-    except Exception:
+    claims = verify_id_token(creds.credentials)
+    if not isinstance(claims, dict) or not claims.get("uid"):
+        # add a print so we can see what's wrong in Render logs
+        print("verify_id_token returned:", claims)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Firebase token",
         )
 
     uid = claims.get("uid")
-    if not uid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Firebase token (uid missing)",
-        )
-
     email = (claims.get("email") or "").lower()
     display_name = claims.get("name")
     avatar_url = claims.get("picture")
@@ -87,10 +80,9 @@ def get_current_user(
         claims["db_user_id"] = user.id
         claims["is_premium"] = bool(user.is_premium)
         claims["is_admin"] = bool(user.is_admin)
-
-    except Exception:
+    except Exception as e:
+        print("Error syncing user from Firebase claims:", e)
         db.rollback()
-        # Fallback – still let them through with claims only
         claims.setdefault("db_user_id", None)
         claims.setdefault("is_premium", False)
         claims.setdefault("is_admin", False)
@@ -110,14 +102,12 @@ def optional_user(
     if not creds or not creds.scheme.lower().startswith("bearer"):
         return None
 
-    try:
-        claims = verify_id_token(creds.credentials)
-    except Exception:
+    claims = verify_id_token(creds.credentials)
+    if not isinstance(claims, dict) or not claims.get("uid"):
         return None
 
     uid = claims.get("uid")
-    if not uid:
-        return None
+    email = (claims.get("email") or "").lower()
 
     user = db.query(User).filter(User.firebase_uid == uid).first()
     if user:
@@ -133,10 +123,6 @@ def optional_user(
 
 
 def require_premium(user=Depends(get_current_user)):
-    """
-    Guard for premium-only endpoints.
-    Use in routes as:  user = Depends(require_premium)
-    """
     if not user.get("is_premium"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

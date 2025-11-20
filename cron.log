@@ -42528,3 +42528,12 @@ Enter selection: [FATAL] EOF when reading a line
 [shortlist] count=0
 [GET] http://localhost:8000/admin/last-http -> 200
 [GET] http://localhost:8000/admin/gridiron-last-http -> 200
+=== automate_value_alerts @ 2025-11-20T00:10:01+00:00 ===
+[HTTP-ERR] POST http://localhost:8000/admin/telegram/test: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] POST http://localhost:8000/admin/run-dates: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] POST http://localhost:8000/admin/recompute: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] GET http://localhost:8000/admin/odds-gaps: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[gaps] none or endpoint missing
+[HTTP-ERR] GET http://localhost:8000/shortlist/today: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] GET http://localhost:8000/admin/last-http: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
+[HTTP-ERR] GET http://localhost:8000/admin/gridiron-last-http: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=90)
