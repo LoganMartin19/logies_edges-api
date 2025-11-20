@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -10,19 +10,23 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import User, UserBet, Fixture, Tipster
-from ..auth_firebase import get_current_user  # ✅ FIXED IMPORT
+from ..auth_firebase import get_current_user  # ✅ use claims-based auth
 
 router = APIRouter(tags=["user-bets"])
 
 # ---------- Pydantic models ----------
 
 class PlaceBetIn(BaseModel):
-    fixture_id: Optional[int] = Field(None, description="Fixture.id this bet relates to")
+    fixture_id: Optional[int] = Field(
+        None, description="Fixture.id this bet relates to"
+    )
     market: str
     bookmaker: Optional[str] = None
     price: float
     stake: float
+    # optional: who you copied it from (tipster)
     source_tipster_id: Optional[int] = None
+
 
 class UserBetOut(BaseModel):
     id: int
@@ -42,15 +46,21 @@ class UserBetOut(BaseModel):
 
 # ---------- Helpers ----------
 
-def _resolve_local_user(db: Session, claims: dict) -> User:
-    """Fetch the User row using db_user_id from auth_firebase."""
-    uid = claims.get("db_user_id")
-    if not uid:
-        raise HTTPException(401, "Local user not found in auth claims")
-    user = db.query(User).get(uid)
+def _resolve_db_user(db: Session, claims: dict) -> User:
+    """
+    Turn the merged Firebase claims from get_current_user into a real User row.
+    get_current_user already guarantees a local user and sets db_user_id.
+    """
+    user_id = claims.get("db_user_id")
+    if not user_id:
+        # Shouldn't really happen if auth_firebase is working
+        raise HTTPException(status_code=401, detail="User not found for this token")
+
+    user = db.query(User).get(user_id)
     if not user:
-        raise HTTPException(401, "User row does not exist")
+        raise HTTPException(status_code=401, detail="User not found")
     return user
+
 
 def _to_out(b: UserBet) -> UserBetOut:
     return UserBetOut.from_orm(b)
@@ -62,15 +72,25 @@ def _to_out(b: UserBet) -> UserBetOut:
 def create_user_bet(
     payload: PlaceBetIn,
     db: Session = Depends(get_db),
-    claims=Depends(get_current_user),   # now returns dict
+    user_claims=Depends(get_current_user),  # ✅ claims dict
 ):
-    user = _resolve_local_user(db, claims)
+    """
+    Create a personal bet row tied to the current logged-in user.
+    Used by the 'Place Bet' button on the fixture page.
+    """
+    user = _resolve_db_user(db, user_claims)
 
+    # Optional: sanity-check fixture exists if provided
     if payload.fixture_id is not None:
-        fx = db.query(Fixture).filter(Fixture.id == payload.fixture_id).one_or_none()
+        fx = (
+            db.query(Fixture)
+            .filter(Fixture.id == payload.fixture_id)
+            .one_or_none()
+        )
         if not fx:
-            raise HTTPException(400, "Fixture not found")
+            raise HTTPException(status_code=400, detail="Fixture not found")
 
+    # Optional: validate source_tipster_id if provided
     if payload.source_tipster_id is not None:
         exists = (
             db.query(Tipster.id)
@@ -78,7 +98,7 @@ def create_user_bet(
             .scalar()
         )
         if not exists:
-            raise HTTPException(400, "Tipster not found")
+            raise HTTPException(status_code=400, detail="Tipster not found")
 
     b = UserBet(
         user_id=user.id,
@@ -89,6 +109,7 @@ def create_user_bet(
         stake=float(payload.stake),
         placed_at=datetime.now(timezone.utc),
         source_tipster_id=payload.source_tipster_id,
+        # result/ret/pnl stay None until settled
     )
     db.add(b)
     db.commit()
@@ -96,12 +117,15 @@ def create_user_bet(
     return _to_out(b)
 
 
-@router.get("/user-bets", response_model=list[UserBetOut])
+@router.get("/user-bets", response_model=List[UserBetOut])
 def list_user_bets(
     db: Session = Depends(get_db),
-    claims=Depends(get_current_user),
+    user_claims=Depends(get_current_user),  # ✅ claims dict
 ):
-    user = _resolve_local_user(db, claims)
+    """
+    Return all bets for the current user (for future personal dashboards).
+    """
+    user = _resolve_db_user(db, user_claims)
 
     rows = (
         db.query(UserBet)
