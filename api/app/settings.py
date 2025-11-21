@@ -40,7 +40,7 @@ class Settings:
     STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
     
     # IMPORTANT: match the name you already added in Render/.env
-    STRIPE_PREMIUM_PRICE_ID_PREMIUM = os.getenv("STRIPE_PREMIUM_PRICE_ID", "")
+    STRIPE_PREMIUM_PRICE_ID = os.getenv("STRIPE_PREMIUM_PRICE_ID", "")
     
     # You can add additional pricing tiers later:
     # STRIPE_PRICE_ID_TIPSTER_MONTHLY = os.getenv("STRIPE_PRICE_ID_TIPSTER_MONTHLY", "")
