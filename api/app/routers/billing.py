@@ -48,7 +48,7 @@ def create_premium_checkout(
     """
     user = _get_or_create_db_user(db, fb_user)
 
-    if not settings.STRIPE_PRICE_ID_PREMIUM or not settings.STRIPE_SECRET_KEY:
+    if not settings.STRIPE_PREMIUM_PRICE_ID or not settings.STRIPE_SECRET_KEY:
         raise HTTPException(
             status_code=500,
             detail="Stripe is not configured on the server."
