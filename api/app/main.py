@@ -116,7 +116,7 @@ app.include_router(fixtures_router.router)
 app.include_router(basketball_router.router)
 app.include_router(football_admin_router)
 app.include_router(auth_router.router)
-app.include_router(billing_router.router)
+app.include_router(billing_router.router, prefix="/api")
 app.include_router(tipsters_router.router)
 
 
