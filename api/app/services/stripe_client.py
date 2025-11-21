@@ -23,7 +23,7 @@ def create_premium_checkout_session(
         mode="subscription",
         payment_method_types=["card"],
         line_items=[{
-            "price": settings.STRIPE_PRICE_ID_PREMIUM,
+            "price": settings.STRIPE_PREMIUM_PRICE_ID,
             "quantity": 1,
         }],
         customer_email=customer_email,
