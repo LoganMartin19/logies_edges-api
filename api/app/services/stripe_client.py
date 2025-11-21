@@ -56,3 +56,14 @@ def parse_event(payload: bytes, sig_header: str) -> stripe.Event:
         sig_header=sig_header,
         secret=settings.STRIPE_WEBHOOK_SECRET,
     )
+
+def create_billing_portal_session(customer_id: str, return_url: str) -> str:
+    """
+    Create a Stripe Billing Portal session so the user can manage
+    their subscription (update card, cancel, etc.).
+    """
+    session = stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=return_url,
+    )
+    return session.url
