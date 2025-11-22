@@ -16,6 +16,7 @@ from ..models import (
     AccaTicket,
     AccaLeg,
     TipsterFollow,
+    User,  # ✅ needed for premium gating
 )
 from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 from ..auth_firebase import get_current_user, optional_user
@@ -57,6 +58,8 @@ class PickIn(BaseModel):
     bookmaker: str | None = None
     price: float
     stake: float = 1.0
+    # ⭐️ allow tipster to mark as premium-only
+    is_premium_only: bool = False
 
 
 class PickOut(BaseModel):
@@ -76,6 +79,8 @@ class PickOut(BaseModel):
     sport: str | None = None
     home_name: str | None = None
     away_name: str | None = None
+    # ⭐️ premium gating flag
+    is_premium_only: bool = False
     # deletion helpers
     kickoff_utc: str | None = None
     can_delete: bool = False
@@ -323,6 +328,24 @@ def _with_live_metrics(db: Session, c: Tipster) -> dict:
     return out
 
 
+def _viewer_premium_status(db: Session, viewer_claims: dict | None) -> tuple[bool, str]:
+    """
+    Helper: given Firebase claims (or None), return (is_premium, email_lower).
+    """
+    viewer_claims = viewer_claims or {}
+    email = (viewer_claims.get("email") or "").lower()
+    uid = viewer_claims.get("uid")
+
+    user_row = None
+    if uid:
+        user_row = db.query(User).filter(User.firebase_uid == uid).first()
+    if not user_row and email:
+        user_row = db.query(User).filter(User.email == email).first()
+
+    is_premium = bool(user_row.is_premium) if user_row else False
+    return is_premium, email
+
+
 # ---------- routes: tipster profile ----------
 
 
@@ -408,7 +431,7 @@ def get_tipster(
     if not c:
         raise HTTPException(404, "tipster not found")
 
-    viewer_email = (viewer or {}).get("email", "").lower()
+    viewer_is_premium, viewer_email = _viewer_premium_status(db, viewer)
     tipster_email = ((_email_of_tipster(c) or "")).lower()
 
     out = _with_live_metrics(db, c)
@@ -537,7 +560,7 @@ def list_following(
         row = _with_live_metrics(db, t)
         row["is_owner"] = False
         row["is_following"] = True
-        out.append(row)
+        return out
 
     return out
 
@@ -547,14 +570,16 @@ def following_feed(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    email = (user.get("email") or "").lower()
-    if not email:
+    # viewer is logged in here
+    viewer_is_premium, viewer_email = _viewer_premium_status(db, user)
+
+    if not viewer_email:
         raise HTTPException(400, "Email missing in Firebase token")
 
     # find whom the user follows
     rows = (
         db.query(TipsterFollow)
-        .filter(TipsterFollow.follower_email == email)
+        .filter(TipsterFollow.follower_email == viewer_email)
         .all()
     )
     tipster_ids = [r.tipster_id for r in rows]
@@ -573,6 +598,9 @@ def following_feed(
 
     out = []
     for p in picks:
+        # ⭐️ HARD GATE: hide premium-only picks in following feed
+        if p.is_premium_only and not viewer_is_premium:
+            continue
         extra = _fixture_info(db, p.fixture_id)
         tipster = db.query(Tipster).get(p.tipster_id)
         out.append(
@@ -590,6 +618,7 @@ def following_feed(
                 "model_edge": model_edge_for_pick(
                     db, p.fixture_id, p.market, p.price
                 ),
+                "is_premium_only": bool(p.is_premium_only),
                 **extra,
             }
         )
@@ -612,7 +641,15 @@ def create_pick(
     user=Depends(get_current_user),
 ):
     c = _require_owner(username, db, user)
-    p = TipsterPick(tipster_id=c.id, **payload.model_dump())
+    p = TipsterPick(
+        tipster_id=c.id,
+        fixture_id=payload.fixture_id,
+        market=payload.market,
+        bookmaker=payload.bookmaker,
+        price=payload.price,
+        stake=payload.stake,
+        is_premium_only=payload.is_premium_only,
+    )
     db.add(p)
     db.commit()
     db.refresh(p)
@@ -631,25 +668,37 @@ def create_pick(
         "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price),
         "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
         "can_delete": _pick_can_delete(db, p),
+        "is_premium_only": bool(p.is_premium_only),
         **extra,
     }
 
 
 @router.get("/{username}/picks", response_model=list[PickOut])
-def list_picks(username: str, db: Session = Depends(get_db)):
-    c = db.query(Tipster).filter(Tipster.username == username).first()
-    if not c:
+def list_picks(
+    username: str,
+    db: Session = Depends(get_db),
+    viewer=Depends(optional_user),
+):
+    tip = db.query(Tipster).filter(Tipster.username == username).first()
+    if not tip:
         raise HTTPException(404, "tipster not found")
+
+    viewer_is_premium, viewer_email = _viewer_premium_status(db, viewer)
+    tip_email = ((_email_of_tipster(tip) or "")).lower()
+    is_owner = bool(viewer_email and viewer_email == tip_email)
 
     rows = (
         db.query(TipsterPick)
-        .filter(TipsterPick.tipster_id == c.id)
+        .filter(TipsterPick.tipster_id == tip.id)
         .order_by(TipsterPick.created_at.desc())
         .all()
     )
 
     out: list[dict] = []
     for p in rows:
+        # ⭐️ HARD GATE: hide premium-only picks from non-premium, non-owner viewers
+        if p.is_premium_only and not (viewer_is_premium or is_owner):
+            continue
         extra = _fixture_info(db, p.fixture_id)
         out.append(
             {
@@ -667,6 +716,7 @@ def list_picks(username: str, db: Session = Depends(get_db)):
                 ),
                 "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
                 "can_delete": _pick_can_delete(db, p),
+                "is_premium_only": bool(p.is_premium_only),
                 **extra,
             }
         )
@@ -720,6 +770,7 @@ def settle_pick(
         "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price),
         "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
         "can_delete": _pick_can_delete(db, p),
+        "is_premium_only": bool(p.is_premium_only),
         **extra,
     }
 
