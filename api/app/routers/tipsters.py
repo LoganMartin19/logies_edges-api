@@ -655,16 +655,23 @@ def create_pick(
     db.refresh(p)
 
     extra = _fixture_info(db, p.fixture_id)
+
+    # 🔒 sanitize required fields for PickOut
+    market = p.market or "Unknown"
+    price = float(p.price) if p.price is not None else 0.0
+    stake = float(p.stake) if p.stake is not None else 0.0
+    profit = float(p.profit) if p.profit is not None else 0.0
+
     return {
         "id": p.id,
         "fixture_id": p.fixture_id,
-        "market": p.market,
-        "bookmaker": p.bookmaker,
-        "price": p.price,
-        "stake": p.stake,
+        "market": market,
+        "bookmaker": p.bookmaker or None,
+        "price": price,
+        "stake": stake,
         "created_at": p.created_at,
         "result": p.result,
-        "profit": p.profit,
+        "profit": profit,
         "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price),
         "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
         "can_delete": _pick_can_delete(db, p),
@@ -696,53 +703,57 @@ def list_picks(
 
     out: list[dict] = []
     for p in rows:
-      extra = _fixture_info(db, p.fixture_id)
+        extra = _fixture_info(db, p.fixture_id)
+        locked = p.is_premium_only and not (viewer_is_premium or is_owner)
 
-      locked = p.is_premium_only and not (viewer_is_premium or is_owner)
+        if locked:
+            # 🔒 Non-premium, non-owner → "locked" row but still schema-valid
+            out.append(
+                {
+                    "id": p.id,
+                    "fixture_id": p.fixture_id,
+                    "market": "Premium pick",
+                    "bookmaker": None,
+                    "price": 0.0,
+                    "stake": 0.0,
+                    "created_at": p.created_at,
+                    "result": None,
+                    "profit": 0.0,
+                    "model_edge": None,
+                    "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
+                    "can_delete": False,
+                    "is_premium_only": True,
+                    **extra,
+                }
+            )
+            continue
 
-      if locked:
-          # 🔒 Non-premium, non-owner → send a stubbed/locked row
-          out.append(
-              {
-                  "id": p.id,
-                  "fixture_id": p.fixture_id,
-                  "market": None,
-                  "bookmaker": None,
-                  "price": None,
-                  "stake": None,
-                  "created_at": p.created_at,
-                  "result": None,
-                  "profit": 0.0,
-                  "model_edge": None,
-                  "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
-                  "can_delete": False,
-                  "is_premium_only": True,
-                  **extra,
-              }
-          )
-          continue
+        # normal visible pick, sanitized
+        market = p.market or "Unknown"
+        price = float(p.price) if p.price is not None else 0.0
+        stake = float(p.stake) if p.stake is not None else 0.0
+        profit = float(p.profit) if p.profit is not None else 0.0
 
-      # normal visible pick
-      out.append(
-          {
-              "id": p.id,
-              "fixture_id": p.fixture_id,
-              "market": p.market,
-              "bookmaker": p.bookmaker,
-              "price": p.price,
-              "stake": p.stake,
-              "created_at": p.created_at,
-              "result": p.result,
-              "profit": p.profit,
-              "model_edge": model_edge_for_pick(
-                  db, p.fixture_id, p.market, p.price
-              ),
-              "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
-              "can_delete": _pick_can_delete(db, p),
-              "is_premium_only": bool(p.is_premium_only),
-              **extra,
-          }
-      )
+        out.append(
+            {
+                "id": p.id,
+                "fixture_id": p.fixture_id,
+                "market": market,
+                "bookmaker": p.bookmaker or None,
+                "price": price,
+                "stake": stake,
+                "created_at": p.created_at,
+                "result": p.result,
+                "profit": profit,
+                "model_edge": model_edge_for_pick(
+                    db, p.fixture_id, p.market, p.price
+                ),
+                "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
+                "can_delete": _pick_can_delete(db, p),
+                "is_premium_only": bool(p.is_premium_only),
+                **extra,
+            }
+        )
     return out
 
 
@@ -780,16 +791,23 @@ def settle_pick(
     db.refresh(p)
 
     extra = _fixture_info(db, p.fixture_id)
+
+    # 🔒 sanitize again for PickOut
+    market = p.market or "Unknown"
+    price = float(p.price) if p.price is not None else 0.0
+    stake = float(p.stake) if p.stake is not None else 0.0
+    profit = float(p.profit) if p.profit is not None else 0.0
+
     return {
         "id": p.id,
         "fixture_id": p.fixture_id,
-        "market": p.market,
-        "bookmaker": p.bookmaker,
-        "price": p.price,
-        "stake": p.stake,
+        "market": market,
+        "bookmaker": p.bookmaker or None,
+        "price": price,
+        "stake": stake,
         "created_at": p.created_at,
         "result": p.result,
-        "profit": p.profit,
+        "profit": profit,
         "model_edge": model_edge_for_pick(db, p.fixture_id, p.market, p.price),
         "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
         "can_delete": _pick_can_delete(db, p),
