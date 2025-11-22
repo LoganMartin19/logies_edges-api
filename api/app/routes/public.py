@@ -1,22 +1,21 @@
-# api/app/routes/public.py
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo  # ✅ for British local time conversion
+from zoneinfo import ZoneInfo
 
 from ..db import get_db
-from ..models import Fixture, Odds, FeaturedPick
+from ..models import Fixture, Odds, FeaturedPick, User
+from ..auth_firebase import optional_user   # ⭐ viewer identity (may be None)
 
 pub = APIRouter(prefix="/public", tags=["public"])
 
-# --- helpers -----------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 LONDON_TZ = ZoneInfo("Europe/London")
 
 def _parse_day(day_str: str):
-    """Parse a YYYY-MM-DD date string and return (start_utc, end_utc)."""
     d = datetime.fromisoformat(day_str).date()
     start = datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc)
     end = start + timedelta(days=1)
@@ -24,24 +23,39 @@ def _parse_day(day_str: str):
 
 def _norm_sport(s: str) -> str:
     s = (s or "all").strip().lower()
-    aliases = {
+    return {
         "soccer": "football",
         "footy": "football",
         "futbol": "football",
         "fútbol": "football",
-    }
-    return aliases.get(s, s)
+    }.get(s, s)
 
 def _to_bst_iso(dt: datetime | None) -> str | None:
-    """Convert UTC datetime → Europe/London ISO string (with offset)."""
     if not dt:
         return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    local_dt = dt.astimezone(LONDON_TZ)
-    return local_dt.isoformat()
+    return dt.astimezone(LONDON_TZ).isoformat()
 
-# --- public fixtures ---------------------------------------------------------
+# ---------------------------------------------------------------------------
+# ⭐ Premium helper
+
+def _viewer_is_premium(db: Session, viewer: dict | None) -> bool:
+    viewer = viewer or {}
+    uid = viewer.get("uid")
+    email = (viewer.get("email") or "").lower()
+
+    user_row = None
+    if uid:
+        user_row = db.query(User).filter(User.firebase_uid == uid).first()
+    if not user_row and email:
+        user_row = db.query(User).filter(User.email == email).first()
+
+    return bool(user_row and user_row.is_premium)
+
+# ---------------------------------------------------------------------------
+# PUBLIC FIXTURES
+# ---------------------------------------------------------------------------
 
 @pub.get("/fixtures/daily")
 def fixtures_daily(
@@ -76,16 +90,18 @@ def fixtures_daily(
             .filter(Odds.fixture_id == f.id, Odds.market.in_(["HOME_WIN", "AWAY_WIN"]))
             .all()
         )
+
         for o in odds_rows:
             try:
                 price = float(o.price)
-            except Exception:
+            except:
                 continue
+
             if o.market == "HOME_WIN":
-                if (best_home is None) or (price > best_home["price"]):
+                if not best_home or price > best_home["price"]:
                     best_home = {"bookmaker": o.bookmaker, "price": price}
-            elif o.market == "AWAY_WIN":
-                if (best_away is None) or (price > best_away["price"]):
+            if o.market == "AWAY_WIN":
+                if not best_away or price > best_away["price"]:
                     best_away = {"bookmaker": o.bookmaker, "price": price}
 
         out.append({
@@ -93,7 +109,7 @@ def fixtures_daily(
             "home_team": f.home_team,
             "away_team": f.away_team,
             "comp": f.comp,
-            "kickoff_utc": _to_bst_iso(f.kickoff_utc),  # ✅ now in British local time
+            "kickoff_utc": _to_bst_iso(f.kickoff_utc),
             "sport": f.sport,
             "best_home": best_home,
             "best_away": best_away,
@@ -101,52 +117,78 @@ def fixtures_daily(
 
     return {"day": day, "sport": s, "count": len(out), "fixtures": out}
 
-# --- public curated picks ----------------------------------------------------
+# ---------------------------------------------------------------------------
+# PUBLIC FEATURED PICKS (with premium locking)
+# ---------------------------------------------------------------------------
 
 @pub.get("/picks/daily")
 def public_picks_daily(
     day: str = Query(..., description="YYYY-MM-DD"),
     sport: str = Query("all"),
     db: Session = Depends(get_db),
+    viewer=Depends(optional_user),   # ⭐ may be None
 ):
     s = _norm_sport(sport)
 
-    # 👇 Use date instead of comparing timestamp vs timestamptz
+    # day -> date
     from datetime import date as _date
     chosen_day = _date.fromisoformat(day)
+
+    viewer_is_premium = _viewer_is_premium(db, viewer)   # ⭐
 
     q = (
         db.query(FeaturedPick, Fixture)
         .join(Fixture, Fixture.id == FeaturedPick.fixture_id)
-        .filter(FeaturedPick.day == chosen_day)  # ✅ Clean, safe, index-supported
+        .filter(FeaturedPick.day == chosen_day)
         .order_by(FeaturedPick.created_at.asc())
     )
-
     if s != "all":
         q = q.filter(FeaturedPick.sport == s)
 
     rows = q.all()
     picks = []
-    for p, f in rows:
-        ko = p.kickoff_utc or f.kickoff_utc
-        picks.append({
-            "pick_id": p.id,
+
+    for r, f in rows:
+        ko = r.kickoff_utc or f.kickoff_utc
+        local_ko = _to_bst_iso(ko)
+
+        is_premium = bool(getattr(r, "is_premium_only", False))
+        locked = is_premium and not viewer_is_premium
+
+        base = {
+            "pick_id": r.id,
             "fixture_id": f.id,
             "matchup": f"{f.home_team} vs {f.away_team}",
             "home_team": f.home_team,
             "away_team": f.away_team,
-            "comp": p.comp or f.comp,
-            "sport": p.sport or f.sport,
-            "kickoff_utc": _to_bst_iso(ko),
-            "market": p.market,
-            "bookmaker": p.bookmaker,
-            "price": p.price,
-            "note": p.note,
-        })
+            "comp": r.comp or f.comp,
+            "sport": r.sport or f.sport,
+            "kickoff_utc": local_ko,
+            "is_premium_only": is_premium,
+        }
+
+        if locked:
+            picks.append({
+                **base,
+                "market": "Premium pick",
+                "bookmaker": None,
+                "price": None,
+                "note": "Unlock this premium featured pick with CSB Premium.",
+            })
+        else:
+            picks.append({
+                **base,
+                "market": r.market,
+                "bookmaker": r.bookmaker,
+                "price": r.price,
+                "note": r.note,
+            })
 
     return {"day": day, "sport": s, "count": len(picks), "picks": picks}
 
-# --- admin: add/remove curated picks ----------------------------------------
+# ---------------------------------------------------------------------------
+# ADMIN ADD/REMOVE PICK (unchanged except compatible with premium field if DB has it)
+# ---------------------------------------------------------------------------
 
 @pub.post("/admin/picks/add")
 def admin_picks_add(
@@ -156,6 +198,7 @@ def admin_picks_add(
     price: float = Query(...),
     note: str | None = Query(None),
     day: str | None = Query(None),
+    is_premium_only: bool = Query(False),   # ⭐ allow premium flag
     db: Session = Depends(get_db),
 ):
     f = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
@@ -163,19 +206,12 @@ def admin_picks_add(
         raise HTTPException(status_code=404, detail="Fixture not found")
 
     ko = f.kickoff_utc
-    if not ko:
-        raise HTTPException(status_code=400, detail="Fixture has no kickoff_utc")
+    if ko is None:
+        raise HTTPException(status_code=400, detail="Fixture missing kickoff time")
     if ko.tzinfo is None:
         ko = ko.replace(tzinfo=timezone.utc)
 
     chosen_day = datetime.fromisoformat(day).date() if day else ko.date()
-
-    sport = f.sport or "football"
-    comp = f.comp or ""
-    home_name = f.home_team or ""
-    away_name = f.away_team or ""
-    if not home_name or not away_name:
-        raise HTTPException(status_code=400, detail="Fixture missing team names")
 
     existing = db.query(FeaturedPick).filter(
         FeaturedPick.day == chosen_day,
@@ -186,23 +222,24 @@ def admin_picks_add(
 
     if existing:
         existing.price = float(price)
-        if note is not None:
-            existing.note = note or None
+        existing.note = note or None
+        existing.is_premium_only = is_premium_only   # ⭐ update
         db.commit()
         return {"ok": True, "message": "Pick updated", "pick_id": existing.id}
 
     fp = FeaturedPick(
         fixture_id=f.id,
         day=chosen_day,
-        sport=sport,
-        comp=comp,
-        home_team=home_name,
-        away_team=away_name,
+        sport=f.sport or "football",
+        comp=f.comp,
+        home_team=f.home_team,
+        away_team=f.away_team,
         kickoff_utc=ko,
         market=market,
         bookmaker=bookmaker,
         price=float(price),
-        note=(note or None),
+        note=note or None,
+        is_premium_only=is_premium_only,   # ⭐ save
     )
     db.add(fp)
     db.commit()

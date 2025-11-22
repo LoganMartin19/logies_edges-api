@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from ..db import get_db
-from ..models import Fixture, FeaturedPick, Edge
+from ..models import Fixture, FeaturedPick, Edge, User  # ⭐ add User
+
+from ..auth_firebase import optional_user  # ⭐ for viewer premium on public
 
 router = APIRouter(prefix="/admin", tags=["picks"])
 
@@ -102,6 +104,7 @@ def admin_list_picks(
                 "stake": r.stake,
                 "result": r.result,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
+                "is_premium_only": bool(getattr(r, "is_premium_only", False)),  # ⭐
                 "fixture": {
                     "home": fmap.get(r.fixture_id).home_team if fmap.get(r.fixture_id) else None,
                     "away": fmap.get(r.fixture_id).away_team if fmap.get(r.fixture_id) else None,
@@ -126,8 +129,7 @@ class PickIn(BaseModel):
     edge: float | None = None
     note: str | None = None
     stake: float | None = 1.0
-    # ⭐ NEW
-    is_premium_only: bool = False
+    is_premium_only: bool = False    # ⭐ NEW
 
 @router.post("/picks")
 def admin_save_pick(payload: PickIn, db: Session = Depends(get_db)):
@@ -136,7 +138,7 @@ def admin_save_pick(payload: PickIn, db: Session = Depends(get_db)):
     if not fx:
         raise HTTPException(404, "Fixture not found")
 
-    # upsert
+    # upsert by (day, fixture_id, market, bookmaker)
     r = (
         db.query(FeaturedPick)
         .filter(
@@ -147,15 +149,13 @@ def admin_save_pick(payload: PickIn, db: Session = Depends(get_db)):
         )
         .one_or_none()
     )
-
     if r:
         r.sport = payload.sport
         r.price = payload.price
         r.edge = payload.edge
         r.note = payload.note
         r.stake = payload.stake
-        # NEW
-        r.is_premium_only = payload.is_premium_only
+        r.is_premium_only = payload.is_premium_only  # ⭐
     else:
         r = FeaturedPick(
             day=d,
@@ -171,11 +171,9 @@ def admin_save_pick(payload: PickIn, db: Session = Depends(get_db)):
             edge=payload.edge,
             note=payload.note,
             stake=payload.stake,
-            # NEW
-            is_premium_only=payload.is_premium_only,
+            is_premium_only=payload.is_premium_only,  # ⭐
         )
         db.add(r)
-
     db.commit()
     return {"ok": True, "id": r.id}
 
@@ -184,6 +182,20 @@ def admin_delete_pick(pick_id: int, db: Session = Depends(get_db)):
     n = db.query(FeaturedPick).filter(FeaturedPick.id == pick_id).delete(synchronize_session=False)
     db.commit()
     return {"ok": True, "deleted": n}
+
+# -------- premium helper for public side -------- ⭐
+
+def _viewer_is_premium(db: Session, viewer_claims: dict | None) -> bool:
+    viewer_claims = viewer_claims or {}
+    email = (viewer_claims.get("email") or "").lower()
+    uid = viewer_claims.get("uid")
+
+    user_row = None
+    if uid:
+        user_row = db.query(User).filter(User.firebase_uid == uid).first()
+    if not user_row and email:
+        user_row = db.query(User).filter(User.email == email).first()
+    return bool(user_row.is_premium) if user_row else False
 
 # --- Public: only show up to 3 featured picks for the day ------------------
 
@@ -194,10 +206,13 @@ def public_picks(
     day: str | None = Query(None, description="YYYY-MM-DD (UTC). Default=today"),
     limit: int = Query(3, ge=1, le=3, description="Max 3 public featured picks"),
     db: Session = Depends(get_db),
+    viewer=Depends(optional_user),  # ⭐
 ):
     if not day:
         day = datetime.now(timezone.utc).date().isoformat()
     d = date_cls.fromisoformat(day)
+
+    viewer_is_premium = _viewer_is_premium(db, viewer)  # ⭐
 
     picks: List[FeaturedPick] = (
         db.query(FeaturedPick)
@@ -227,32 +242,63 @@ def public_picks(
                 }
 
     def _reason(p: FeaturedPick) -> str | None:
-        if p.note: return p.note
+        if p.note: 
+            return p.note
         be = best_by_fixture.get(p.fixture_id)
         if be and be.get("market") == p.market:
             e = be.get("edge")
             return f"Best model edge for this match (~{e:.1%})." if e is not None else "Model-favoured market."
         return None
 
+    out = []
+    for p in picks:
+        fx = fmap.get(p.fixture_id)
+        match = f"{fx.home_team} v {fx.away_team}" if fx else None
+        league = fx.comp if fx else None
+        ko_iso = fx.kickoff_utc.isoformat() if fx and fx.kickoff_utc else None
+
+        is_premium = bool(getattr(p, "is_premium_only", False))
+        locked = is_premium and not viewer_is_premium
+
+        base = {
+            "id": p.id,
+            "fixture_id": p.fixture_id,
+            "match": match,
+            "league": league,
+            "kickoff_utc": ko_iso,
+            "sport": p.sport,
+            "is_premium_only": is_premium,  # ⭐
+        }
+
+        if locked:
+            out.append(
+                {
+                    **base,
+                    "market": "Premium pick",
+                    "bookmaker": None,
+                    "price": None,
+                    "edge": None,
+                    "stake": None,
+                    "reason": "Unlock this premium featured pick with CSB Premium.",
+                }
+            )
+        else:
+            out.append(
+                {
+                    **base,
+                    "market": p.market,
+                    "bookmaker": p.bookmaker,
+                    "price": float(p.price) if p.price is not None else None,
+                    "edge": float(p.edge) if p.edge is not None else None,
+                    "stake": float(p.stake) if p.stake is not None else 1.0,
+                    "reason": _reason(p),
+                }
+            )
+
     return {
         "day": day,
-        "count": len(picks),
-        "picks": [
-            {
-                "id": p.id,
-                "fixture_id": p.fixture_id,
-                "match": f"{fmap[p.fixture_id].home_team} v {fmap[p.fixture_id].away_team}" if p.fixture_id in fmap else None,
-                "league": fmap[p.fixture_id].comp if p.fixture_id in fmap else None,
-                "kickoff_utc": fmap[p.fixture_id].kickoff_utc.isoformat() if p.fixture_id in fmap else None,
-                "sport": p.sport,
-                "market": p.market,
-                "bookmaker": p.bookmaker,
-                "price": float(p.price) if p.price is not None else None,
-                "edge": float(p.edge) if p.edge is not None else None,
-                "stake": float(p.stake) if p.stake is not None else 1.0,
-                "reason": _reason(p),
-            } for p in picks
-        ]
+        "count": len(out),
+        "picks": out,
     }
 
 # --- Public: featured picks record (W-L-V, ROI, list) -----------------------
@@ -271,16 +317,20 @@ def public_picks_record(
         start_dt = today - timedelta(days=days)
 
     q = db.query(FeaturedPick)
-    if start_dt: q = q.filter(FeaturedPick.created_at >= start_dt)
+    if start_dt: 
+        q = q.filter(FeaturedPick.created_at >= start_dt)
     rows = q.order_by(FeaturedPick.created_at.desc()).limit(1000).all()
 
     won = lost = void = 0; staked = returned = 0.0; items = []
     for r in rows:
         stake = float(r.stake or 1.0); price = float(r.price or 0.0)
         res = (r.result or "").lower(); units = 0.0
-        if res == "won": won += 1; units = stake * (price - 1.0); returned += stake * price
-        elif res == "lost": lost += 1; units = -stake
-        elif res == "void": void += 1; returned += stake
+        if res == "won": 
+            won += 1; units = stake * (price - 1.0); returned += stake * price
+        elif res == "lost": 
+            lost += 1; units = -stake
+        elif res == "void": 
+            void += 1; returned += stake
         staked += stake
         items.append({
             "pick_id": r.id, "fixture_id": r.fixture_id,
@@ -289,6 +339,7 @@ def public_picks_record(
             "market": r.market, "bookmaker": r.bookmaker, "price": r.price, "edge": r.edge,
             "stake": stake, "result": r.result, "units": round(units, 2), "note": r.note,
             "created_at": r.created_at.isoformat() if r.created_at else None,
+            "is_premium_only": bool(getattr(r, "is_premium_only", False)),  # ⭐
         })
     pnl = returned - staked; roi = (pnl / staked * 100) if staked else 0.0
     return {"span": span, "summary": {
