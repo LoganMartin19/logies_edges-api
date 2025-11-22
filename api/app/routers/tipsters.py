@@ -696,30 +696,53 @@ def list_picks(
 
     out: list[dict] = []
     for p in rows:
-        # ⭐️ HARD GATE: hide premium-only picks from non-premium, non-owner viewers
-        if p.is_premium_only and not (viewer_is_premium or is_owner):
-            continue
-        extra = _fixture_info(db, p.fixture_id)
-        out.append(
-            {
-                "id": p.id,
-                "fixture_id": p.fixture_id,
-                "market": p.market,
-                "bookmaker": p.bookmaker,
-                "price": p.price,
-                "stake": p.stake,
-                "created_at": p.created_at,
-                "result": p.result,
-                "profit": p.profit,
-                "model_edge": model_edge_for_pick(
-                    db, p.fixture_id, p.market, p.price
-                ),
-                "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
-                "can_delete": _pick_can_delete(db, p),
-                "is_premium_only": bool(p.is_premium_only),
-                **extra,
-            }
-        )
+      extra = _fixture_info(db, p.fixture_id)
+
+      locked = p.is_premium_only and not (viewer_is_premium or is_owner)
+
+      if locked:
+          # 🔒 Non-premium, non-owner → send a stubbed/locked row
+          out.append(
+              {
+                  "id": p.id,
+                  "fixture_id": p.fixture_id,
+                  "market": None,
+                  "bookmaker": None,
+                  "price": None,
+                  "stake": None,
+                  "created_at": p.created_at,
+                  "result": None,
+                  "profit": 0.0,
+                  "model_edge": None,
+                  "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
+                  "can_delete": False,
+                  "is_premium_only": True,
+                  **extra,
+              }
+          )
+          continue
+
+      # normal visible pick
+      out.append(
+          {
+              "id": p.id,
+              "fixture_id": p.fixture_id,
+              "market": p.market,
+              "bookmaker": p.bookmaker,
+              "price": p.price,
+              "stake": p.stake,
+              "created_at": p.created_at,
+              "result": p.result,
+              "profit": p.profit,
+              "model_edge": model_edge_for_pick(
+                  db, p.fixture_id, p.market, p.price
+              ),
+              "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
+              "can_delete": _pick_can_delete(db, p),
+              "is_premium_only": bool(p.is_premium_only),
+              **extra,
+          }
+      )
     return out
 
 

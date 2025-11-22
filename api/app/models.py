@@ -293,23 +293,27 @@ class PlayerOdds(Base):
         Index("ix_player_odds_player_market", "player_id", "market"),
     )
 
-
 class FeaturedPick(Base):
     __tablename__ = "featured_picks"
 
     id = Column(BigInteger, primary_key=True)
-    fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="CASCADE"), index=True, nullable=False)
+    fixture_id = Column(
+        BigInteger,
+        ForeignKey("fixtures.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
 
     # snapshot for public site
-    day = Column(Date, index=True, nullable=False)           # UTC calendar date
-    sport = Column(String, index=True, nullable=False)       # "football","nba","nhl","nfl","cfb"
-    comp = Column(String, index=True, nullable=True)         # pretty comp name if you want it
+    day = Column(Date, index=True, nullable=False)
+    sport = Column(String, index=True, nullable=False)
+    comp = Column(String, index=True, nullable=True)
     home_team = Column(String, nullable=False)
     away_team = Column(String, nullable=False)
     kickoff_utc = Column(DateTime, nullable=False, index=True)
 
     # pick data
-    market = Column(String, nullable=False)                  # e.g. "HOME_WIN","AWAY_WIN","O221.5"
+    market = Column(String, nullable=False)
     bookmaker = Column(String, nullable=False)
     price = Column(Float, nullable=False)
     edge = Column(Float, nullable=True)
@@ -321,8 +325,18 @@ class FeaturedPick(Base):
     result = Column(String, nullable=True)        # 'won' | 'lost' | 'void'
     settled_at = Column(DateTime, nullable=True)
 
+    # 🔒 NEW: premium flag
+    is_premium_only = Column(
+        Boolean,
+        nullable=False,
+        server_default="false",  # existing rows => False
+    )
+
     __table_args__ = (
-        UniqueConstraint("day", "fixture_id", "market", "bookmaker", name="uq_featuredpicks_day_fx_mkt_book"),
+        UniqueConstraint(
+            "day", "fixture_id", "market", "bookmaker",
+            name="uq_featuredpicks_day_fx_mkt_book",
+        ),
         Index("ix_featuredpicks_day_sport", "day", "sport"),
     )
 
