@@ -126,6 +126,8 @@ class PickIn(BaseModel):
     edge: float | None = None
     note: str | None = None
     stake: float | None = 1.0
+    # ⭐ NEW
+    is_premium_only: bool = False
 
 @router.post("/picks")
 def admin_save_pick(payload: PickIn, db: Session = Depends(get_db)):
@@ -134,7 +136,7 @@ def admin_save_pick(payload: PickIn, db: Session = Depends(get_db)):
     if not fx:
         raise HTTPException(404, "Fixture not found")
 
-    # upsert by (day, fixture_id, market, bookmaker)
+    # upsert
     r = (
         db.query(FeaturedPick)
         .filter(
@@ -145,22 +147,35 @@ def admin_save_pick(payload: PickIn, db: Session = Depends(get_db)):
         )
         .one_or_none()
     )
+
     if r:
         r.sport = payload.sport
         r.price = payload.price
         r.edge = payload.edge
         r.note = payload.note
         r.stake = payload.stake
+        # NEW
+        r.is_premium_only = payload.is_premium_only
     else:
         r = FeaturedPick(
-            day=d, sport=payload.sport,
+            day=d,
+            sport=payload.sport,
             fixture_id=payload.fixture_id,
-            comp=fx.comp, home_team=fx.home_team, away_team=fx.away_team,
+            comp=fx.comp,
+            home_team=fx.home_team,
+            away_team=fx.away_team,
             kickoff_utc=fx.kickoff_utc,
-            market=payload.market, bookmaker=payload.bookmaker,
-            price=payload.price, edge=payload.edge, note=payload.note, stake=payload.stake,
+            market=payload.market,
+            bookmaker=payload.bookmaker,
+            price=payload.price,
+            edge=payload.edge,
+            note=payload.note,
+            stake=payload.stake,
+            # NEW
+            is_premium_only=payload.is_premium_only,
         )
         db.add(r)
+
     db.commit()
     return {"ok": True, "id": r.id}
 
