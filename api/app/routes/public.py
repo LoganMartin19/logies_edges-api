@@ -110,14 +110,18 @@ def public_picks_daily(
     db: Session = Depends(get_db),
 ):
     s = _norm_sport(sport)
-    start, end = _parse_day(day)
+
+    # 👇 Use date instead of comparing timestamp vs timestamptz
+    from datetime import date as _date
+    chosen_day = _date.fromisoformat(day)
 
     q = (
         db.query(FeaturedPick, Fixture)
         .join(Fixture, Fixture.id == FeaturedPick.fixture_id)
-        .filter(FeaturedPick.kickoff_utc >= start, FeaturedPick.kickoff_utc < end)
+        .filter(FeaturedPick.day == chosen_day)  # ✅ Clean, safe, index-supported
         .order_by(FeaturedPick.created_at.asc())
     )
+
     if s != "all":
         q = q.filter(FeaturedPick.sport == s)
 
@@ -133,7 +137,7 @@ def public_picks_daily(
             "away_team": f.away_team,
             "comp": p.comp or f.comp,
             "sport": p.sport or f.sport,
-            "kickoff_utc": _to_bst_iso(ko),  # ✅ BST conversion
+            "kickoff_utc": _to_bst_iso(ko),
             "market": p.market,
             "bookmaker": p.bookmaker,
             "price": p.price,
