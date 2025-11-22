@@ -598,19 +598,43 @@ def following_feed(
 
     out = []
     for p in picks:
-        # ⭐️ HARD GATE: hide premium-only picks in following feed
-        if p.is_premium_only and not viewer_is_premium:
-            continue
         extra = _fixture_info(db, p.fixture_id)
         tipster = db.query(Tipster).get(p.tipster_id)
+
+        locked = p.is_premium_only and not viewer_is_premium
+
+        if locked:
+            # 🔒 Non-premium viewer → send locked stub row
+            out.append(
+                {
+                    "id": p.id,
+                    "tipster_username": tipster.username if tipster else None,
+                    "tipster_name": tipster.name if tipster else None,
+                    "created_at": p.created_at,
+                    "market": None,
+                    "fixture_id": p.fixture_id,
+                    "bookmaker": None,
+                    "price": None,
+                    "stake": None,
+                    "result": None,
+                    "profit": 0.0,
+                    "model_edge": None,
+                    "is_premium_only": True,
+                    **extra,
+                }
+            )
+            continue
+
+        # normal visible pick
         out.append(
             {
-                "pick_id": p.id,
+                "id": p.id,
                 "tipster_username": tipster.username if tipster else None,
                 "tipster_name": tipster.name if tipster else None,
                 "created_at": p.created_at,
                 "market": p.market,
                 "fixture_id": p.fixture_id,
+                "bookmaker": p.bookmaker,
                 "price": p.price,
                 "stake": p.stake,
                 "result": p.result,
