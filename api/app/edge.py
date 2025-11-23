@@ -15,7 +15,7 @@ from sqlalchemy import or_
 from .models import Odds, ModelProb, Edge, Fixture, ClosingOdds, Prediction
 from .services.league_strength import get_team_strength
 from .services.utils import confidence_from_prob
-from .services.form import get_hybrid_form_for_fixture
+from .services.form import get_hybrid_form_for_fixture, get_recent_fixtures
 
 # ----------------------------
 # Config
@@ -188,6 +188,68 @@ def _safe_get_forms(db: Session, f: Fixture, n: int = 5) -> tuple[dict, dict]:
     if not away_raw:
         away_raw = _fallback_summary_from_db_recent(db, f.away_team, f.comp or "", f.kickoff_utc, limit=n)
     return _coerce_summary(home_raw), _coerce_summary(away_raw)
+
+def _btts_recent_stats(db: Session, f: Fixture, n: int = 5) -> dict:
+    """
+    Mirror the BTTS summary logic from explain.py, but return numeric stats
+    for the model to use.
+
+    Returns:
+      {
+        "home_played": int,
+        "away_played": int,
+        "home_btts_rate": float,  # 0..1
+        "away_btts_rate": float,  # 0..1
+        "home_scored_rate": float,
+        "home_conceded_rate": float,
+        "away_scored_rate": float,
+        "away_conceded_rate": float,
+      }
+    """
+    recent_home: List[dict] = []
+    recent_away: List[dict] = []
+
+    try:
+        payload = get_hybrid_form_for_fixture(db, f, n=n, comp_scope=True) or {}
+        recent_home = (payload.get("home") or {}).get("recent") or []
+        recent_away = (payload.get("away") or {}).get("recent") or []
+    except Exception:
+        # Fallback to DB-only recent fixtures if hybrid fails
+        recent_home = get_recent_fixtures(db, f.home_team, f.kickoff_utc, n=n)
+        recent_away = get_recent_fixtures(db, f.away_team, f.kickoff_utc, n=n)
+
+    home_played = len(recent_home)
+    away_played = len(recent_away)
+
+    home_denom = home_played or 1
+    away_denom = away_played or 1
+
+    home_scored   = sum(1 for m in recent_home if (m.get("goals_for") or 0) > 0)
+    home_conceded = sum(1 for m in recent_home if (m.get("goals_against") or 0) > 0)
+    away_scored   = sum(1 for m in recent_away if (m.get("goals_for") or 0) > 0)
+    away_conceded = sum(1 for m in recent_away if (m.get("goals_against") or 0) > 0)
+
+    home_btts_yes = sum(
+        1
+        for m in recent_home
+        if (m.get("goals_for") or 0) > 0 and (m.get("goals_against") or 0) > 0
+    )
+    away_btts_yes = sum(
+        1
+        for m in recent_away
+        if (m.get("goals_for") or 0) > 0 and (m.get("goals_against") or 0) > 0
+    )
+
+    return {
+        "home_played": home_played,
+        "away_played": away_played,
+        "home_btts_rate": home_btts_yes / home_denom,
+        "away_btts_rate": away_btts_yes / away_denom,
+        "home_scored_rate": home_scored / home_denom,
+        "home_conceded_rate": home_conceded / home_denom,
+        "away_scored_rate": away_scored / away_denom,
+        "away_conceded_rate": away_conceded / away_denom,
+    }
 
 # ----------------------------
 # Small math utils for priors
@@ -400,18 +462,47 @@ def ensure_baseline_probs(
             if pa and pb:
                 cons_yes, cons_no = _devig_pair(pa, pb)
 
-                gf_home = float(home_form.get("avg_goals_for", 0.0) or 0.0)
-                ga_home = float(home_form.get("avg_goals_against", 0.0) or 0.0)
-                gf_away = float(away_form.get("avg_goals_for", 0.0) or 0.0)
-                ga_away = float(away_form.get("avg_goals_against", 0.0) or 0.0)
+                # ---- Recent BTTS & scoring stats (last N games) ----
+                btts_stats = _btts_recent_stats(db, f, n=5)
+                h_rate = btts_stats["home_btts_rate"]
+                a_rate = btts_stats["away_btts_rate"]
 
-                offensive = (gf_home + gf_away) / 2
-                defensive = (ga_home + ga_away) / 2
-                avg_goals_potential = (0.6 * offensive) + (0.4 * defensive)
-                goals_factor = max(0.5, min(avg_goals_potential / 2.5, 1.5))
+                # Combine into a single "BTTS tendency" 0..1
+                # If one side has no data yet, just use the other
+                if btts_stats["home_played"] and btts_stats["away_played"]:
+                    raw_btts_tendency = 0.5 * (h_rate + a_rate)
+                elif btts_stats["home_played"]:
+                    raw_btts_tendency = h_rate
+                elif btts_stats["away_played"]:
+                    raw_btts_tendency = a_rate
+                else:
+                    raw_btts_tendency = cons_yes  # fallback to market
 
-                form_yes = min(0.90, max(0.10, cons_yes * goals_factor))
-                p_yes_blend = (0.6 * form_yes) + (0.4 * cons_yes)
+                # Clamp to [0.15, 0.85] to avoid insane factors
+                raw_btts_tendency = max(0.15, min(0.85, raw_btts_tendency))
+
+                # Map tendency to a multiplicative factor around 1.0
+                # 0.5  -> factor ~1.0
+                # 0.8  -> factor >1 (boost BTTS_Y)
+                # 0.2  -> factor <1 (boost BTTS_N)
+                centred = raw_btts_tendency - 0.5
+                factor_btts = 1.0 + 0.7 * math.tanh(2.0 * centred)
+
+                # Also use goal environment as a mild second signal
+                from_exp = expected_goals_from_form(home_form, away_form)
+                total_goals = from_exp["total"]
+                env_centred = total_goals - 2.5
+                factor_env = 1.0 + 0.4 * math.tanh(0.8 * env_centred)
+
+                # Blend the two factors and clamp
+                raw_factor = 0.6 * factor_btts + 0.4 * factor_env
+                goals_factor = max(0.7, min(raw_factor, 1.3))
+
+                # Apply factor to market consensus
+                form_yes = min(0.92, max(0.08, cons_yes * goals_factor))
+
+                # Blend form-adjusted vs market
+                p_yes_blend = (0.5 * form_yes) + (0.5 * cons_yes)
                 p_yes_blend = _clip(p_yes_blend)
 
                 # single-side calibration (YES only)
@@ -446,7 +537,7 @@ def ensure_baseline_probs(
                     h_form_score = _form_score(home_form)
                     a_form_score = _form_score(away_form)
 
-                    # ✅ Correct arg order + pass db
+                    # Correct arg order + pass db
                     try:
                         h_str = float(get_team_strength(f.home_team, f.comp or "", db) or 0.5)
                     except Exception:
@@ -762,7 +853,7 @@ def adjust_prob_for_form(p: float, team_form: dict, opp_form: dict, market: str 
         adjustment = 0.02 * delta
         return _clip3(p + max(-0.1, min(0.1, adjustment)))
 
-    # BTTS (legacy helper – main BTTS logic lives in ensure_baseline_probs)
+    # BTTS (legacy helper – main BTTS logic now lives in ensure_baseline_probs)
     elif market == "BTTS_Y":
         avg_goals = float(team_form.get("avg_goals_for", 0.0)) + float(opp_form.get("avg_goals_for", 0.0))
         boost = 0.03 * ((avg_goals / 2.0) - 2.5)
