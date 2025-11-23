@@ -446,7 +446,7 @@ def ensure_baseline_probs(
                     h_form_score = _form_score(home_form)
                     a_form_score = _form_score(away_form)
 
-                    # ✅ FIX: correct arg order + pass db
+                    # ✅ Correct arg order + pass db
                     try:
                         h_str = float(get_team_strength(f.home_team, f.comp or "", db) or 0.5)
                     except Exception:
@@ -523,11 +523,14 @@ def get_recent_form(db: Session, team: str, comp: str, current_ko: datetime, lim
         else: lost += 1
 
     return {
-        "played": played, "won": won, "drawn": drawn, "lost": lost,
+        "played": played,
+        "won": wins,
+        "drawn": drawn,
+        "lost": lost,
         "avg_scored": goals_scored / played if played else 0,
         "avg_conceded": goals_conceded / played if played else 0,
         "goal_diff": goals_scored - goals_conceded,
-        "points": won * 3 + drawn,
+        "points": wins * 3 + drawn,
     }
 
 # ----------------------------
@@ -751,6 +754,7 @@ def adjust_prob_for_form(p: float, team_form: dict, opp_form: dict, market: str 
     if not team_form or not opp_form:
         return p
 
+    # 1X2 sides
     if market in {"HOME_WIN", "AWAY_WIN"}:
         def form_score(f: dict) -> float:
             return float(f.get("wins", 0)) * 0.3 + float(f.get("draws", 0)) * 0.0 + float(f.get("losses", 0)) * -0.2
@@ -758,6 +762,7 @@ def adjust_prob_for_form(p: float, team_form: dict, opp_form: dict, market: str 
         adjustment = 0.02 * delta
         return _clip3(p + max(-0.1, min(0.1, adjustment)))
 
+    # BTTS (legacy helper – main BTTS logic lives in ensure_baseline_probs)
     elif market == "BTTS_Y":
         avg_goals = float(team_form.get("avg_goals_for", 0.0)) + float(opp_form.get("avg_goals_for", 0.0))
         boost = 0.03 * ((avg_goals / 2.0) - 2.5)
@@ -768,6 +773,7 @@ def adjust_prob_for_form(p: float, team_form: dict, opp_form: dict, market: str 
         drop = -0.03 * ((avg_goals / 2.0) - 2.5)
         return _clip3(p + max(-0.08, min(0.08, drop)))
 
+    # Totals (Over/Under) – line-aware form nudge
     elif market and (market.startswith("O") or market.startswith("U")):
         avg_gf = float(team_form.get("avg_goals_for", 0.0)) + float(opp_form.get("avg_goals_for", 0.0))
         avg_ga = float(team_form.get("avg_goals_against", 0.0)) + float(opp_form.get("avg_goals_against", 0.0))
@@ -776,10 +782,17 @@ def adjust_prob_for_form(p: float, team_form: dict, opp_form: dict, market: str 
             line = float(market[1:])
         except Exception:
             return _clip3(p)
+
+        # Positive delta means game projects higher than line
+        delta = avg_total - line
+        # Smooth, capped adjustment
+        raw = 0.15 * math.tanh(0.6 * delta)
+
         if market.startswith("O"):
-            return _clip3(p + max(-0.10, min(0.10, 0.03 * (avg_total - line))))
+            return _clip3(p + raw)
         else:
-            return _clip3(p + max(-0.10, min(0.10, -0.03 * (avg_total - line))))
+            return _clip3(p - raw)
+
     return _clip3(p)
 
 def adjust_prob_for_goals(home_form: dict, away_form: dict) -> float:
