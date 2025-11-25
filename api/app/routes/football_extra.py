@@ -177,24 +177,50 @@ def _get_player_props_data(fixture_id: int, db: Session) -> dict:
     away_id = fr["teams"]["away"]["id"]
     league_name_lc = (fr["league"]["name"] or "").strip().lower()
 
+    # -----------------------
+    # choose correct stat-block
+    # -----------------------
     def _pick_block(stat_blocks: list[dict]) -> dict | None:
-        # Prefer exact league id/season match, then name match
+        # prefer: exact league.id
         for s in stat_blocks or []:
             lg = (s.get("league", {}) or {})
             if int(lg.get("id") or 0) == int(league_id):
                 return s
+        # then: exact league name
         for s in stat_blocks or []:
             lg = (s.get("league", {}) or {})
             if (lg.get("name") or "").strip().lower() == league_name_lc:
                 return s
         return None
 
+    # -----------------------
+    # flatten all players → include season totals
+    # -----------------------
     def _flatten(items: list[dict]) -> list[dict]:
         out = []
+
         for row in items or []:
             player = row.get("player", {}) or {}
-            stats = row.get("statistics") or []
-            s = _pick_block(stats)
+            stats_all = row.get("statistics") or []
+
+            # ---- collect full-season totals across all competitions ----
+            season_minutes = 0
+            season_apps = 0
+
+            for block in stats_all:
+                lg = block.get("league") or {}
+                if int(lg.get("season") or 0) != season:
+                    continue
+
+                gms = block.get("games") or {}
+                mins = int(gms.get("minutes") or 0)
+                apps = int(gms.get("appearences") or gms.get("appearances") or 0)
+
+                season_minutes += mins
+                season_apps += apps
+
+            # ---- pick correct competition block for per-90 stats ----
+            s = _pick_block(stats_all)
             if not s:
                 continue
 
@@ -203,50 +229,69 @@ def _get_player_props_data(fixture_id: int, db: Session) -> dict:
             cards = s.get("cards", {}) or {}
             fouls = s.get("fouls", {}) or {}
 
-            name = player.get("name") or "—"
-            mins = int(games.get("minutes") or 0)
-
+            comp_minutes = int(games.get("minutes") or 0)
             sh_total = int(shots.get("total") or 0)
             sh_on = int(shots.get("on") or 0)
-            sot_pct = round((sh_on / sh_total * 100.0), 1) if sh_total else 0.0
-
             fouls_comm = int((fouls.get("committed") or 0) or 0)
 
-            per90 = (lambda v: round((v * 90.0) / mins, 2) if mins else 0.0)
+            per90 = lambda v: round((v * 90.0) / comp_minutes, 2) if comp_minutes else 0.0
 
             out.append({
                 "id": player.get("id"),
-                "name": name,
+                "name": player.get("name"),
                 "photo": player.get("photo"),
                 "pos": games.get("position") or player.get("position") or "?",
-                "minutes": mins,
+
+                # competition minutes (single league/cup)
+                "minutes": comp_minutes,
+
+                # 🔥 NEW: full season totals (used for projected minutes)
+                "season_stats": {
+                    "apps": season_apps,
+                    "minutes": season_minutes,
+                },
+
+                # raw stats
                 "shots": sh_total,
                 "shots_on": sh_on,
-                "sot_pct": sot_pct,
                 "yellow": int(cards.get("yellow") or 0),
                 "red": int(cards.get("red") or 0),
                 "fouls_committed": fouls_comm,
+
+                # per-90 from competition
                 "shots_per90": per90(sh_total),
                 "fouls_committed_per90": per90(fouls_comm),
             })
-        out.sort(key=lambda r: (r["minutes"], r["shots"], r["yellow"]), reverse=True)
+
+        # sort by meaningful players (season minutes first)
+        out.sort(
+            key=lambda r: (r["season_stats"]["minutes"], r["shots"], r["yellow"]),
+            reverse=True
+        )
         return out
 
+    # -----------------------
+    # normalization fallback
+    # -----------------------
     def normalize_team(team_id: int) -> list[dict]:
         rows = get_player_stats(team_id, league_id, season)
         flat = _flatten(rows if isinstance(rows, list) else [])
-        if any(r["minutes"] or r["shots"] or r["yellow"] for r in flat):
+        if any(r["minutes"] > 0 for r in flat):
             return flat
 
+        # try previous season
         prev = get_player_stats(team_id, league_id, season - 1)
         flat_prev = _flatten(prev if isinstance(prev, list) else [])
-        if any(r["minutes"] or r["shots"] or r["yellow"] for r in flat_prev):
+        if any(r["minutes"] > 0 for r in flat_prev):
             return flat_prev
 
-        # inside normalize_team(team_id: int)
+        # final fallback: ALL competitions
         all_comp = get_team_season_players_cached(db, team_id, season)
         return _flatten(all_comp)
 
+    # -----------------------
+    # return payload
+    # -----------------------
     return {
         "league_id": league_id,
         "season": season,
@@ -255,7 +300,6 @@ def _get_player_props_data(fixture_id: int, db: Session) -> dict:
         "home": normalize_team(home_id),
         "away": normalize_team(away_id),
     }
-
 
 # ---------------------------------------------------------------------------
 # Injury utils (dedupe & ranking)
@@ -1805,7 +1849,7 @@ def player_game_log(
         "season": season,
         "games": out[:last],
     }
-    
+
 from fastapi import Query
 
 @router.post("/admin/prime-team-stats")
