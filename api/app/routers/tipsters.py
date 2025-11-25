@@ -16,7 +16,8 @@ from ..models import (
     AccaTicket,
     AccaLeg,
     TipsterFollow,
-    User,  # ✅ needed for premium gating
+    User,
+    TipsterSubscription,  # ✅ for subscriber gating
 )
 from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 from ..auth_firebase import get_current_user, optional_user
@@ -58,8 +59,10 @@ class PickIn(BaseModel):
     bookmaker: str | None = None
     price: float
     stake: float = 1.0
-    # ⭐️ allow tipster to mark as premium-only
+    # ⭐️ allow tipster to mark as premium-only (global site premium)
     is_premium_only: bool = False
+    # ⭐️ NEW: allow tipster to mark as subscriber-only (per-tipster subs)
+    is_subscriber_only: bool = False
 
 
 class PickOut(BaseModel):
@@ -79,8 +82,9 @@ class PickOut(BaseModel):
     sport: str | None = None
     home_name: str | None = None
     away_name: str | None = None
-    # ⭐️ premium gating flag
+    # gating flags
     is_premium_only: bool = False
+    is_subscriber_only: bool = False
     # deletion helpers
     kickoff_utc: str | None = None
     can_delete: bool = False
@@ -328,22 +332,47 @@ def _with_live_metrics(db: Session, c: Tipster) -> dict:
     return out
 
 
-def _viewer_premium_status(db: Session, viewer_claims: dict | None) -> tuple[bool, str]:
+def _viewer_premium_status(
+    db: Session,
+    viewer_claims: dict | None,
+) -> tuple[bool, str, int | None]:
     """
-    Helper: given Firebase claims (or None), return (is_premium, email_lower).
+    Helper: given Firebase claims (or None), return:
+      (is_premium, email_lower, user_id_or_None)
     """
     viewer_claims = viewer_claims or {}
     email = (viewer_claims.get("email") or "").lower()
     uid = viewer_claims.get("uid")
 
-    user_row = None
+    user_row: User | None = None
     if uid:
         user_row = db.query(User).filter(User.firebase_uid == uid).first()
     if not user_row and email:
         user_row = db.query(User).filter(User.email == email).first()
 
     is_premium = bool(user_row.is_premium) if user_row else False
-    return is_premium, email
+    user_id = user_row.id if user_row else None
+    return is_premium, email, user_id
+
+
+def _viewer_is_subscribed_to_tipster(
+    db: Session, user_id: int | None, tipster_id: int
+) -> bool:
+    """
+    True if the viewer has an active subscription to this tipster.
+    """
+    if not user_id:
+        return False
+    row = (
+        db.query(TipsterSubscription)
+        .filter(
+            TipsterSubscription.user_id == user_id,
+            TipsterSubscription.tipster_id == tipster_id,
+            TipsterSubscription.status == "active",
+        )
+        .first()
+    )
+    return row is not None
 
 
 # ---------- routes: tipster profile ----------
@@ -431,7 +460,7 @@ def get_tipster(
     if not c:
         raise HTTPException(404, "tipster not found")
 
-    viewer_is_premium, viewer_email = _viewer_premium_status(db, viewer)
+    viewer_is_premium, viewer_email, viewer_user_id = _viewer_premium_status(db, viewer)
     tipster_email = ((_email_of_tipster(c) or "")).lower()
 
     out = _with_live_metrics(db, c)
@@ -555,12 +584,12 @@ def list_following(
         .all()
     )
 
-    out = []
+    out: list[dict] = []
     for t in tipsters:
         row = _with_live_metrics(db, t)
         row["is_owner"] = False
         row["is_following"] = True
-        return out
+        out.append(row)
 
     return out
 
@@ -571,7 +600,7 @@ def following_feed(
     user=Depends(get_current_user),
 ):
     # viewer is logged in here
-    viewer_is_premium, viewer_email = _viewer_premium_status(db, user)
+    viewer_is_premium, viewer_email, viewer_user_id = _viewer_premium_status(db, user)
 
     if not viewer_email:
         raise HTTPException(400, "Email missing in Firebase token")
@@ -601,10 +630,17 @@ def following_feed(
         extra = _fixture_info(db, p.fixture_id)
         tipster = db.query(Tipster).get(p.tipster_id)
 
-        locked = p.is_premium_only and not viewer_is_premium
+        viewer_is_subscriber = _viewer_is_subscribed_to_tipster(
+            db, viewer_user_id, p.tipster_id
+        )
+
+        locked = (
+            (p.is_premium_only and not viewer_is_premium)
+            or (getattr(p, "is_subscriber_only", False) and not viewer_is_subscriber)
+        )
 
         if locked:
-            # 🔒 Non-premium viewer → send locked stub row
+            # 🔒 Non-premium / non-subscriber viewer → send locked stub row
             out.append(
                 {
                     "id": p.id,
@@ -619,7 +655,8 @@ def following_feed(
                     "result": None,
                     "profit": 0.0,
                     "model_edge": None,
-                    "is_premium_only": True,
+                    "is_premium_only": bool(p.is_premium_only),
+                    "is_subscriber_only": bool(getattr(p, "is_subscriber_only", False)),
                     **extra,
                 }
             )
@@ -643,6 +680,7 @@ def following_feed(
                     db, p.fixture_id, p.market, p.price
                 ),
                 "is_premium_only": bool(p.is_premium_only),
+                "is_subscriber_only": bool(getattr(p, "is_subscriber_only", False)),
                 **extra,
             }
         )
@@ -673,6 +711,7 @@ def create_pick(
         price=payload.price,
         stake=payload.stake,
         is_premium_only=payload.is_premium_only,
+        is_subscriber_only=getattr(payload, "is_subscriber_only", False),
     )
     db.add(p)
     db.commit()
@@ -700,6 +739,7 @@ def create_pick(
         "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
         "can_delete": _pick_can_delete(db, p),
         "is_premium_only": bool(p.is_premium_only),
+        "is_subscriber_only": bool(getattr(p, "is_subscriber_only", False)),
         **extra,
     }
 
@@ -714,9 +754,13 @@ def list_picks(
     if not tip:
         raise HTTPException(404, "tipster not found")
 
-    viewer_is_premium, viewer_email = _viewer_premium_status(db, viewer)
+    viewer_is_premium, viewer_email, viewer_user_id = _viewer_premium_status(db, viewer)
     tip_email = ((_email_of_tipster(tip) or "")).lower()
     is_owner = bool(viewer_email and viewer_email == tip_email)
+
+    viewer_is_subscriber = _viewer_is_subscribed_to_tipster(
+        db, viewer_user_id, tip.id
+    )
 
     rows = (
         db.query(TipsterPick)
@@ -728,10 +772,15 @@ def list_picks(
     out: list[dict] = []
     for p in rows:
         extra = _fixture_info(db, p.fixture_id)
-        locked = p.is_premium_only and not (viewer_is_premium or is_owner)
+        is_sub_only = bool(getattr(p, "is_subscriber_only", False))
+
+        locked = (
+            (p.is_premium_only and not (viewer_is_premium or is_owner))
+            or (is_sub_only and not (viewer_is_subscriber or is_owner))
+        )
 
         if locked:
-            # 🔒 Non-premium, non-owner → "locked" row but still schema-valid
+            # 🔒 Non-premium, non-owner, non-subscriber → locked row
             out.append(
                 {
                     "id": p.id,
@@ -746,7 +795,8 @@ def list_picks(
                     "model_edge": None,
                     "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
                     "can_delete": False,
-                    "is_premium_only": True,
+                    "is_premium_only": bool(p.is_premium_only),
+                    "is_subscriber_only": is_sub_only,
                     **extra,
                 }
             )
@@ -775,6 +825,7 @@ def list_picks(
                 "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
                 "can_delete": _pick_can_delete(db, p),
                 "is_premium_only": bool(p.is_premium_only),
+                "is_subscriber_only": is_sub_only,
                 **extra,
             }
         )
@@ -836,6 +887,7 @@ def settle_pick(
         "kickoff_utc": _pick_kickoff_iso(db, p.fixture_id),
         "can_delete": _pick_can_delete(db, p),
         "is_premium_only": bool(p.is_premium_only),
+        "is_subscriber_only": bool(getattr(p, "is_subscriber_only", False)),
         **extra,
     }
 

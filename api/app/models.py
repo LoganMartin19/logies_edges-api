@@ -516,10 +516,22 @@ class Tipster(Base):
     profit_30d = Column(Float, default=0.0)
     picks_30d = Column(Integer, default=0)
 
+    # ⭐ NEW: ownership + Stripe + pricing
+    owner_user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )  # which User controls this tipster profile
+
+    stripe_account_id = Column(String, nullable=True, index=True)  # Connect acct
+    default_price_cents = Column(Integer, nullable=True)           # e.g. 1500 = £15
+    currency = Column(String, nullable=False, default="gbp")
+    subscriber_limit = Column(Integer, nullable=True)              # e.g. 50
+    is_open_for_new_subs = Column(Boolean, nullable=False, server_default="true")
+
     # existing
     picks = relationship("TipsterPick", back_populates="tipster", cascade="all, delete-orphan")
-
-    # ✅ NEW: link to acca tickets this tipster owns
     accas = relationship("AccaTicket", back_populates="tipster", cascade="all, delete-orphan")
 
 
@@ -531,18 +543,21 @@ class TipsterPick(Base):
     tipster_id = Column(Integer, ForeignKey("tipsters.id"), index=True, nullable=False)
     fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="SET NULL"), index=True, nullable=True)
 
-    market = Column(String, index=True)         # "O2.5", "BTTS_Y", "HOME_WIN", etc
-    bookmaker = Column(String)                  # optional
-    price = Column(Float)                       # decimal odds
-    stake = Column(Float, default=1.0)          # £ units
+    market = Column(String, index=True)
+    bookmaker = Column(String)
+    price = Column(Float)
+    stake = Column(Float, default=1.0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # ⭐️ NEW: premium gating
+    # ⭐️ premium gating
     is_premium_only = Column(Boolean, default=False, nullable=False)
 
+    # ⭐️ NEW: tipster-subscriber gating (per-tipster subs)
+    is_subscriber_only = Column(Boolean, default=False, nullable=False)
+
     # settlement
-    result = Column(String, nullable=True)      # "WIN","LOSE","PUSH", None (unsettled)
-    profit = Column(Float, default=0.0)         # stake*(price-1) or -stake (push=0)
+    result = Column(String, nullable=True)
+    profit = Column(Float, default=0.0)
 
     tipster = relationship("Tipster", back_populates="picks")
     fixture = relationship("Fixture")
