@@ -1,7 +1,8 @@
 # api/app/services/stripe_client.py
 from __future__ import annotations
+import os
 import stripe
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 
 from ..settings import settings
@@ -9,6 +10,9 @@ from ..settings import settings
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
+
+# Default platform cut (can override by env)
+DEFAULT_PLATFORM_FEE_PERCENT = float(os.getenv("PLATFORM_FEE_PERCENT", "15.0"))
 
 
 # ============================================================
@@ -61,59 +65,40 @@ def create_subscription_checkout_session(
 ) -> str:
     """
     Create a Checkout Session for a subscription.
-    If connect_account_id + application_fee_percent are provided, use
-    Stripe Connect revenue share.
+    If connect_account_id + application_fee_percent are provided,
+    the subscription will route funds to the tipster and apply
+    your platform cut.
     """
     metadata = metadata or {}
 
-    subscription_data: dict = {
+    # Fee defaults to 15% if not provided
+    fee_pct = (
+        float(application_fee_percent)
+        if application_fee_percent is not None
+        else DEFAULT_PLATFORM_FEE_PERCENT
+    )
+
+    subscription_data: Dict[str, Any] = {
         "metadata": metadata,
     }
 
     if connect_account_id:
-        # send net revenue to tipster
         subscription_data["transfer_data"] = {
             "destination": connect_account_id,
         }
-        # your platform cut in percent
-        if application_fee_percent is not None:
-            subscription_data["application_fee_percent"] = application_fee_percent
+        subscription_data["application_fee_percent"] = fee_pct
 
     session = stripe.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
-        line_items=[{"price": price_id, "quantity": 1}],
+        line_items=[{
+            "price": price_id,
+            "quantity": 1
+        }],
         success_url=success_url,
         cancel_url=cancel_url,
         subscription_data=subscription_data,
         metadata=metadata,
     )
 
-    return session["url"]
-
-
-# ============================================================
-# Shared helpers
-# ============================================================
-
-def get_or_create_customer(email: str) -> stripe.Customer:
-    customers = stripe.Customer.list(email=email, limit=1).data
-    if customers:
-        return customers[0]
-    return stripe.Customer.create(email=email)
-
-
-def parse_event(payload: bytes, sig_header: str) -> stripe.Event:
-    return stripe.Webhook.construct_event(
-        payload=payload,
-        sig_header=sig_header,
-        secret=settings.STRIPE_WEBHOOK_SECRET,
-    )
-
-
-def create_billing_portal_session(customer_id: str, return_url: str) -> str:
-    session = stripe.billing_portal.Session.create(
-        customer=customer_id,
-        return_url=return_url,
-    )
     return session.url

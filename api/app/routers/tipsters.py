@@ -179,7 +179,28 @@ class AccaOut(BaseModel):
 
 
 # ---------- helpers ----------
+def _get_or_create_user_by_claims(db: Session, claims: dict) -> User:
+    uid = claims.get("uid")
+    email = (claims.get("email") or "").lower()
 
+    if not uid:
+        raise HTTPException(400, "Firebase uid missing in token")
+
+    user = db.query(User).filter(User.firebase_uid == uid).first()
+    if user:
+        # keep email in sync
+        if email and user.email != email:
+            user.email = email
+            db.commit()
+            db.refresh(user)
+        return user
+
+    # create new user row
+    user = User(firebase_uid=uid, email=email)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 def _public_social_links(c: Tipster) -> dict | None:
     """
@@ -438,6 +459,9 @@ def create_tipster(
     if not email:
         raise HTTPException(400, "Email missing in Firebase token")
 
+    # make sure we have a User row
+    owner_user = _get_or_create_user_by_claims(db, user)
+
     existing = db.query(Tipster).filter(Tipster.username == payload.username).first()
     if existing:
         # --- UPDATE EXISTING PROFILE (owner only) ---
@@ -458,6 +482,10 @@ def create_tipster(
             if payload.is_open_for_new_subs is not None:
                 existing.is_open_for_new_subs = payload.is_open_for_new_subs
 
+            # ensure owner_user_id is populated
+            if not existing.owner_user_id:
+                existing.owner_user_id = owner_user.id
+
             db.commit()
             db.refresh(existing)
             out = _with_live_metrics(db, existing)
@@ -469,6 +497,7 @@ def create_tipster(
     # --- CREATE NEW TIPSTER ---
     c = Tipster(**payload.model_dump())
     c.social_links = (payload.social_links or {}) | {"email": email}
+    c.owner_user_id = owner_user.id  # 👈 tie to User
 
     # sensible defaults if not provided
     if c.currency is None:
@@ -1277,11 +1306,11 @@ def delete_tipster_acca(
     return {"ok": True, "deleted": ticket_id}
 
 class ConnectStatusOut(BaseModel):
-  has_connect: bool
-  charges_enabled: bool = False
-  payouts_enabled: bool = False
-  details_submitted: bool = False
-  currently_due: list[str] = []
+    has_connect: bool
+    charges_enabled: bool = False
+    payouts_enabled: bool = False
+    details_submitted: bool = False
+    currently_due: list[str] = Field(default_factory=list)
 
 
 @router.post("/{username}/connect/onboard", response_model=dict)
@@ -1293,14 +1322,15 @@ def start_connect_onboarding(
     """
     Owner-only: create or reuse a Stripe Express account and return onboarding URL.
     """
-    # reuse existing owner check
+    # Confirm they own this tipster (email check, as before)
     tip = _require_owner(username, db, user)
 
-    # find the owner User row (by firebase_uid/email)
-    email = (user.get("email") or "").lower()
-    owner_user = db.query(User).filter(User.email == email).first()
-    if not owner_user:
-        raise HTTPException(400, "Owner user not found")
+    # Ensure we have a User row that matches this Firebase user
+    owner_user = _get_or_create_user_by_claims(db, user)
+
+    # (Optional belt-and-braces check)
+    if tip.owner_user_id and tip.owner_user_id != owner_user.id:
+        raise HTTPException(403, "not your profile")
 
     account_id = stripe_connect.ensure_express_account(db, tip, owner_user)
     url = stripe_connect.create_onboarding_link(account_id)
