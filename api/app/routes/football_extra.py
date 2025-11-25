@@ -39,6 +39,7 @@ from ..services.player_model import (
     edge,
 )
 from ..services.player_cache import get_team_season_players_cached, get_fixture_players_cached
+from ..auth_firebase import require_premium
 
 router = APIRouter(prefix="/football", tags=["football"])
 
@@ -1163,6 +1164,7 @@ def player_props_fair(
     ref_factor_override: float | None = Query(None, ge=0.5, le=1.5),
     lookback: int = Query(5, ge=2, le=10),
     db: Session = Depends(get_db),
+    user=Depends(require_premium),
 ):
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
     if not fx:
