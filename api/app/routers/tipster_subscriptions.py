@@ -12,15 +12,19 @@ import os
 from ..db import get_db
 from ..models import User, Tipster, TipsterSubscription
 from ..auth_firebase import get_current_user
+from ..services import stripe_client  # 👈 use shared Stripe helpers
 
 import stripe  # ⬅️ Stripe SDK
+
 
 router = APIRouter(prefix="/api/tipsters", tags=["tipster-subscriptions"])
 
 # --- Stripe config ----------------------------------------------------------
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
-FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://charteredsportsbetting.com")
+FRONTEND_BASE_URL = os.getenv(
+    "FRONTEND_BASE_URL", "https://charteredsportsbetting.com"
+)
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
@@ -119,7 +123,8 @@ def _ensure_tipster_price(db: Session, tip: Tipster) -> str:
     Ensure the Tipster has a Stripe Price for monthly subs.
     Auto-generates it from tip.default_price_cents the first time.
     """
-    if tip.stripe_price_id:
+    # assumes you have a `stripe_price_id` column on Tipster
+    if getattr(tip, "stripe_price_id", None):
         return tip.stripe_price_id
 
     if not STRIPE_SECRET_KEY:
@@ -235,15 +240,9 @@ def create_stripe_checkout_session(
     if not STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured on server")
 
-    session = stripe.checkout.Session.create(
-        mode="subscription",
-        customer=customer_id,
-        line_items=[
-            {
-                "price": price_id,
-                "quantity": 1,
-            }
-        ],
+    checkout_url = stripe_client.create_subscription_checkout_session(
+        customer_id=customer_id,
+        price_id=price_id,
         success_url=success_url,
         cancel_url=cancel_url,
         metadata={
@@ -251,10 +250,11 @@ def create_stripe_checkout_session(
             "user_id": str(viewer.id),
             "tipster_id": str(tip.id),
             "tipster_username": tip.username,
+            "product": "tipster_sub",
         },
     )
 
-    return CheckoutSessionOut(checkout_url=session["url"])
+    return CheckoutSessionOut(checkout_url=checkout_url)
 
 
 # =====================================================================

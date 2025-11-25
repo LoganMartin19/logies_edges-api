@@ -1,19 +1,23 @@
 # api/app/routers/billing.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..auth_firebase import get_current_user    # Firebase claims
-from ..models import User
+from ..auth_firebase import get_current_user
+from ..models import User, Tipster, TipsterSubscription
 from ..settings import settings
 from ..services import stripe_client
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
+
+# ============================================================
+# Helper: ensure DB user exists
+# ============================================================
 
 def _get_or_create_db_user(db: Session, fb_claims: dict) -> User:
     uid = fb_claims.get("uid")
@@ -24,7 +28,6 @@ def _get_or_create_db_user(db: Session, fb_claims: dict) -> User:
     if user:
         return user
 
-    # Fallback – create a row the first time we see this Firebase user
     user = User(
         firebase_uid=uid,
         email=fb_claims.get("email"),
@@ -37,7 +40,9 @@ def _get_or_create_db_user(db: Session, fb_claims: dict) -> User:
     return user
 
 
-# ---------- Checkout: start subscription ----------
+# ============================================================
+# Premium Checkout
+# ============================================================
 
 @router.post("/premium/checkout")
 def create_premium_checkout(
@@ -51,22 +56,13 @@ def create_premium_checkout(
     """
     user = _get_or_create_db_user(db, fb_user)
 
-    # Make sure env vars are set
     if not settings.STRIPE_PREMIUM_PRICE_ID or not settings.STRIPE_SECRET_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="Stripe is not configured on the server."
-        )
+        raise HTTPException(500, "Stripe is not configured on server")
 
     if not user.email:
-        raise HTTPException(
-            status_code=400,
-            detail="User account must have an email to start checkout."
-        )
+        raise HTTPException(400, "User account must have an email to start checkout.")
 
-    origin = request.headers.get("origin") or (
-        request.url.scheme + "://" + request.url.netloc
-    )
+    origin = request.headers.get("origin") or (request.url.scheme + "://" + request.url.netloc)
     success_url = f"{origin}/account?upgraded=1"
     cancel_url = f"{origin}/account?canceled=1"
 
@@ -80,7 +76,9 @@ def create_premium_checkout(
     return {"checkout_url": checkout_url}
 
 
-# ---------- Customer Portal: manage / cancel subscription ----------
+# ============================================================
+# Billing Portal
+# ============================================================
 
 @router.post("/customer-portal")
 def create_billing_portal_session(
@@ -88,60 +86,43 @@ def create_billing_portal_session(
     fb_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Create a Stripe Billing Portal session so the user can
-    manage their subscription (update card, cancel, etc.).
-
-    Returns: { url: "https://billing.stripe.com/..." }
-    """
     user = _get_or_create_db_user(db, fb_user)
 
     if not user.email:
-        raise HTTPException(
-            status_code=400,
-            detail="User account must have an email to manage billing."
-        )
+        raise HTTPException(400, "User account must have an email to manage billing.")
 
-    # Ensure we have a Stripe Customer ID for this user
     customer_id = user.stripe_customer_id
     if not customer_id:
-        # Try to find or create a Stripe customer by email
         customer = stripe_client.get_or_create_customer(user.email)
-        customer_id = customer.id
-        user.stripe_customer_id = customer_id
-        db.add(user)
+        user.stripe_customer_id = customer.id
         db.commit()
 
-    origin = request.headers.get("origin") or (
-        request.url.scheme + "://" + request.url.netloc
-    )
+    origin = request.headers.get("origin") or (request.url.scheme + "://" + request.url.netloc)
     return_url = f"{origin}/account"
 
     portal_url = stripe_client.create_billing_portal_session(
-        customer_id=customer_id,
+        customer_id=user.stripe_customer_id,
         return_url=return_url,
     )
 
     return {"url": portal_url}
 
 
-# ---------- Status endpoint: used by frontend to show Premium badge ----------
+# ============================================================
+# Premium Status Endpoint
+# ============================================================
 
 @router.get("/status")
 def get_billing_status(
     fb_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Return current premium / billing status for the logged-in user.
-    """
     uid = fb_user.get("uid")
     if not uid:
         raise HTTPException(status_code=401, detail="Missing Firebase uid")
 
     user = db.query(User).filter(User.firebase_uid == uid).first()
     if not user:
-        # Not in DB yet => definitely not premium
         return {
             "is_premium": False,
             "stripe_customer_id": None,
@@ -149,20 +130,22 @@ def get_billing_status(
         }
 
     return {
-        "is_premium": bool(getattr(user, "is_premium", False)),
-        "stripe_customer_id": getattr(user, "stripe_customer_id", None),
-        "premium_activated_at": getattr(user, "premium_activated_at", None),
+        "is_premium": bool(user.is_premium),
+        "stripe_customer_id": user.stripe_customer_id,
+        "premium_activated_at": user.premium_activated_at,
     }
 
 
-# ---------- Stripe Webhook ----------
+# ============================================================
+# Stripe Webhook
+# ============================================================
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    Stripe webhook endpoint.
-    Configure this URL in your Stripe dashboard:
-      https://your-api-url.com/billing/webhook
+    Handles both:
+      1. CSB Premium
+      2. Tipster subscriptions (Stripe Checkout)
     """
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
@@ -170,45 +153,129 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     try:
         event = stripe_client.parse_event(payload, sig_header)
     except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid payload",
-        )
+        raise HTTPException(status_code=400, detail="Invalid payload")
 
     event_type = event["type"]
     data = event["data"]["object"]
+    metadata = data.get("metadata") or {}
 
-    # We attach firebase_uid to the Checkout Session metadata
-    firebase_uid = (data.get("metadata") or {}).get("firebase_uid")
+    # Metadata from premium checkout
+    firebase_uid = metadata.get("firebase_uid")
 
+    # Metadata from tipster checkout
+    user_id_meta = metadata.get("user_id")
+    tipster_id_meta = metadata.get("tipster_id")
+
+    # ============================================================
+    # checkout.session.completed
+    # ============================================================
     if event_type == "checkout.session.completed":
-        # User finished checkout successfully -> mark as premium
-        if firebase_uid:
-            user = db.query(User).filter(
-                User.firebase_uid == firebase_uid
-            ).first()
+
+        # ---- CSB Premium ----
+        if firebase_uid and not tipster_id_meta:
+            user = db.query(User).filter(User.firebase_uid == firebase_uid).first()
             if user:
                 user.is_premium = True
                 user.premium_activated_at = datetime.now(timezone.utc)
-                # store Stripe customer id if present
                 if data.get("customer"):
                     user.stripe_customer_id = data["customer"]
-                db.add(user)
+                db.commit()
+            return {"ok": True}
+
+        # ---- Tipster subscription ----
+        if user_id_meta and tipster_id_meta:
+            try:
+                viewer_id = int(user_id_meta)
+                tipster_id = int(tipster_id_meta)
+            except ValueError:
+                return {"ok": True}
+
+            user = db.query(User).get(viewer_id)
+            tipster = db.query(Tipster).get(tipster_id)
+            if not user or not tipster:
+                return {"ok": True}
+
+            # Update customer ID if missing
+            if data.get("customer"):
+                user.stripe_customer_id = data["customer"]
                 db.commit()
 
-    elif event_type in ("customer.subscription.deleted", "customer.subscription.updated"):
-        # Subscription changed or was canceled
+            # Create / update tipster subscription
+            subscription_id = data.get("subscription")
+            now = datetime.now(timezone.utc)
+            renews = now + timedelta(days=30)
+
+            sub = (
+                db.query(TipsterSubscription)
+                .filter(
+                    TipsterSubscription.user_id == user.id,
+                    TipsterSubscription.tipster_id == tipster.id,
+                )
+                .first()
+            )
+
+            if not sub:
+                sub = TipsterSubscription(
+                    user_id=user.id,
+                    tipster_id=tipster.id,
+                    plan_name="Monthly",
+                    price_cents=tipster.default_price_cents,
+                    status="active",
+                    provider="stripe",
+                    provider_sub_id=subscription_id,
+                    started_at=now,
+                    renews_at=renews,
+                )
+                db.add(sub)
+            else:
+                sub.status = "active"
+                sub.canceled_at = None
+                sub.renews_at = renews
+                sub.provider = "stripe"
+                sub.provider_sub_id = subscription_id or sub.provider_sub_id
+                if tipster.default_price_cents:
+                    sub.price_cents = tipster.default_price_cents
+
+            db.commit()
+            return {"ok": True}
+
+        return {"ok": True}
+
+    # ============================================================
+    # customer.subscription.updated / deleted
+    # ============================================================
+    if event_type in ("customer.subscription.updated", "customer.subscription.deleted"):
         customer_id = data.get("customer")
-        if customer_id:
-            user = db.query(User).filter(
-                User.stripe_customer_id == customer_id
-            ).first()
+        subscription_id = data.get("id")
+        status_str = data.get("status")  # active, past_due, canceled...
+
+        # Try to detect which price this sub is for
+        price_id = None
+        items = (data.get("items") or {}).get("data") or []
+        if items:
+            price_obj = items[0].get("price") or {}
+            price_id = price_obj.get("id")
+
+        # ---- Premium status (only if this is the Premium price) ----
+        if customer_id and price_id == settings.STRIPE_PREMIUM_PRICE_ID:
+            user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
             if user:
-                status_str = data.get("status")
-                # Stripe statuses: active, trialing, past_due, canceled, unpaid, etc.
                 is_active = status_str in ("active", "trialing")
                 user.is_premium = bool(is_active)
-                db.add(user)
                 db.commit()
 
-    return {"ok": True}
+        # ---- Tipster subscription status (by provider_sub_id) ----
+        if subscription_id:
+            tip_sub = (
+                db.query(TipsterSubscription)
+                .filter(TipsterSubscription.provider_sub_id == subscription_id)
+                .first()
+            )
+            if tip_sub:
+                if status_str in ("active", "trialing"):
+                    tip_sub.status = "active"
+                else:
+                    tip_sub.status = "canceled"
+                    tip_sub.canceled_at = datetime.now(timezone.utc)
+                    tip_sub.renews_at = None
+                db.commit()

@@ -9,16 +9,23 @@ from ..settings import settings
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+# ============================================================
+# Premium Checkout
+# ============================================================
+
 def create_premium_checkout_session(
     customer_email: str,
     firebase_uid: str,
     success_url: str,
     cancel_url: str,
-) -> str:
+) -> dict:
     """
     Create a Stripe Checkout Session for the CSB Premium plan.
-    Returns: session.url (redirect URL)
+    Returns: { url: "...", id: "cs_test_..." }
     """
+    if not settings.STRIPE_PREMIUM_PRICE_ID:
+        raise ValueError("Missing STRIPE_PREMIUM_PRICE_ID")
+
     session = stripe.checkout.Session.create(
         mode="subscription",
         payment_method_types=["card"],
@@ -34,13 +41,43 @@ def create_premium_checkout_session(
             "product": "csb_premium",
         },
     )
-    return session.url
+    return {"url": session.url, "id": session.id}
 
+
+# ============================================================
+# General-purpose subscription checkout (Tipsters)
+# ============================================================
+
+def create_subscription_checkout_session(
+    customer_id: str,
+    price_id: str,
+    success_url: str,
+    cancel_url: str,
+    metadata: dict,
+) -> dict:
+    """
+    Generic helper for creating subscription Checkout Sessions.
+    Used for tipster subscriptions.
+    """
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        customer=customer_id,
+        line_items=[{
+            "price": price_id,
+            "quantity": 1,
+        }],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata or {},
+    )
+    return {"url": session.url, "id": session.id}
+
+
+# ============================================================
+# Shared helpers
+# ============================================================
 
 def get_or_create_customer(email: str) -> stripe.Customer:
-    """
-    Optional helper if you later want explicit Customer records.
-    """
     customers = stripe.Customer.list(email=email, limit=1).data
     if customers:
         return customers[0]
@@ -48,20 +85,14 @@ def get_or_create_customer(email: str) -> stripe.Customer:
 
 
 def parse_event(payload: bytes, sig_header: str) -> stripe.Event:
-    """
-    Verify and parse a Stripe webhook event.
-    """
     return stripe.Webhook.construct_event(
         payload=payload,
         sig_header=sig_header,
         secret=settings.STRIPE_WEBHOOK_SECRET,
     )
 
+
 def create_billing_portal_session(customer_id: str, return_url: str) -> str:
-    """
-    Create a Stripe Billing Portal session so the user can manage
-    their subscription (update card, cancel, etc.).
-    """
     session = stripe.billing_portal.Session.create(
         customer=customer_id,
         return_url=return_url,
