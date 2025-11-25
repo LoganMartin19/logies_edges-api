@@ -546,83 +546,46 @@ def player_summary(
     home_id = int(((core.get("teams") or {}).get("home") or {}).get("id") or 0)
     away_id = int(((core.get("teams") or {}).get("away") or {}).get("id") or 0)
 
-    # ---------- helper: build a per-90 snapshot from a single stats row
-    def _per90_from_stats(pl_row: dict, stats: dict) -> dict:
-        games = stats.get("games") or {}
-        shots = stats.get("shots") or {}
-        fouls = stats.get("fouls") or {}
-        cards = stats.get("cards") or {}
-        mins = int(games.get("minutes") or 0)
-        p90 = (lambda v: round((v * 90.0) / mins, 2) if mins else 0.0)
-        pos = games.get("position")
-        return {
-            "id": int((pl_row.get("player") or {}).get("id") or 0),
-            "name": (pl_row.get("player") or {}).get("name"),
-            "photo": (pl_row.get("player") or {}).get("photo"),
-            "pos": pos or (pl_row.get("player") or {}).get("position") or "?",
-            "minutes": mins,
-            "shots_per90": p90(int(shots.get("total") or 0)),
-            "sot_per90": p90(int(shots.get("on") or 0)),
-            "fouls_per90": p90(int(fouls.get("committed") or 0)),
-            "yc_per90": p90(int(cards.get("yellow") or 0)),
-        }
-
-    # ---------- pull ALL season rows for both teams (correct endpoint; all pages)
-    home_rows = get_team_season_players_cached(db, home_id, season)
-    away_rows = get_team_season_players_cached(db, away_id, season)
+    # ---------- pull ALL season rows for both teams (cached, all comps) ----------
+    home_rows = get_team_season_players_cached(db, home_id, season) or []
+    away_rows = get_team_season_players_cached(db, away_id, season) or []
     season_rows = home_rows + away_rows
 
-    # ---------- locate this player
+    # ---------- locate this player across all competitions ----------
     player_rows = [
         r
         for r in season_rows
         if int((r.get("player") or {}).get("id") or 0) == int(player_id)
     ]
 
-    # Match-context block: prefer a statistics entry whose league.id == fixture league
-    match_block = None
-    for row in player_rows:
-        for s in (row.get("statistics") or []):
-            lg_s = (s.get("league") or {})  # e.g. League One, EFL Trophy, etc.
-            if (
-                int(lg_s.get("id") or 0) == league_id
-                and int(lg_s.get("season") or 0) == season
-            ):
-                match_block = _per90_from_stats(row, s)
-                break
-        if match_block:
-            break
-    # fallback: first available stats if no comp matches fixture league
-    if not match_block and player_rows:
-        first_stats = (player_rows[0].get("statistics") or [])
-        if first_stats:
-            match_block = _per90_from_stats(player_rows[0], first_stats[0])
-
-    # ---------- season competitions + totals for this player
-    comp_blocks = []
+    # ---------- season competitions + totals for this player ----------
+    comp_blocks: list[dict] = []
     for row in player_rows:
         for s in (row.get("statistics") or []):
             lg_s = (s.get("league") or {})
             if int(lg_s.get("season") or 0) != season:
                 continue
-            comp_blocks.append({
-                "league_id": lg_s.get("id"),
-                "league": lg_s.get("name"),
-                "games": s.get("games") or {},
-                "goals": s.get("goals") or {},
-                "assists": (s.get("goals") or {}).get("assists"),
-                "shots": s.get("shots") or {},
-                "cards": s.get("cards") or {},
-                "minutes": (s.get("games") or {}).get("minutes") or 0,
-            })
+            comp_blocks.append(
+                {
+                    "league_id": lg_s.get("id"),
+                    "league": lg_s.get("name"),
+                    "games": s.get("games") or {},
+                    "goals": s.get("goals") or {},
+                    "assists": (s.get("goals") or {}).get("assists"),
+                    "shots": s.get("shots") or {},
+                    "cards": s.get("cards") or {},
+                    "minutes": (s.get("games") or {}).get("minutes") or 0,
+                }
+            )
 
     totals = None
     if comp_blocks:
         def n(x):
             try:
                 return int(x or 0)
-            except:
+            except Exception:
                 return 0
+
         totals = {
             "apps": sum(n((cb["games"] or {}).get("appearences")) for cb in comp_blocks),
             "minutes": sum(n(cb["minutes"]) for cb in comp_blocks),
@@ -634,7 +597,79 @@ def player_summary(
             "red": sum(n((cb["cards"] or {}).get("red")) for cb in comp_blocks),
         }
 
-    # Team label (best-effort)
+    # ---------- helper: per-90 snapshot using season totals if needed ----------
+    def _per90_from_stats(pl_row: dict, stats: dict) -> dict:
+        """
+        Produce stable per-90 values using:
+          • this competition's stats when minutes >= 30
+          • season totals fallback when minutes are tiny
+        """
+        games = stats.get("games") or {}
+        shots = stats.get("shots") or {}
+        fouls = stats.get("fouls") or {}
+        cards = stats.get("cards") or {}
+
+        mins = int(games.get("minutes") or 0)
+
+        # position: prefer games.position, then player.position, then "?"
+        pos = (
+            games.get("position")
+            or (pl_row.get("player") or {}).get("position")
+            or "?"
+        )
+
+        # If comp minutes are very low but we have season totals → use those
+        use_season = bool(totals) and mins < 30 and int(totals.get("minutes") or 0) > 0
+
+        if use_season:
+            mins_use = int(totals.get("minutes") or 0)
+            sh_total = int(totals.get("shots") or 0)
+            sh_on = int(totals.get("shots_on") or 0)
+            fouls_c = 0  # we don't currently aggregate fouls in totals
+            yc = int(totals.get("yellow") or 0)
+        else:
+            mins_use = mins
+            sh_total = int(shots.get("total") or 0)
+            sh_on = int(shots.get("on") or 0)
+            fouls_c = int(fouls.get("committed") or 0)
+            yc = int(cards.get("yellow") or 0)
+
+        def p90(v: int) -> float:
+            return round((v * 90.0) / mins_use, 2) if mins_use > 0 else 0.0
+
+        return {
+            "id": int((pl_row.get("player") or {}).get("id") or 0),
+            "name": (pl_row.get("player") or {}).get("name"),
+            "photo": (pl_row.get("player") or {}).get("photo"),
+            "pos": pos,
+            "minutes": mins_use,
+            "shots_per90": p90(sh_total),
+            "sot_per90": p90(sh_on),
+            "fouls_per90": p90(fouls_c),
+            "yc_per90": p90(yc),
+        }
+
+    # ---------- match-context block: prefer stats whose league.id matches fixture ----------
+    match_block = None
+    for row in player_rows:
+        for s in (row.get("statistics") or []):
+            lg_s = (s.get("league") or {})  # e.g. League One, UCL, cups etc.
+            if (
+                int(lg_s.get("id") or 0) == league_id
+                and int(lg_s.get("season") or 0) == season
+            ):
+                match_block = _per90_from_stats(row, s)
+                break
+        if match_block:
+            break
+
+    # fallback: first available stats if no comp matches fixture league
+    if not match_block and player_rows:
+        first_stats = (player_rows[0].get("statistics") or [])
+        if first_stats:
+            match_block = _per90_from_stats(player_rows[0], first_stats[0])
+
+    # ---------- Team label (best-effort) ----------
     team_name = None
     if player_rows:
         t = ((player_rows[0].get("statistics") or [None])[0] or {}).get("team") or {}
@@ -647,12 +682,16 @@ def player_summary(
                 "name": match_block.get("name")
                 if match_block
                 else (
-                    player_rows[0].get("player").get("name") if player_rows else None
+                    (player_rows[0].get("player") or {}).get("name")
+                    if player_rows
+                    else None
                 ),
                 "photo": match_block.get("photo")
                 if match_block
                 else (
-                    player_rows[0].get("player").get("photo") if player_rows else None
+                    (player_rows[0].get("player") or {}).get("photo")
+                    if player_rows
+                    else None
                 ),
                 "position": match_block.get("pos") if match_block else None,
             }
@@ -670,7 +709,6 @@ def player_summary(
             "totals": totals,
         },
     }
-
 
 @router.get("/injuries")
 def injuries(fixture_id: int, db: Session = Depends(get_db)):
@@ -1623,32 +1661,36 @@ def player_game_log(
 ):
     """
     Return last-N matches for this player (minutes, shots, SoT, goals, cards, fouls, rating, etc.)
-    Data source: /fixtures (to find recent team games) + /fixtures/players per fixture.
+    Data source: /fixtures (team recent games) + /fixtures/players per fixture.
     """
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
     if not fx or not fx.provider_fixture_id:
         raise HTTPException(status_code=404, detail="Fixture not found")
 
-    # fixture context
+    # --- fixture context ---
     fcore = (get_fixture(int(fx.provider_fixture_id)).get("response") or [None])[0] or {}
     lg = fcore.get("league") or {}
     season = int(lg.get("season") or 0)
     league_id = int(lg.get("id") or 0)
+
     teams = fcore.get("teams") or {}
     home_pid = int((teams.get("home") or {}).get("id") or 0)
     away_pid = int((teams.get("away") or {}).get("id") or 0)
 
-    # decide which team this player belongs to
+    # --- determine home or away ---
     home_rows = get_team_season_players_cached(db, home_pid, season)
     away_rows = get_team_season_players_cached(db, away_pid, season)
-    belongs_home = any(int((r.get("player") or {}).get("id") or 0) == int(player_id) for r in home_rows)
+    belongs_home = any(
+        int((r.get("player") or {}).get("id") or 0) == int(player_id)
+        for r in home_rows
+    )
     team_id = home_pid if belongs_home else away_pid
 
-    # pull recent fixtures for that team
+    # --- recent fixtures for this team ---
     recent = get_team_recent_results(
         team_id,
         season=season,
-        limit=max(last * 2, last),  # ask a few extra in case of DNPs
+        limit=max(last * 2, last),  # request extras in case of DNP
         league_id=(league_id if league_only else None),
     ) or []
 
@@ -1658,7 +1700,7 @@ def player_game_log(
         if not fid:
             continue
 
-        # fetch fixture detail for score + fallback competition
+        # -------- get fixture details --------
         score_str = None
         result = None
         league_name = None
@@ -1668,30 +1710,27 @@ def player_game_log(
             goals = (fresp.get("goals") or {})
             gh = int(goals.get("home") or 0)
             ga = int(goals.get("away") or 0)
-            league_name = ((fresp.get("league") or {}).get("name")) or None
+            league_name = (fresp.get("league") or {}).get("name") or None
 
-            # Orient score from player's-team perspective
+            # score from player's team perspective
             if bool(m.get("is_home")):
                 score_str = f"{gh}-{ga}"
-                if gh > ga:   result = "W"
-                elif gh < ga: result = "L"
-                else:         result = "D"
+                result = "W" if gh > ga else ("L" if gh < ga else "D")
             else:
                 score_str = f"{ga}-{gh}"
-                if ga > gh:   result = "W"
-                elif ga < gh: result = "L"
-                else:         result = "D"
+                result = "W" if ga > gh else ("L" if ga < gh else "D")
         except Exception:
             score_str = None
             result = None
             league_name = None
 
+        # -------- fetch player stats from fixture --------
         pj = get_fixture_players_cached(db, fid) or {}
         resp = pj.get("response") or []
         if not isinstance(resp, list):
             resp = []
 
-        # scan both sides for the player
+        found = False
         for side in resp:
             players_list = (side.get("players") or [])
             for pl in players_list:
@@ -1708,21 +1747,32 @@ def player_game_log(
                 lg_s   = stats.get("league") or {}
                 tm     = side.get("team")    or {}
 
-                # opponent name = the other team in response
+                # opponent name
                 opp_name = None
                 for other in resp:
                     tid = (other.get("team") or {}).get("id")
-                    if tid and tid != (tm.get("id")):
+                    if tid and tid != tm.get("id"):
                         opp_name = (other.get("team") or {}).get("name")
                         break
 
+                # pick best competition label
+                comp_name = (
+                    lg_s.get("name")
+                    or league_name
+                    or (fresp.get("league") or {}).get("name")
+                    or "Unknown"
+                )
+
+                # clean date to ISO (backend passes correct value)
+                date_iso = m.get("date")
+
                 out.append({
                     "fixture_id": int(fid),
-                    "date": m.get("date"),
+                    "date": date_iso,
                     "team": html.unescape(tm.get("name") or ""),
                     "opponent": html.unescape(opp_name or ""),
                     "is_home": bool(m.get("is_home")),
-                    "competition": (lg_s.get("name") or league_name),
+                    "competition": comp_name,
                     "minutes": int(games.get("minutes") or 0),
                     "rating": games.get("rating"),
                     "shots": int(shots.get("total") or 0),
@@ -1735,15 +1785,27 @@ def player_game_log(
                     "fouls_committed": int((fouls.get("committed") or 0) or 0),
                     "fouls_drawn": int((fouls.get("drawn") or 0) or 0),
                     "score": score_str,
-                    "result": result,  # W/D/L from player's team perspective
+                    "result": result,
                 })
-                break  # found the player; stop inner loop
+
+                found = True
+                break
+            if found:
+                break
+
         if len(out) >= last:
             break
 
+    # newest first
     out.sort(key=lambda r: r.get("date") or "", reverse=True)
-    return {"player_id": player_id, "team_id": team_id, "season": season, "games": out[:last]}
 
+    return {
+        "player_id": player_id,
+        "team_id": team_id,
+        "season": season,
+        "games": out[:last],
+    }
+    
 from fastapi import Query
 
 @router.post("/admin/prime-team-stats")
