@@ -1356,3 +1356,17 @@ def connect_status(
         details_submitted=status["details_submitted"],
         currently_due=status["currently_due"],
     )
+
+@router.get("/{username}/connect/dashboard", response_model=dict)
+def connect_dashboard_link(
+    username: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    tip = _require_owner(username, db, user)
+
+    if not tip.stripe_account_id:
+        raise HTTPException(400, "Creator has no Stripe Connect account yet")
+
+    url = stripe_connect.create_login_link(tip.stripe_account_id)
+    return {"dashboard_url": url}

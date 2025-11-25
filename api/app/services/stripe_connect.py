@@ -83,3 +83,14 @@ def get_connect_status(stripe_account_id: str) -> dict:
         "details_submitted": acct.get("details_submitted", False),
         "currently_due": acct.get("requirements", {}).get("currently_due", []),
     }
+
+def create_login_link(stripe_account_id: str) -> str:
+    """
+    Generate a login link for the Stripe Express Dashboard.
+    Tipsters use this to manage payout details.
+    """
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured on server")
+
+    link = stripe.Account.create_login_link(stripe_account_id)
+    return link["url"]
