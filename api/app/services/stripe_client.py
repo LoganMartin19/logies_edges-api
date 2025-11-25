@@ -54,10 +54,10 @@ def create_subscription_checkout_session(
     success_url: str,
     cancel_url: str,
     metadata: dict,
-) -> dict:
+) -> str:
     """
     Generic helper for creating subscription Checkout Sessions.
-    Used for tipster subscriptions.
+    Tipster subscription uses this.
     """
     session = stripe.checkout.Session.create(
         mode="subscription",
@@ -70,7 +70,8 @@ def create_subscription_checkout_session(
         cancel_url=cancel_url,
         metadata=metadata or {},
     )
-    return {"url": session.url, "id": session.id}
+    # 🔑 IMPORTANT: return the URL string, NOT a dict
+    return session.url
 
 
 # ============================================================
