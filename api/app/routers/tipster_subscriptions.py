@@ -121,29 +121,56 @@ def _ensure_stripe_customer(db: Session, user: User) -> str:
 def _ensure_tipster_price(db: Session, tip: Tipster) -> str:
     """
     Ensure the Tipster has a Stripe Price for monthly subs.
-    Auto-generates it from tip.default_price_cents the first time.
-    """
-    # assumes you have a `stripe_price_id` column on Tipster
-    if getattr(tip, "stripe_price_id", None):
-        return tip.stripe_price_id
+    Auto-generates / auto-syncs it from tip.default_price_cents.
 
+    Behaviour:
+      - No stripe_price_id -> create new Price and store it.
+      - Existing stripe_price_id:
+          * If amount/currency/interval match -> reuse.
+          * If they differ (e.g. tipster changed default_price_cents) -> create new
+            Price and update tip.stripe_price_id.
+      - If retrieve fails (deleted / invalid) -> create new Price.
+    """
     if not STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured on server")
 
     if not tip.default_price_cents or tip.default_price_cents <= 0:
         raise HTTPException(400, "Tipster has no price set")
 
-    # Create a Price with inline product_data
-    price = stripe.Price.create(
-        unit_amount=tip.default_price_cents,
-        currency=(tip.currency or "gbp").lower(),
-        recurring={"interval": "month"},
-        product_data={
-            "name": f"{tip.name} (@{tip.username}) tipster subscription",
-        },
-    )
+    desired_amount = int(tip.default_price_cents)
+    desired_currency = (tip.currency or "gbp").lower()
+    desired_interval = "month"
 
-    tip.stripe_price_id = price["id"]
+    def _create_price() -> stripe.Price:
+        return stripe.Price.create(
+            unit_amount=desired_amount,
+            currency=desired_currency,
+            recurring={"interval": desired_interval},
+            product_data={
+                "name": f"{tip.name} (@{tip.username}) tipster subscription",
+            },
+        )
+
+    # 1) If we already have a stripe_price_id, check that it still matches
+    if getattr(tip, "stripe_price_id", None):
+        try:
+            price = stripe.Price.retrieve(tip.stripe_price_id)
+            # Only reuse if amount / currency / interval all match
+            curr_interval = (price.get("recurring") or {}).get("interval")
+            if (
+                int(price["unit_amount"]) == desired_amount
+                and price["currency"] == desired_currency
+                and curr_interval == desired_interval
+            ):
+                return price["id"]
+            # Otherwise fall through to create a fresh price below
+        except stripe.error.StripeError:
+            # treat as missing / invalid -> create new
+            pass
+
+    # 2) Create a new Price and store it on the tipster
+    new_price = _create_price()
+    tip.stripe_price_id = new_price["id"]
     db.commit()
     db.refresh(tip)
     return tip.stripe_price_id
