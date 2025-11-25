@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 
 from ..settings import settings
 
-stripe.api_key = settings.STRIPE_SECRET_KEY
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
 
 
 # ============================================================
@@ -53,25 +55,41 @@ def create_subscription_checkout_session(
     price_id: str,
     success_url: str,
     cancel_url: str,
-    metadata: dict,
+    metadata: dict | None = None,
+    connect_account_id: str | None = None,
+    application_fee_percent: float | None = None,
 ) -> str:
     """
-    Generic helper for creating subscription Checkout Sessions.
-    Tipster subscription uses this.
+    Create a Checkout Session for a subscription.
+    If connect_account_id + application_fee_percent are provided, use
+    Stripe Connect revenue share.
     """
+    metadata = metadata or {}
+
+    subscription_data: dict = {
+        "metadata": metadata,
+    }
+
+    if connect_account_id:
+        # send net revenue to tipster
+        subscription_data["transfer_data"] = {
+            "destination": connect_account_id,
+        }
+        # your platform cut in percent
+        if application_fee_percent is not None:
+            subscription_data["application_fee_percent"] = application_fee_percent
+
     session = stripe.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
-        line_items=[{
-            "price": price_id,
-            "quantity": 1,
-        }],
+        line_items=[{"price": price_id, "quantity": 1}],
         success_url=success_url,
         cancel_url=cancel_url,
-        metadata=metadata or {},
+        subscription_data=subscription_data,
+        metadata=metadata,
     )
-    # 🔑 IMPORTANT: return the URL string, NOT a dict
-    return session.url
+
+    return session["url"]
 
 
 # ============================================================

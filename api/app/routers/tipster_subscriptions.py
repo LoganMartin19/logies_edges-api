@@ -26,6 +26,11 @@ FRONTEND_BASE_URL = os.getenv(
     "FRONTEND_BASE_URL", "https://charteredsportsbetting.com"
 )
 
+# Default platform fee if tip.rev_share_bps is not set
+TIPSTER_PLATFORM_FEE_DEFAULT = float(
+    os.getenv("TIPSTER_PLATFORM_FEE_PERCENT", "15.0")
+)
+
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
 
@@ -257,6 +262,22 @@ def create_stripe_checkout_session(
     if not STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured on server")
 
+    # 🔥 compute platform fee percent from rev_share_bps or default
+    if getattr(tip, "rev_share_bps", None) is not None:
+        platform_fee_percent = (tip.rev_share_bps or 0) / 100.0
+    else:
+        platform_fee_percent = TIPSTER_PLATFORM_FEE_DEFAULT
+
+    # safety clamp (0–50%)
+    platform_fee_percent = max(0.0, min(platform_fee_percent, 50.0))
+
+    # Require that this tipster has a Connect account for payouts
+    if not getattr(tip, "stripe_account_id", None):
+        raise HTTPException(
+            400,
+            "Creator has not completed payout onboarding yet. Please try again later.",
+        )
+
     # 👉 this helper returns a plain string URL
     checkout_url = stripe_client.create_subscription_checkout_session(
         customer_id=customer_id,
@@ -268,6 +289,9 @@ def create_stripe_checkout_session(
             "tipster_id": str(tip.id),
             "tipster_username": tip.username,
         },
+        # Stripe Connect split
+        connect_account_id=tip.stripe_account_id,
+        application_fee_percent=platform_fee_percent,
     )
 
     return CheckoutSessionOut(checkout_url=checkout_url)

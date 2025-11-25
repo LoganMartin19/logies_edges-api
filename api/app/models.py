@@ -538,6 +538,9 @@ class Tipster(Base):
 
     stripe_price_id = Column(String, nullable=True, index=True)
 
+    # 🔥 NEW: platform revenue share in basis points (100 bps = 1%)
+    # 15% = 1500 bps
+    rev_share_bps = Column(Integer, nullable=False, server_default="1500")
     # existing
     picks = relationship("TipsterPick", back_populates="tipster", cascade="all, delete-orphan")
     accas = relationship("AccaTicket", back_populates="tipster", cascade="all, delete-orphan")

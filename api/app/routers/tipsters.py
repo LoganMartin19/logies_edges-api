@@ -21,7 +21,7 @@ from ..models import (
 )
 from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 from ..auth_firebase import get_current_user, optional_user
-
+from ..services import stripe_connect
 router = APIRouter(prefix="/api/tipsters", tags=["tipsters"])
 
 # ---------- Schemas ----------
@@ -1275,3 +1275,54 @@ def delete_tipster_acca(
     db.delete(t)
     db.commit()
     return {"ok": True, "deleted": ticket_id}
+
+class ConnectStatusOut(BaseModel):
+  has_connect: bool
+  charges_enabled: bool = False
+  payouts_enabled: bool = False
+  details_submitted: bool = False
+  currently_due: list[str] = []
+
+
+@router.post("/{username}/connect/onboard", response_model=dict)
+def start_connect_onboarding(
+    username: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Owner-only: create or reuse a Stripe Express account and return onboarding URL.
+    """
+    # reuse existing owner check
+    tip = _require_owner(username, db, user)
+
+    # find the owner User row (by firebase_uid/email)
+    email = (user.get("email") or "").lower()
+    owner_user = db.query(User).filter(User.email == email).first()
+    if not owner_user:
+        raise HTTPException(400, "Owner user not found")
+
+    account_id = stripe_connect.ensure_express_account(db, tip, owner_user)
+    url = stripe_connect.create_onboarding_link(account_id)
+    return {"onboarding_url": url}
+
+
+@router.get("/{username}/connect/status", response_model=ConnectStatusOut)
+def connect_status(
+    username: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    tip = _require_owner(username, db, user)
+
+    if not tip.stripe_account_id:
+        return ConnectStatusOut(has_connect=False)
+
+    status = stripe_connect.get_connect_status(tip.stripe_account_id)
+    return ConnectStatusOut(
+        has_connect=True,
+        charges_enabled=status["charges_enabled"],
+        payouts_enabled=status["payouts_enabled"],
+        details_submitted=status["details_submitted"],
+        currently_due=status["currently_due"],
+    )
