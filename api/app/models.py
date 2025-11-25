@@ -536,6 +536,8 @@ class Tipster(Base):
     subscriber_limit = Column(Integer, nullable=True)              # e.g. 50
     is_open_for_new_subs = Column(Boolean, nullable=False, server_default="true")
 
+    stripe_price_id = Column(String, nullable=True, index=True)
+
     # existing
     picks = relationship("TipsterPick", back_populates="tipster", cascade="all, delete-orphan")
     accas = relationship("AccaTicket", back_populates="tipster", cascade="all, delete-orphan")

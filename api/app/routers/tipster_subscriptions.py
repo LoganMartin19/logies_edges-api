@@ -7,12 +7,23 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import os
 
 from ..db import get_db
 from ..models import User, Tipster, TipsterSubscription
 from ..auth_firebase import get_current_user
 
+import stripe  # ⬅️ Stripe SDK
+
 router = APIRouter(prefix="/api/tipsters", tags=["tipster-subscriptions"])
+
+# --- Stripe config ----------------------------------------------------------
+
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://charteredsportsbetting.com")
+
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
 
 
 class SubscriptionStatusOut(BaseModel):
@@ -28,6 +39,13 @@ class SubscriptionStatusOut(BaseModel):
     subscriber_count: int
     subscriber_limit: Optional[int] = None
     is_open_for_new_subs: bool
+
+
+class CheckoutSessionOut(BaseModel):
+    checkout_url: str
+
+
+# ---------- helpers: users / tipsters / counts ----------
 
 
 def _get_user(db: Session, claims: dict) -> User:
@@ -72,6 +90,64 @@ def _count_active_subs(db: Session, tipster_id: int) -> int:
     )
 
 
+# ---------- helpers: Stripe customer + price ----------
+
+
+def _ensure_stripe_customer(db: Session, user: User) -> str:
+    """
+    Ensure the User has a stripe_customer_id, creating one if needed.
+    Reuses the same customer for Premium + tipster subs.
+    """
+    if getattr(user, "stripe_customer_id", None):
+        return user.stripe_customer_id
+
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured on server")
+
+    customer = stripe.Customer.create(
+        email=user.email or None,
+        metadata={"user_id": str(user.id)},
+    )
+    user.stripe_customer_id = customer["id"]
+    db.commit()
+    db.refresh(user)
+    return user.stripe_customer_id
+
+
+def _ensure_tipster_price(db: Session, tip: Tipster) -> str:
+    """
+    Ensure the Tipster has a Stripe Price for monthly subs.
+    Auto-generates it from tip.default_price_cents the first time.
+    """
+    if tip.stripe_price_id:
+        return tip.stripe_price_id
+
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured on server")
+
+    if not tip.default_price_cents or tip.default_price_cents <= 0:
+        raise HTTPException(400, "Tipster has no price set")
+
+    # Create a Price with inline product_data
+    price = stripe.Price.create(
+        unit_amount=tip.default_price_cents,
+        currency=(tip.currency or "gbp").lower(),
+        recurring={"interval": "month"},
+        product_data={
+            "name": f"{tip.name} (@{tip.username}) tipster subscription",
+        },
+    )
+
+    tip.stripe_price_id = price["id"]
+    db.commit()
+    db.refresh(tip)
+    return tip.stripe_price_id
+
+
+# =====================================================================
+#   STATUS
+# =====================================================================
+
 @router.get("/{username}/subscription", response_model=SubscriptionStatusOut)
 def get_subscription_status(
     username: str,
@@ -110,6 +186,81 @@ def get_subscription_status(
     )
 
 
+# =====================================================================
+#   STRIPE CHECKOUT (preferred path)
+# =====================================================================
+
+@router.post(
+    "/{username}/subscription/checkout",
+    response_model=CheckoutSessionOut,
+)
+def create_stripe_checkout_session(
+    username: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Creates a Stripe Checkout Session for subscribing to a tipster.
+    Frontend:
+      - POST here
+      - redirect user to `checkout_url`
+    Webhook (later):
+      - on successful payment, call the same logic as `start_subscription`
+        to mark the subscription active in TipsterSubscription.
+    """
+    tip = _get_tipster_by_username(db, username)
+    viewer = _get_user(db, user)
+
+    if tip.owner_user_id and tip.owner_user_id == viewer.id:
+        raise HTTPException(400, "You cannot subscribe to your own tipster account")
+
+    active_count = _count_active_subs(db, tip.id)
+    if tip.subscriber_limit is not None and active_count >= tip.subscriber_limit:
+        raise HTTPException(400, "This tipster is full for now")
+
+    if not bool(tip.is_open_for_new_subs):
+        raise HTTPException(400, "This tipster is currently closed for new subscribers")
+
+    if not tip.default_price_cents or tip.default_price_cents <= 0:
+        raise HTTPException(400, "Tipster has no subscription price set yet")
+
+    # ensure Stripe objects exist
+    customer_id = _ensure_stripe_customer(db, viewer)
+    price_id = _ensure_tipster_price(db, tip)
+
+    # success/cancel URLs back to the tipster page
+    success_url = f"{FRONTEND_BASE_URL}/tipsters/{tip.username}?sub=success"
+    cancel_url = f"{FRONTEND_BASE_URL}/tipsters/{tip.username}?sub=cancelled"
+
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured on server")
+
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        customer=customer_id,
+        line_items=[
+            {
+                "price": price_id,
+                "quantity": 1,
+            }
+        ],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            # used in webhook to create TipsterSubscription row
+            "user_id": str(viewer.id),
+            "tipster_id": str(tip.id),
+            "tipster_username": tip.username,
+        },
+    )
+
+    return CheckoutSessionOut(checkout_url=session["url"])
+
+
+# =====================================================================
+#   MANUAL START / CANCEL (MVP + webhook helper)
+# =====================================================================
+
 @router.post("/{username}/subscription/start", response_model=SubscriptionStatusOut)
 def start_subscription(
     username: str,
@@ -118,7 +269,13 @@ def start_subscription(
 ):
     """
     MVP: manual start of a tipster subscription.
-    Later you can call this from Stripe webhook / billing.py instead.
+
+    You can:
+      - keep calling this directly (no Stripe) for testing, OR
+      - call it from your Stripe webhook handler once payment succeeds,
+        by building a fake `user` claims dict that contains the viewer's
+        Firebase uid/email, or by refactoring the core logic into a
+        helper that takes (db, user_id, tipster_id).
     """
     tip = _get_tipster_by_username(db, username)
     viewer = _get_user(db, user)
@@ -153,6 +310,7 @@ def start_subscription(
         sub.renews_at = renews
         if tip.default_price_cents:
             sub.price_cents = tip.default_price_cents
+        sub.provider = sub.provider or "manual"
     else:
         sub = TipsterSubscription(
             user_id=viewer.id,
