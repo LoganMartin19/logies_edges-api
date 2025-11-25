@@ -1110,27 +1110,46 @@ def player_props_fair(
             pass
 
     # events-first fouls context
-    home_drawn90 = get_team_fouls_drawn_avg(
-        home_pid, season=season, league_id=league_id, lookback=lookback
-    ) if home_pid else 0.0
-    away_drawn90 = get_team_fouls_drawn_avg(
-        away_pid, season=season, league_id=league_id, lookback=lookback
-    ) if away_pid else 0.0
-    home_comm90 = get_team_fouls_committed_avg(
-        home_pid, season=season, league_id=league_id, lookback=lookback
-    ) if home_pid else 0.0
-    away_comm90 = get_team_fouls_committed_avg(
-        away_pid, season=season, league_id=league_id, lookback=lookback
-    ) if away_pid else 0.0
+    home_drawn90 = (
+        get_team_fouls_drawn_avg(
+            home_pid, season=season, league_id=league_id, lookback=lookback
+        )
+        if home_pid
+        else 0.0
+    )
+    away_drawn90 = (
+        get_team_fouls_drawn_avg(
+            away_pid, season=season, league_id=league_id, lookback=lookback
+        )
+        if away_pid
+        else 0.0
+    )
+    home_comm90 = (
+        get_team_fouls_committed_avg(
+            home_pid, season=season, league_id=league_id, lookback=lookback
+        )
+        if home_pid
+        else 0.0
+    )
+    away_comm90 = (
+        get_team_fouls_committed_avg(
+            away_pid, season=season, league_id=league_id, lookback=lookback
+        )
+        if away_pid
+        else 0.0
+    )
 
     # shots/SoT conceded pace
     def _pace(team_id: int | None) -> tuple[float, float]:
         if not (team_id and league_id and season):
             return (0.0, 0.0)
         try:
-            pa = get_team_shots_against_avgs(
-                team_id, season=season, league_id=league_id, lookback=lookback
-            ) or {}
+            pa = (
+                get_team_shots_against_avgs(
+                    team_id, season=season, league_id=league_id, lookback=lookback
+                )
+                or {}
+            )
             return float(pa.get("shots_against_per_match") or 0.0), float(
                 pa.get("sot_against_per_match") or 0.0
             )
@@ -1168,7 +1187,9 @@ def player_props_fair(
     stats_data = _get_player_props_data(fixture_id, db)
 
     # Best available odds (by player, market, line)
-    stored_odds = db.query(PlayerOdds).filter(PlayerOdds.fixture_id == fixture_id).all()
+    stored_odds = (
+        db.query(PlayerOdds).filter(PlayerOdds.fixture_id == fixture_id).all()
+    )
     odds_map: dict[tuple[int, str, float], dict] = {}
     for o in stored_odds:
         key = (int(o.player_id), (o.market or "").lower(), float(o.line or 0.0))
@@ -1178,7 +1199,9 @@ def player_props_fair(
 
     team_norm = (team or "").strip().lower()
     want_team = team_norm in {"home", "away"}
-    market_set = set(m.strip().lower() for m in (markets or "").split(",") if m and m.strip())
+    market_set = set(
+        m.strip().lower() for m in (markets or "").split(",") if m and m.strip()
+    )
 
     out = {"fixture_id": fixture_id, "props": []}
 
@@ -1206,9 +1229,37 @@ def player_props_fair(
         ref_ctx = referee_cards_factor()
 
         for pl in roster:
+            # ---- season-aware projected minutes ----
             mins_played = int(pl.get("minutes") or 0)
-            m_used = minutes or (80 if mins_played >= 600 else 30)
 
+            season_stats = pl.get("season_stats") or {}
+            apps = (
+                season_stats.get("apps")
+                or pl.get("apps")
+                or pl.get("appearances")
+                or 0
+            )
+            mins_total = (
+                season_stats.get("minutes")
+                or pl.get("minutes_total")
+                or 0
+            )
+
+            if apps and mins_total:
+                avg_mins = mins_total / apps
+            elif mins_played:
+                # use roster minutes as a rough signal if season totals missing
+                avg_mins = 80 if mins_played >= 600 else 60
+            else:
+                avg_mins = 75  # generic fallback
+
+            # clamp to realistic football range
+            avg_mins = max(50, min(avg_mins, 95))
+
+            # allow explicit override via query param
+            m_used = int(minutes or avg_mins)
+
+            # ---- per-90 inputs ----
             shots_per90 = float(pl.get("shots_per90") or 0.0)
             fouls90 = float(pl.get("fouls_committed_per90") or 0.0)
 
@@ -1230,7 +1281,10 @@ def player_props_fair(
                 fouls90, m_used, 0.5, opponent_factor=fouls_ctx
             )
             p_card = prob_card(
-                cards_per90, m_used, ref_factor=ref_ctx, opponent_factor=fouls_ctx
+                cards_per90,
+                m_used,
+                ref_factor=ref_ctx,
+                opponent_factor=fouls_ctx,
             )
 
             markets_calc = [
@@ -1249,38 +1303,40 @@ def player_props_fair(
                 key = (int(pl["id"]), market, float(line))
                 bm = odds_map.get(key)
 
-                out["props"].append({
-                    "player_id": int(pl["id"]),
-                    "player": html.unescape(pl.get("name") or ""),  # ✅ unescape
-                    "team_side": side,
-                    "market": market,
-                    "line": float(line),
-                    "proj_minutes": int(m_used),
-                    "prob": float(prob),
-                    "fair_odds": float(fair) if fair else None,
-                    "best_price": bm["price"] if bm else None,
-                    "bookmaker": bm["bookmaker"] if bm else None,
-                    "edge": edge(prob, bm["price"]) if bm and fair else None,
-                    # context (for Why/preview UIs)
-                    "per90_shots": round(shots_per90, 2),
-                    "per90_sot": round(sot_per90, 2),
-                    "per90_fouls": round(fouls90, 2),
-                    "cards_per90": round(cards_per90, 2),
-                    "opp_fouls_drawn_per90": round(opp_drawn90, 2),
-                    "opp_fouls_committed_per90": round(opp_comm90, 2),
-                    "opponent_factor": round(fouls_ctx, 3),
-                    "ref_factor": round(ref_ctx, 3),
-                    "opp_shots_against_per_match": round(opp_shotsA, 2),
-                    "opp_sot_against_per_match": round(opp_sotA, 2),
-                    "pace_factor_shots": round(shots_ctx, 3),
-                    "pace_factor_sot": round(sot_ctx, 3),
-                })
+                out["props"].append(
+                    {
+                        "player_id": int(pl["id"]),
+                        "player": html.unescape(pl.get("name") or ""),
+                        "team_side": side,
+                        "market": market,
+                        "line": float(line),
+                        "proj_minutes": m_used,
+                        "prob": float(prob),
+                        "fair_odds": float(fair) if fair else None,
+                        "best_price": bm["price"] if bm else None,
+                        "bookmaker": bm["bookmaker"] if bm else None,
+                        "edge": edge(prob, bm["price"]) if bm and fair else None,
+                        # context (for Why/preview UIs)
+                        "per90_shots": round(shots_per90, 2),
+                        "per90_sot": round(sot_per90, 2),
+                        "per90_fouls": round(fouls90, 2),
+                        "cards_per90": round(cards_per90, 2),
+                        "opp_fouls_drawn_per90": round(opp_drawn90, 2),
+                        "opp_fouls_committed_per90": round(opp_comm90, 2),
+                        "opponent_factor": round(fouls_ctx, 3),
+                        "ref_factor": round(ref_ctx, 3),
+                        "opp_shots_against_per_match": round(opp_shotsA, 2),
+                        "opp_sot_against_per_match": round(opp_sotA, 2),
+                        "pace_factor_shots": round(shots_ctx, 3),
+                        "pace_factor_sot": round(sot_ctx, 3),
+                    }
+                )
 
     out["props"].sort(
-        key=lambda r: (float(r.get("edge") or 0.0), float(r["prob"])), reverse=True
+        key=lambda r: (float(r.get("edge") or 0.0), float(r["prob"])),
+        reverse=True,
     )
     return out
-
 
 @router.get("/preview")
 def preview(
