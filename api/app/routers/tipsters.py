@@ -61,6 +61,16 @@ class TipsterOut(BaseModel):
     is_open_for_new_subs: bool = True
 
 
+class TipsterPricingIn(BaseModel):
+    """
+    Owner-only pricing settings for a tipster.
+    Stored in GBP for now; Stripe can later map onto these.
+    """
+    monthly_price_gbp: float | None = None
+    subscriber_limit: int | None = None
+    is_open_for_new_subs: bool = True
+
+
 class PickIn(BaseModel):
     fixture_id: int
     market: str
@@ -439,6 +449,42 @@ def create_tipster(
     out = _with_live_metrics(db, c)
     out["is_owner"] = True
     out["is_following"] = False
+    return out
+
+
+@router.post("/{username}/pricing", response_model=TipsterOut)
+def update_tipster_pricing(
+    username: str,
+    payload: TipsterPricingIn,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Owner-only endpoint to set subscription pricing + caps.
+    Currently stores monthly price in GBP cents on the Tipster row.
+    """
+    tip = _require_owner(username, db, user)
+
+    # price in GBP → cents
+    if payload.monthly_price_gbp is not None:
+        cents = int(round(payload.monthly_price_gbp * 100))
+        tip.default_price_cents = cents
+        tip.currency = "GBP"
+    else:
+        tip.default_price_cents = None
+
+    tip.subscriber_limit = payload.subscriber_limit
+    tip.is_open_for_new_subs = payload.is_open_for_new_subs
+
+    db.commit()
+    db.refresh(tip)
+
+    out = _with_live_metrics(db, tip)
+    email = (user.get("email") or "").lower()
+    tip_email = (_email_of_tipster(tip) or "").lower()
+    out["is_owner"] = email == tip_email
+    out["is_following"] = False
+    out["is_subscribed"] = False
     return out
 
 
