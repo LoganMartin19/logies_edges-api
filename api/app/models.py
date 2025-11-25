@@ -417,11 +417,7 @@ class FixturePlayersCache(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, index=True)
     __table_args__ = (UniqueConstraint("fixture_provider_id", name="uq_fpc_fixture"),)
 
-# api/app/models.py  (add near FeaturedPick)
-# --- Accas (shared by model + tipsters) --------------------------------------
-
 # --- AccaTicket / AccaLeg --------------------------------------------------
-
 class AccaTicket(Base):
     __tablename__ = "acca_tickets"
 
@@ -436,6 +432,18 @@ class AccaTicket(Base):
     stake_units = Column(Float, nullable=False, default=1.0)
     is_public = Column(Boolean, nullable=False, default=False)
 
+    # ⭐ NEW: gating flags for accas
+    is_premium_only = Column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
+    is_subscriber_only = Column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
+
     combined_price = Column(Float, nullable=True)
     est_edge = Column(Float, nullable=True)
 
@@ -445,9 +453,7 @@ class AccaTicket(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
-    # ✅ NEW: back-reference to Tipster
     tipster = relationship("Tipster", back_populates="accas")
-
     legs = relationship("AccaLeg", back_populates="ticket", cascade="all, delete-orphan")
 
 

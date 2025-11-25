@@ -132,6 +132,11 @@ class AccaIn(BaseModel):
     note: Optional[str] = None
     stake_units: float = 1.0
     is_public: bool = False
+
+    # NEW
+    is_premium_only: bool = False
+    is_subscriber_only: bool = False
+
     legs: List[AccaLegIn]
 
 
@@ -163,7 +168,11 @@ class AccaOut(BaseModel):
     profit: Optional[float] = None
     settled_at: Optional[datetime] = None
     created_at: datetime
-    # deletion helpers
+
+    # NEW: gating flags
+    is_premium_only: bool = False
+    is_subscriber_only: bool = False
+
     earliest_kickoff_utc: Optional[str] = None
     can_delete: bool = False
     legs: List[AccaLegOut]
@@ -1078,6 +1087,11 @@ def _to_acca_out(db: Session, t: AccaTicket) -> dict:
         "profit": t.profit,
         "settled_at": t.settled_at,
         "created_at": t.created_at,
+
+        # NEW
+        "is_premium_only": bool(getattr(t, "is_premium_only", False)),
+        "is_subscriber_only": bool(getattr(t, "is_subscriber_only", False)),
+
         "earliest_kickoff_utc": _acca_earliest_ko_iso(db, t),
         "can_delete": _acca_can_delete(db, t),
         "legs": legs,
@@ -1105,10 +1119,13 @@ def create_tipster_acca(
         note=payload.note,
         stake_units=payload.stake_units,
         is_public=payload.is_public,
+
+        # NEW
+        is_premium_only=payload.is_premium_only,
+        is_subscriber_only=payload.is_subscriber_only,
     )
     db.add(t)
-    db.flush()  # get t.id
-
+    db.flush()
     combined = 1.0
     for leg in payload.legs:
         fx = db.query(Fixture).get(leg.fixture_id)
@@ -1138,10 +1155,22 @@ def create_tipster_acca(
 
 
 @router.get("/{username}/accas", response_model=list[AccaOut])
-def list_tipster_accas(username: str, db: Session = Depends(get_db)):
+def list_tipster_accas(
+    username: str,
+    db: Session = Depends(get_db),
+    viewer=Depends(optional_user),
+):
     tip = db.query(Tipster).filter(Tipster.username == username).first()
     if not tip:
         raise HTTPException(404, "tipster not found")
+
+    viewer_is_premium, viewer_email, viewer_user_id = _viewer_premium_status(db, viewer)
+    tip_email = ((_email_of_tipster(tip) or "")).lower()
+    is_owner = bool(viewer_email and viewer_email == tip_email)
+
+    viewer_is_subscriber = _viewer_is_subscribed_to_tipster(
+        db, viewer_user_id, tip.id
+    )
 
     tickets = (
         db.query(AccaTicket)
@@ -1149,7 +1178,29 @@ def list_tipster_accas(username: str, db: Session = Depends(get_db)):
         .order_by(AccaTicket.created_at.desc())
         .all()
     )
-    return [_to_acca_out(db, t) for t in tickets]
+
+    out: list[dict] = []
+    for t in tickets:
+        is_prem_only = bool(getattr(t, "is_premium_only", False))
+        is_sub_only = bool(getattr(t, "is_subscriber_only", False))
+
+        locked = (
+            (is_prem_only and not (viewer_is_premium or is_owner)) or
+            (is_sub_only and not (viewer_is_subscriber or is_owner))
+        )
+
+        if locked:
+            base = _to_acca_out(db, t)
+            # strip sensitive bits
+            base["legs"] = []
+            base["combined_price"] = None
+            base["profit"] = None
+            base["stake_units"] = 0.0
+            out.append(base)
+        else:
+            out.append(_to_acca_out(db, t))
+
+    return out
 
 
 @router.post("/accas/{ticket_id}/settle", response_model=AccaOut)
