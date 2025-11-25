@@ -367,6 +367,22 @@ def cancel_subscription(
     if sub.status != "active":
         raise HTTPException(400, "subscription already not active")
 
+    # If this subscription is backed by Stripe, cancel it there too
+    if sub.provider == "stripe" and sub.provider_sub_id:
+        if not STRIPE_SECRET_KEY:
+            raise HTTPException(500, "Stripe not configured on server")
+
+        try:
+            # Immediately cancel the Stripe subscription
+            stripe.Subscription.delete(sub.provider_sub_id)
+        except stripe.error.StripeError as e:
+            # Bubble up a clean error so the UI can show a message
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to cancel Stripe subscription: {str(e)}",
+            )
+
+    # Local DB: mark as canceled and stop access immediately
     sub.status = "canceled"
     sub.canceled_at = datetime.utcnow()
     sub.renews_at = None  # MVP: access stops immediately
