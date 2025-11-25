@@ -204,15 +204,6 @@ def create_stripe_checkout_session(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """
-    Creates a Stripe Checkout Session for subscribing to a tipster.
-    Frontend:
-      - POST here
-      - redirect user to `checkout_url`
-    Webhook (later):
-      - on successful payment, call the same logic as `start_subscription`
-        to mark the subscription active in TipsterSubscription.
-    """
     tip = _get_tipster_by_username(db, username)
     viewer = _get_user(db, user)
 
@@ -233,24 +224,22 @@ def create_stripe_checkout_session(
     customer_id = _ensure_stripe_customer(db, viewer)
     price_id = _ensure_tipster_price(db, tip)
 
-    # success/cancel URLs back to the tipster page
     success_url = f"{FRONTEND_BASE_URL}/tipsters/{tip.username}?sub=success"
     cancel_url = f"{FRONTEND_BASE_URL}/tipsters/{tip.username}?sub=cancelled"
 
     if not STRIPE_SECRET_KEY:
         raise HTTPException(500, "Stripe not configured on server")
 
+    # 👉 this helper returns a plain string URL
     checkout_url = stripe_client.create_subscription_checkout_session(
         customer_id=customer_id,
         price_id=price_id,
         success_url=success_url,
         cancel_url=cancel_url,
         metadata={
-            # used in webhook to create TipsterSubscription row
             "user_id": str(viewer.id),
             "tipster_id": str(tip.id),
             "tipster_username": tip.username,
-            "product": "tipster_sub",
         },
     )
 
