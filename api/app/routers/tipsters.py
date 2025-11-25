@@ -35,6 +35,12 @@ class TipsterIn(BaseModel):
     sport_focus: str | None = None
     social_links: dict | None = None
 
+    # 💸 pricing & capacity (optional)
+    default_price_cents: int | None = None  # e.g. 1500 = £15
+    currency: str | None = None            # e.g. "GBP"
+    subscriber_limit: int | None = None    # e.g. 50, or None = unlimited
+    is_open_for_new_subs: bool | None = None
+
 
 class TipsterOut(BaseModel):
     id: int
@@ -425,24 +431,42 @@ def create_tipster(
 
     existing = db.query(Tipster).filter(Tipster.username == payload.username).first()
     if existing:
+        # --- UPDATE EXISTING PROFILE (owner only) ---
         if (_email_of_tipster(existing) or "").lower() == email:
             existing.name = payload.name
             existing.bio = payload.bio
             existing.avatar_url = payload.avatar_url
             existing.sport_focus = payload.sport_focus
             existing.social_links = (payload.social_links or {}) | {"email": email}
+
+            # 💸 allow owner to update pricing + capacity
+            if payload.default_price_cents is not None:
+                existing.default_price_cents = payload.default_price_cents
+            if payload.currency is not None:
+                existing.currency = payload.currency
+            if payload.subscriber_limit is not None:
+                existing.subscriber_limit = payload.subscriber_limit
+            if payload.is_open_for_new_subs is not None:
+                existing.is_open_for_new_subs = payload.is_open_for_new_subs
+
             db.commit()
             db.refresh(existing)
             out = _with_live_metrics(db, existing)
             out["is_owner"] = True
-            # owner isn't "following" themselves
             out["is_following"] = False
-            # owner subscriptions don't really matter here; leave defaults
             return out
         raise HTTPException(400, "username already exists")
 
+    # --- CREATE NEW TIPSTER ---
     c = Tipster(**payload.model_dump())
     c.social_links = (payload.social_links or {}) | {"email": email}
+
+    # sensible defaults if not provided
+    if c.currency is None:
+        c.currency = "GBP"
+    if c.is_open_for_new_subs is None:
+        c.is_open_for_new_subs = True
+
     db.add(c)
     db.commit()
     db.refresh(c)
