@@ -52,6 +52,14 @@ class TipsterOut(BaseModel):
     is_following: bool = False
     is_owner: bool = False
 
+    # ⭐ NEW: subscription & pricing metadata
+    is_subscribed: bool = False
+    subscriber_count: int = 0
+    default_price_cents: int | None = None
+    currency: str | None = None
+    subscriber_limit: int | None = None
+    is_open_for_new_subs: bool = True
+
 
 class PickIn(BaseModel):
     fixture_id: int
@@ -177,6 +185,11 @@ def _to_tipster_out(c: Tipster) -> dict:
         "profit_30d": c.profit_30d or 0.0,
         "picks_30d": c.picks_30d or 0,
         "social_links": _public_social_links(c),
+        # ⭐ NEW: basic pricing flags copied from model
+        "default_price_cents": c.default_price_cents,
+        "currency": c.currency,
+        "subscriber_limit": c.subscriber_limit,
+        "is_open_for_new_subs": bool(c.is_open_for_new_subs),
     }
 
 
@@ -294,13 +307,24 @@ def _settle_profit(result: str, stake: float, price: float) -> float:
     return 0.0  # PUSH/VOID/None
 
 
-# ---- follower helpers ----
+# ---- follower / subscriber helpers ----
 
 
 def _follower_count(db: Session, tipster_id: int) -> int:
     return (
         db.query(TipsterFollow)
         .filter(TipsterFollow.tipster_id == tipster_id)
+        .count()
+    )
+
+
+def _subscriber_count(db: Session, tipster_id: int) -> int:
+    return (
+        db.query(TipsterSubscription)
+        .filter(
+            TipsterSubscription.tipster_id == tipster_id,
+            TipsterSubscription.status == "active",
+        )
         .count()
     )
 
@@ -327,8 +351,9 @@ def _with_live_metrics(db: Session, c: Tipster) -> dict:
     out["winrate_30d"] = float(live.get("winrate") or 0.0)
     out["profit_30d"] = float(live.get("profit") or 0.0)
     out["picks_30d"] = int(live.get("picks") or 0)
-    # followers (for leaderboard + detail)
+    # followers + subscribers (for leaderboard + detail)
     out["follower_count"] = _follower_count(db, c.id)
+    out["subscriber_count"] = _subscriber_count(db, c.id)
     return out
 
 
@@ -402,6 +427,7 @@ def create_tipster(
             out["is_owner"] = True
             # owner isn't "following" themselves
             out["is_following"] = False
+            # owner subscriptions don't really matter here; leave defaults
             return out
         raise HTTPException(400, "username already exists")
 
@@ -432,6 +458,7 @@ def get_my_tipster(
             out = _with_live_metrics(db, c)
             out["is_owner"] = True
             out["is_following"] = False  # you don't "follow" yourself
+            # owner view: is_subscribed not really relevant; leave default False
             return out
     return None
 
@@ -441,8 +468,16 @@ def list_tipsters(db: Session = Depends(get_db)):
     rows = db.query(Tipster).all()
     enriched = [_with_live_metrics(db, c) for c in rows]
     enriched.sort(key=lambda x: x["profit_30d"], reverse=True)
-    # leaderboard view – we don't care about is_following/is_owner here
-    return [{**r, "is_owner": False, "is_following": False} for r in enriched]
+    # leaderboard view – we don't care about is_following/is_owner/is_subscribed here
+    return [
+        {
+            **r,
+            "is_owner": False,
+            "is_following": False,
+            "is_subscribed": False,
+        }
+        for r in enriched
+    ]
 
 
 @router.get("/{username}", response_model=TipsterOut)
@@ -454,7 +489,7 @@ def get_tipster(
     """
     Public tipster profile:
       - works for guests (viewer = None)
-      - if logged in, marks is_owner + is_following
+      - if logged in, marks is_owner + is_following + is_subscribed
     """
     c = db.query(Tipster).filter(Tipster.username == username).first()
     if not c:
@@ -466,6 +501,7 @@ def get_tipster(
     out = _with_live_metrics(db, c)
     out["is_owner"] = bool(viewer_email and viewer_email == tipster_email)
     out["is_following"] = _is_user_following(db, c.id, viewer_email)
+    out["is_subscribed"] = _viewer_is_subscribed_to_tipster(db, viewer_user_id, c.id)
     return out
 
 
@@ -589,6 +625,7 @@ def list_following(
         row = _with_live_metrics(db, t)
         row["is_owner"] = False
         row["is_following"] = True
+        # list view: is_subscribed not shown; default False
         out.append(row)
 
     return out
@@ -656,7 +693,9 @@ def following_feed(
                     "profit": 0.0,
                     "model_edge": None,
                     "is_premium_only": bool(p.is_premium_only),
-                    "is_subscriber_only": bool(getattr(p, "is_subscriber_only", False)),
+                    "is_subscriber_only": bool(
+                        getattr(p, "is_subscriber_only", False)
+                    ),
                     **extra,
                 }
             )
@@ -680,7 +719,9 @@ def following_feed(
                     db, p.fixture_id, p.market, p.price
                 ),
                 "is_premium_only": bool(p.is_premium_only),
-                "is_subscriber_only": bool(getattr(p, "is_subscriber_only", False)),
+                "is_subscriber_only": bool(
+                    getattr(p, "is_subscriber_only", False)
+                ),
                 **extra,
             }
         )
