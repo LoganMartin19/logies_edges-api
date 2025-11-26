@@ -126,15 +126,14 @@ def public_picks_daily(
     day: str = Query(..., description="YYYY-MM-DD"),
     sport: str = Query("all"),
     db: Session = Depends(get_db),
-    viewer=Depends(optional_user),   # ⭐ may be None
+    viewer=Depends(optional_user),
 ):
     s = _norm_sport(sport)
 
-    # day -> date
     from datetime import date as _date
     chosen_day = _date.fromisoformat(day)
 
-    viewer_is_premium = _viewer_is_premium(db, viewer)   # ⭐
+    viewer_is_premium = _viewer_is_premium(db, viewer)
 
     q = (
         db.query(FeaturedPick, Fixture)
@@ -149,31 +148,29 @@ def public_picks_daily(
     picks = []
 
     for r, f in rows:
+        # r = FeaturedPick
+        # f = Fixture
+
+        matchup = f"{f.home_team} v {f.away_team}"
         ko = r.kickoff_utc or f.kickoff_utc
         local_ko = _to_bst_iso(ko)
 
         is_premium = bool(getattr(r, "is_premium_only", False))
         locked = is_premium and not viewer_is_premium
 
+        # Base output
         base = {
-                "pick_id": p.id,
-                "fixture_id": p.fixture_id,
-                "matchup": matchup,
-                "comp": fx.comp if fx else None,
-                "kickoff_utc": fx.kickoff_utc.isoformat() if fx else None,
-                "sport": p.sport,
-                "market": p.market,
-                "bookmaker": p.bookmaker,
-                "price": float(p.price) if p.price else None,
-                "edge": float(p.edge) if p.edge else None,
-                "note": p.note,
-                "stake": p.stake,
-                "is_premium_only": p.is_premium_only,
-
-                # ⭐ NEW — needed for admin table
-                "result": p.result,
-                "settled_at": p.settled_at.isoformat() if p.settled_at else None,
-            }
+            "pick_id": r.id,
+            "fixture_id": r.fixture_id,
+            "matchup": matchup,
+            "comp": f.comp,
+            "kickoff_utc": local_ko,
+            "sport": r.sport,
+            "stake": r.stake,
+            "is_premium_only": is_premium,
+            "result": r.result,
+            "settled_at": r.settled_at.isoformat() if r.settled_at else None,
+        }
 
         if locked:
             picks.append({
@@ -182,18 +179,19 @@ def public_picks_daily(
                 "bookmaker": None,
                 "price": None,
                 "note": "Unlock this premium featured pick with CSB Premium.",
+                "edge": None,
             })
         else:
             picks.append({
                 **base,
                 "market": r.market,
                 "bookmaker": r.bookmaker,
-                "price": r.price,
+                "price": float(r.price) if r.price else None,
                 "note": r.note,
+                "edge": float(r.edge) if r.edge else None,
             })
 
     return {"day": day, "sport": s, "count": len(picks), "picks": picks}
-
 # ---------------------------------------------------------------------------
 # ADMIN ADD/REMOVE PICK (unchanged except compatible with premium field if DB has it)
 # ---------------------------------------------------------------------------
