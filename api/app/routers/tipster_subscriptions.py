@@ -285,6 +285,7 @@ def create_stripe_checkout_session(
         success_url=success_url,
         cancel_url=cancel_url,
         metadata={
+            "kind": "tipster_subscription",         # 👈 ADD THIS
             "user_id": str(viewer.id),
             "tipster_id": str(tip.id),
             "tipster_username": tip.username,

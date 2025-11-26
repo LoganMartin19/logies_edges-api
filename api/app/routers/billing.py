@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -62,7 +62,9 @@ def create_premium_checkout(
     if not user.email:
         raise HTTPException(400, "User account must have an email to start checkout.")
 
-    origin = request.headers.get("origin") or (request.url.scheme + "://" + request.url.netloc)
+    origin = request.headers.get("origin") or (
+        request.url.scheme + "://" + request.url.netloc
+    )
     success_url = f"{origin}/account?upgraded=1"
     cancel_url = f"{origin}/account?canceled=1"
 
@@ -97,7 +99,9 @@ def create_billing_portal_session(
         user.stripe_customer_id = customer.id
         db.commit()
 
-    origin = request.headers.get("origin") or (request.url.scheme + "://" + request.url.netloc)
+    origin = request.headers.get("origin") or (
+        request.url.scheme + "://" + request.url.netloc
+    )
     return_url = f"{origin}/account"
 
     portal_url = stripe_client.create_billing_portal_session(
@@ -137,7 +141,7 @@ def get_billing_status(
 
 
 # ============================================================
-# Stripe Webhook
+# Stripe Webhook (Premium + Tipster subs)
 # ============================================================
 
 @router.post("/webhook")
@@ -188,6 +192,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 viewer_id = int(user_id_meta)
                 tipster_id = int(tipster_id_meta)
             except ValueError:
+                # malformed metadata, ignore gracefully
                 return {"ok": True}
 
             user = db.query(User).get(viewer_id)
@@ -200,10 +205,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 user.stripe_customer_id = data["customer"]
                 db.commit()
 
-            # Create / update tipster subscription
+            # Create / update tipster subscription record
             subscription_id = data.get("subscription")
             now = datetime.now(timezone.utc)
-            renews = now + timedelta(days=30)
+            renews = now + timedelta(days=30)  # simple monthly period
 
             sub = (
                 db.query(TipsterSubscription)
@@ -239,6 +244,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             db.commit()
             return {"ok": True}
 
+        # If it's some other Checkout session we don't care about
         return {"ok": True}
 
     # ============================================================
@@ -258,7 +264,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
         # ---- Premium status (only if this is the Premium price) ----
         if customer_id and price_id == settings.STRIPE_PREMIUM_PRICE_ID:
-            user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+            user = (
+                db.query(User)
+                .filter(User.stripe_customer_id == customer_id)
+                .first()
+            )
             if user:
                 is_active = status_str in ("active", "trialing")
                 user.is_premium = bool(is_active)
@@ -279,3 +289,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                     tip_sub.canceled_at = datetime.now(timezone.utc)
                     tip_sub.renews_at = None
                 db.commit()
+
+        return {"ok": True}
+
+    # For all other events we don't care about yet
+    return {"ok": True}
