@@ -75,11 +75,26 @@ def get_or_create_customer(email: str) -> stripe.Customer:
     return stripe.Customer.create(email=email)
 
 
+def create_billing_portal_session(customer_id: str, return_url: str) -> str:
+    """
+    Create a Stripe Billing Portal session so the user can manage
+    all of their subscriptions (Premium + tipsters).
+
+    Returns the portal URL as a plain string.
+    """
+    if not STRIPE_SECRET_KEY:
+        raise ValueError("Stripe not configured")
+
+    session = stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=return_url,
+    )
+    return session.url
+
+
 # ============================================================
 # Premium Checkout (CSB Premium plan)
 # ============================================================
-
-# api/app/services/stripe_client.py
 
 def create_premium_checkout_session(
     customer_email: str,

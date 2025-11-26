@@ -93,6 +93,7 @@ def create_billing_portal_session(
     if not user.email:
         raise HTTPException(400, "User account must have an email to manage billing.")
 
+    # Ensure we have a Stripe customer ID; create if missing
     customer_id = user.stripe_customer_id
     if not customer_id:
         customer = stripe_client.get_or_create_customer(user.email)
@@ -104,10 +105,27 @@ def create_billing_portal_session(
     )
     return_url = f"{origin}/account"
 
-    portal_url = stripe_client.create_billing_portal_session(
-        customer_id=user.stripe_customer_id,
-        return_url=return_url,
-    )
+    # Try to create a portal session; if customer_id is stale, recreate & retry once
+    try:
+        portal_url = stripe_client.create_billing_portal_session(
+            customer_id=user.stripe_customer_id,
+            return_url=return_url,
+        )
+    except Exception:
+        try:
+            # stale / invalid customer -> recreate and retry
+            customer = stripe_client.get_or_create_customer(user.email)
+            user.stripe_customer_id = customer.id
+            db.commit()
+            portal_url = stripe_client.create_billing_portal_session(
+                customer_id=user.stripe_customer_id,
+                return_url=return_url,
+            )
+        except Exception:
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to create billing portal session. Please contact support.",
+            )
 
     return {"url": portal_url}
 
