@@ -79,20 +79,17 @@ def get_or_create_customer(email: str) -> stripe.Customer:
 # Premium Checkout (CSB Premium plan)
 # ============================================================
 
+# api/app/services/stripe_client.py
+
 def create_premium_checkout_session(
     customer_email: str,
     firebase_uid: str,
     success_url: str,
     cancel_url: str,
-) -> dict:
+) -> str:
     """
     Create a Stripe Checkout Session for the CSB Premium plan.
-    Returns: { "url": "...", "id": "cs_test_..." }
-
-    NOTE: billing.py currently wraps this as:
-        checkout_url = create_premium_checkout_session(...)
-        return { "checkout_url": checkout_url }
-    so the frontend sees: { checkout_url: { url, id } }.
+    Returns the session URL as a plain string.
     """
     if not settings.STRIPE_PREMIUM_PRICE_ID:
         raise ValueError("Missing STRIPE_PREMIUM_PRICE_ID")
@@ -114,7 +111,9 @@ def create_premium_checkout_session(
             "product": "csb_premium",
         },
     )
-    return {"url": session.url, "id": session.id}
+
+    # 👇 return just the URL
+    return session.url
 
 
 # ============================================================
