@@ -58,6 +58,9 @@ class TipsterOut(BaseModel):
     is_following: bool = False
     is_owner: bool = False
 
+    # ⭐ NEW: verification flag
+    is_verified: bool = False
+
     # ⭐ NEW: subscription & pricing metadata
     is_subscribed: bool = False
     subscriber_count: int = 0
@@ -231,6 +234,10 @@ def _to_tipster_out(c: Tipster) -> dict:
         "profit_30d": c.profit_30d or 0.0,
         "picks_30d": c.picks_30d or 0,
         "social_links": _public_social_links(c),
+
+        # ⭐ NEW: verification flag
+        "is_verified": bool(getattr(c, "is_verified", False)),
+
         # ⭐ NEW: basic pricing flags copied from model
         "default_price_cents": c.default_price_cents,
         "currency": c.currency,
