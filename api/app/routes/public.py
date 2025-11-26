@@ -156,16 +156,24 @@ def public_picks_daily(
         locked = is_premium and not viewer_is_premium
 
         base = {
-            "pick_id": r.id,
-            "fixture_id": f.id,
-            "matchup": f"{f.home_team} vs {f.away_team}",
-            "home_team": f.home_team,
-            "away_team": f.away_team,
-            "comp": r.comp or f.comp,
-            "sport": r.sport or f.sport,
-            "kickoff_utc": local_ko,
-            "is_premium_only": is_premium,
-        }
+                "pick_id": p.id,
+                "fixture_id": p.fixture_id,
+                "matchup": matchup,
+                "comp": fx.comp if fx else None,
+                "kickoff_utc": fx.kickoff_utc.isoformat() if fx else None,
+                "sport": p.sport,
+                "market": p.market,
+                "bookmaker": p.bookmaker,
+                "price": float(p.price) if p.price else None,
+                "edge": float(p.edge) if p.edge else None,
+                "note": p.note,
+                "stake": p.stake,
+                "is_premium_only": p.is_premium_only,
+
+                # ⭐ NEW — needed for admin table
+                "result": p.result,
+                "settled_at": p.settled_at.isoformat() if p.settled_at else None,
+            }
 
         if locked:
             picks.append({
