@@ -1,11 +1,18 @@
 # api/app/services/stripe_client.py
 from __future__ import annotations
+
 import os
-import stripe
+import json
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 
+import stripe
+
 from ..settings import settings
+
+# ============================================================
+# Stripe config
+# ============================================================
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 if STRIPE_SECRET_KEY:
@@ -14,9 +21,62 @@ if STRIPE_SECRET_KEY:
 # Default platform cut (can override by env)
 DEFAULT_PLATFORM_FEE_PERCENT = float(os.getenv("PLATFORM_FEE_PERCENT", "15.0"))
 
+# Webhook signing secret (for /api/billing/webhook)
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
 
 # ============================================================
-# Premium Checkout
+# Webhook Parser (used by billing.py)
+# ============================================================
+
+def parse_event(payload: bytes, sig_header: str):
+    """
+    Parse + verify a Stripe webhook event using the Signing Secret.
+
+    If STRIPE_WEBHOOK_SECRET is missing, falls back to plain JSON parse
+    (useful for local dev / ngrok).
+    """
+    if STRIPE_WEBHOOK_SECRET:
+        try:
+            return stripe.Webhook.construct_event(
+                payload=payload,
+                sig_header=sig_header,
+                secret=STRIPE_WEBHOOK_SECRET,
+            )
+        except stripe.error.SignatureVerificationError as e:
+            print("❌ Stripe signature verification FAILED:", e)
+            raise
+        except Exception as e:
+            print("❌ Stripe webhook parse FAILED:", e)
+            raise
+
+    # Dev fallback
+    print("⚠️ STRIPE_WEBHOOK_SECRET not set — skipping signature verification")
+    return stripe.Event.construct_from(json.loads(payload), stripe.api_key)
+
+
+# ============================================================
+# Helper: customers (used by billing portal etc.)
+# ============================================================
+
+def get_or_create_customer(email: str) -> stripe.Customer:
+    """
+    Simple helper: find an existing customer by email or create one.
+    Used by the billing portal endpoint.
+    """
+    if not STRIPE_SECRET_KEY:
+        raise ValueError("Stripe not configured")
+
+    # Stripe's search API – safe for sandbox + small scale
+    result = stripe.Customer.search(query=f"email:'{email}'")
+    if result.data:
+        return result.data[0]
+
+    return stripe.Customer.create(email=email)
+
+
+# ============================================================
+# Premium Checkout (CSB Premium plan)
 # ============================================================
 
 def create_premium_checkout_session(
@@ -27,7 +87,12 @@ def create_premium_checkout_session(
 ) -> dict:
     """
     Create a Stripe Checkout Session for the CSB Premium plan.
-    Returns: { url: "...", id: "cs_test_..." }
+    Returns: { "url": "...", "id": "cs_test_..." }
+
+    NOTE: billing.py currently wraps this as:
+        checkout_url = create_premium_checkout_session(...)
+        return { "checkout_url": checkout_url }
+    so the frontend sees: { checkout_url: { url, id } }.
     """
     if not settings.STRIPE_PREMIUM_PRICE_ID:
         raise ValueError("Missing STRIPE_PREMIUM_PRICE_ID")
@@ -35,10 +100,12 @@ def create_premium_checkout_session(
     session = stripe.checkout.Session.create(
         mode="subscription",
         payment_method_types=["card"],
-        line_items=[{
-            "price": settings.STRIPE_PREMIUM_PRICE_ID,
-            "quantity": 1,
-        }],
+        line_items=[
+            {
+                "price": settings.STRIPE_PREMIUM_PRICE_ID,
+                "quantity": 1,
+            }
+        ],
         customer_email=customer_email,
         success_url=success_url,
         cancel_url=cancel_url,
@@ -65,9 +132,11 @@ def create_subscription_checkout_session(
 ) -> str:
     """
     Create a Checkout Session for a subscription.
+
     If connect_account_id + application_fee_percent are provided,
-    the subscription will route funds to the tipster and apply
-    your platform cut.
+    the subscription will:
+      - route funds to the tipster's Connect account
+      - apply your platform cut via application_fee_percent.
     """
     metadata = metadata or {}
 
@@ -91,14 +160,17 @@ def create_subscription_checkout_session(
     session = stripe.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
-        line_items=[{
-            "price": price_id,
-            "quantity": 1
-        }],
+        line_items=[
+            {
+                "price": price_id,
+                "quantity": 1,
+            }
+        ],
         success_url=success_url,
         cancel_url=cancel_url,
         subscription_data=subscription_data,
         metadata=metadata,
     )
 
+    # Tipster flow expects a plain URL string
     return session.url
