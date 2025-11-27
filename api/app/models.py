@@ -697,3 +697,29 @@ class PlayerPropModel(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     player_odds = relationship("PlayerOdds", backref="models")
+
+# --- Tipster Application pipeline -------------------------------------------
+
+class TipsterApplication(Base):
+    __tablename__ = "tipster_applications"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # who is applying
+    firebase_uid = Column(String, index=True, nullable=False)
+    email = Column(String, index=True, nullable=False)
+
+    # requested profile details
+    name = Column(String, nullable=False)
+    username = Column(String, nullable=False, index=True)  # requested handle
+    sport_focus = Column(String, nullable=False, default="Football")
+    avatar_url = Column(String, nullable=True)
+    bio = Column(String, nullable=True)
+    social_links = Column(JSON, nullable=True)  # {"twitter": "...", "instagram": "..."}
+
+    # workflow fields
+    status = Column(String, nullable=False, default="pending")  # pending|approved|rejected
+    admin_note = Column(String, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
+    reviewed_at = Column(DateTime, nullable=True)

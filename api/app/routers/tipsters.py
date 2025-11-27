@@ -18,10 +18,12 @@ from ..models import (
     TipsterFollow,
     User,
     TipsterSubscription,  # ✅ for subscriber gating
+    TipsterApplication,   # ✅ NEW: applications table
 )
 from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 from ..auth_firebase import get_current_user, optional_user
 from ..services import stripe_connect
+
 router = APIRouter(prefix="/api/tipsters", tags=["tipsters"])
 
 # ---------- Schemas ----------
@@ -181,7 +183,41 @@ class AccaOut(BaseModel):
     legs: List[AccaLegOut]
 
 
+# ---------- tipster applications (public) ----------
+
+
+class TipsterApplicationIn(BaseModel):
+    """
+    Payload from TipsterApply.jsx when a user submits an application.
+    Email / uid come from the Firebase token; no need in the body.
+    """
+    name: str
+    username: str
+    bio: str | None = None
+    sport_focus: str = "Football"
+    avatar_url: str | None = None
+    social_links: dict | None = None  # {"twitter": "...", "instagram": "..."}
+
+
+class TipsterApplicationOut(BaseModel):
+    id: int
+    name: str
+    username: str
+    bio: str | None
+    sport_focus: str
+    avatar_url: str | None
+    social_links: dict | None
+    status: str
+    admin_note: str | None
+    created_at: datetime
+    reviewed_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
 # ---------- helpers ----------
+
 def _get_or_create_user_by_claims(db: Session, claims: dict) -> User:
     uid = claims.get("uid")
     email = (claims.get("email") or "").lower()
@@ -204,6 +240,7 @@ def _get_or_create_user_by_claims(db: Session, claims: dict) -> User:
     db.commit()
     db.refresh(user)
     return user
+
 
 def _public_social_links(c: Tipster) -> dict | None:
     """
@@ -451,6 +488,106 @@ def _viewer_is_subscribed_to_tipster(
         .first()
     )
     return row is not None
+
+
+# ---------- routes: tipster applications (public) ----------
+
+
+@router.post("/apply", response_model=TipsterApplicationOut, status_code=201)
+def apply_tipster(
+    payload: TipsterApplicationIn,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Logged-in users submit a tipster application.
+    Creates a TipsterApplication row with status='pending'.
+    """
+    uid = user.get("uid")
+    email = (user.get("email") or "").lower()
+
+    if not uid or not email:
+        raise HTTPException(400, "Firebase uid/email missing in token")
+
+    # ensure we have a User row – re-use your helper
+    _get_or_create_user_by_claims(db, user)
+
+    cleaned_username = (payload.username or "").strip().lower()
+    if not cleaned_username:
+        raise HTTPException(400, "username is required")
+
+    # 1️⃣ prevent duplicate pending apps for same uid
+    existing_pending = (
+        db.query(TipsterApplication)
+        .filter(
+            TipsterApplication.firebase_uid == uid,
+            TipsterApplication.status == "pending",
+        )
+        .first()
+    )
+    if existing_pending:
+        raise HTTPException(
+            400,
+            "You already have a pending tipster application.",
+        )
+
+    # 2️⃣ username not already taken by an existing tipster
+    user_clash = (
+        db.query(Tipster)
+        .filter(Tipster.username == cleaned_username)
+        .first()
+    )
+    if user_clash:
+        raise HTTPException(400, "That username is already taken by a tipster.")
+
+    # 3️⃣ username not pending on another application
+    app_clash = (
+        db.query(TipsterApplication)
+        .filter(
+            TipsterApplication.username == cleaned_username,
+            TipsterApplication.status == "pending",
+        )
+        .first()
+    )
+    if app_clash:
+        raise HTTPException(400, "That username is already pending on another application.")
+
+    app = TipsterApplication(
+        firebase_uid=uid,
+        email=email,
+        name=(payload.name or "").strip(),
+        username=cleaned_username,
+        sport_focus=(payload.sport_focus or "Football").strip(),
+        avatar_url=(payload.avatar_url or "").strip() or None,
+        bio=(payload.bio or "").strip() or None,
+        social_links=payload.social_links or {},
+        status="pending",
+    )
+    db.add(app)
+    db.commit()
+    db.refresh(app)
+    return app
+
+
+@router.get("/applications/me", response_model=list[TipsterApplicationOut])
+def my_tipster_applications(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Viewer's own applications (history).
+    """
+    uid = user.get("uid")
+    if not uid:
+        raise HTTPException(400, "Firebase uid missing in token")
+
+    rows = (
+        db.query(TipsterApplication)
+        .filter(TipsterApplication.firebase_uid == uid)
+        .order_by(TipsterApplication.created_at.desc())
+        .all()
+    )
+    return rows
 
 
 # ---------- routes: tipster profile ----------
@@ -1312,6 +1449,7 @@ def delete_tipster_acca(
     db.commit()
     return {"ok": True, "deleted": ticket_id}
 
+
 class ConnectStatusOut(BaseModel):
     has_connect: bool
     charges_enabled: bool = False
@@ -1363,6 +1501,7 @@ def connect_status(
         details_submitted=status["details_submitted"],
         currently_due=status["currently_due"],
     )
+
 
 @router.get("/{username}/connect/dashboard", response_model=dict)
 def connect_dashboard_link(
