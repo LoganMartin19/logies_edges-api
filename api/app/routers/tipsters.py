@@ -216,6 +216,10 @@ class TipsterApplicationOut(BaseModel):
         from_attributes = True
 
 
+class AdminDecisionIn(BaseModel):
+    admin_note: str | None = None
+
+
 # ---------- helpers ----------
 
 def _get_or_create_user_by_claims(db: Session, claims: dict) -> User:
@@ -240,6 +244,33 @@ def _get_or_create_user_by_claims(db: Session, claims: dict) -> User:
     db.commit()
     db.refresh(user)
     return user
+
+
+def _require_admin_user(db: Session, claims: dict) -> User:
+    """
+    Ensure the current Firebase user maps to a User row with is_admin = True.
+    """
+    claims = claims or {}
+    uid = claims.get("uid")
+    email = (claims.get("email") or "").lower()
+
+    if not uid and not email:
+        raise HTTPException(403, "Admin only")
+
+    q = db.query(User)
+    user_row: User | None = None
+    if uid:
+        user_row = q.filter(User.firebase_uid == uid).first()
+    if not user_row and email:
+        user_row = q.filter(User.email == email).first()
+    if not user_row:
+        # fall back to creating if somehow missing
+        user_row = _get_or_create_user_by_claims(db, claims)
+
+    if not getattr(user_row, "is_admin", False):
+        raise HTTPException(403, "Admin only")
+
+    return user_row
 
 
 def _public_social_links(c: Tipster) -> dict | None:
@@ -490,7 +521,7 @@ def _viewer_is_subscribed_to_tipster(
     return row is not None
 
 
-# ---------- routes: tipster applications (public) ----------
+# ---------- routes: tipster applications (public + admin) ----------
 
 
 @router.post("/apply", response_model=TipsterApplicationOut, status_code=201)
@@ -550,7 +581,9 @@ def apply_tipster(
         .first()
     )
     if app_clash:
-        raise HTTPException(400, "That username is already pending on another application.")
+        raise HTTPException(
+            400, "That username is already pending on another application."
+        )
 
     app = TipsterApplication(
         firebase_uid=uid,
@@ -588,6 +621,115 @@ def my_tipster_applications(
         .all()
     )
     return rows
+
+
+@router.get("/applications", response_model=list[TipsterApplicationOut])
+def list_tipster_applications(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Admin: list all tipster applications, optionally filtered by status.
+    """
+    _require_admin_user(db, user)
+
+    q = db.query(TipsterApplication)
+    if status in ("pending", "approved", "rejected"):
+        q = q.filter(TipsterApplication.status == status)
+
+    rows = q.order_by(TipsterApplication.created_at.desc()).all()
+    return rows
+
+
+@router.post("/applications/{app_id}/approve", response_model=TipsterApplicationOut)
+def approve_tipster_application(
+    app_id: int,
+    body: AdminDecisionIn,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Admin: approve an application and create a verified Tipster profile.
+    """
+    _require_admin_user(db, user)
+
+    app = db.query(TipsterApplication).get(app_id)
+    if not app:
+        raise HTTPException(404, "application not found")
+    if app.status != "pending":
+        raise HTTPException(400, "Only pending applications can be approved")
+
+    cleaned_username = (app.username or "").strip().lower()
+
+    # ensure no tipster already exists with this username
+    username_clash = (
+        db.query(Tipster).filter(Tipster.username == cleaned_username).first()
+    )
+    if username_clash:
+        raise HTTPException(
+            400,
+            "A tipster already exists with this username – cannot auto-approve.",
+        )
+
+    # ensure we have owner User row
+    owner_claims = {"uid": app.firebase_uid, "email": app.email}
+    owner_user = _get_or_create_user_by_claims(db, owner_claims)
+
+    # create the tipster profile
+    tip = Tipster(
+        name=app.name,
+        username=cleaned_username,
+        bio=app.bio,
+        avatar_url=app.avatar_url,
+        sport_focus=app.sport_focus,
+        social_links=(app.social_links or {}) | {"email": app.email},
+        owner_user_id=owner_user.id,
+        currency="GBP",
+        is_open_for_new_subs=True,
+    )
+
+    # mark as verified if column exists
+    if hasattr(tip, "is_verified"):
+        tip.is_verified = True  # type: ignore[attr-defined]
+
+    db.add(tip)
+
+    # update application status
+    app.status = "approved"
+    app.admin_note = body.admin_note
+    app.reviewed_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(app)
+    return app
+
+
+@router.post("/applications/{app_id}/reject", response_model=TipsterApplicationOut)
+def reject_tipster_application(
+    app_id: int,
+    body: AdminDecisionIn,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Admin: reject an application (no tipster created).
+    """
+    _require_admin_user(db, user)
+
+    app = db.query(TipsterApplication).get(app_id)
+    if not app:
+        raise HTTPException(404, "application not found")
+    if app.status != "pending":
+        raise HTTPException(400, "Only pending applications can be rejected")
+
+    app.status = "rejected"
+    app.admin_note = body.admin_note
+    app.reviewed_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(app)
+    return app
 
 
 # ---------- routes: tipster profile ----------
