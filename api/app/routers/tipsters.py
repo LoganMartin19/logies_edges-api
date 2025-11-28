@@ -23,7 +23,7 @@ from ..models import (
 from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 from ..auth_firebase import get_current_user, optional_user
 from ..services import stripe_connect
-from ..services import send_new_pick_push
+from ..services.push import send_new_pick_push
 
 router = APIRouter(prefix="/api/tipsters", tags=["tipsters"])
 

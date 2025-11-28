@@ -1,15 +1,18 @@
 # api/app/services/push.py
-import os
-import json
 from typing import Iterable, Optional
 
-import requests
 from sqlalchemy.orm import Session
 
-from ..models import User, Tipster, TipsterPick, TipsterFollow, TipsterSubscription, PushToken, Fixture
-
-FCM_SERVER_KEY = os.getenv("FIREBASE_FCM_SERVER_KEY")  # from Firebase console
-FCM_ENDPOINT = "https://fcm.googleapis.com/fcm/send"
+from .firebase import send_web_push_to_tokens
+from ..models import (
+    User,
+    Tipster,
+    TipsterPick,
+    TipsterFollow,
+    TipsterSubscription,
+    PushToken,
+    Fixture,
+)
 
 
 def _send_fcm_to_tokens(
@@ -19,40 +22,15 @@ def _send_fcm_to_tokens(
     data: Optional[dict] = None,
 ) -> None:
     """
-    Low-level sender to FCM. If no server key, logs and bails.
+    Thin wrapper over firebase.send_web_push_to_tokens so the rest of this
+    module doesn’t need to know about Firebase internals.
     """
-    tokens = [t for t in tokens if t]
-    if not tokens:
+    token_list = [t for t in tokens if t]
+    if not token_list:
         return
 
-    if not FCM_SERVER_KEY:
-        print("[push] No FIREBASE_FCM_SERVER_KEY – skipping push.")
-        print("Title:", title)
-        print("Body:", body)
-        print("Tokens:", tokens[:3], "…")
-        return
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"key={FCM_SERVER_KEY}",
-    }
-
-    payload = {
-        "registration_ids": tokens,
-        "notification": {
-            "title": title,
-            "body": body,
-        },
-        "data": data or {},
-        "priority": "high",
-    }
-
-    try:
-        resp = requests.post(FCM_ENDPOINT, headers=headers, data=json.dumps(payload), timeout=5)
-        if resp.status_code != 200:
-            print("[push] FCM error:", resp.status_code, resp.text[:500])
-    except Exception as e:
-        print("[push] Exception sending FCM:", e)
+    # data payload will be coerced to strings inside firebase.send_web_push_to_tokens
+    send_web_push_to_tokens(token_list, title, body, data or {})
 
 
 def _eligible_users_for_pick(db: Session, tip: Tipster, pick: TipsterPick) -> list[User]:
@@ -61,25 +39,26 @@ def _eligible_users_for_pick(db: Session, tip: Tipster, pick: TipsterPick) -> li
       • follow this tipster
       • AND satisfy premium/subscription gating for this pick
     """
-    # 1) followers (by email)
     follower_rels = (
         db.query(TipsterFollow)
         .filter(TipsterFollow.tipster_id == tip.id)
         .all()
     )
-    follower_emails = {fr.follower_email.lower() for fr in follower_rels if fr.follower_email}
+    follower_emails = {
+        fr.follower_email.lower()
+        for fr in follower_rels
+        if fr.follower_email
+    }
 
     if not follower_emails:
         return []
 
-    # 2) matching users
     users = (
         db.query(User)
         .filter(User.email.in_(follower_emails))
         .all()
     )
 
-    # 3) subscribers for this tipster (for extra gating)
     active_subs = (
         db.query(TipsterSubscription)
         .filter(
@@ -95,7 +74,6 @@ def _eligible_users_for_pick(db: Session, tip: Tipster, pick: TipsterPick) -> li
         is_premium = bool(getattr(u, "is_premium", False))
         is_subscriber = u.id in sub_user_ids
 
-        # gating logic
         if pick.is_subscriber_only:
             if is_subscriber:
                 gated.append(u)
@@ -103,7 +81,6 @@ def _eligible_users_for_pick(db: Session, tip: Tipster, pick: TipsterPick) -> li
             if is_premium or is_subscriber:
                 gated.append(u)
         else:
-            # normal public pick
             gated.append(u)
 
     return gated
@@ -116,7 +93,7 @@ def send_new_pick_push(
     fixture: Optional[Fixture],
 ) -> None:
     """
-    High-level function: find eligible users -> grab their tokens -> send push.
+    High-level: find eligible users → fetch active web push tokens → send FCM.
     """
     users = _eligible_users_for_pick(db, tip, pick)
     if not users:
@@ -128,12 +105,11 @@ def send_new_pick_push(
         db.query(PushToken)
         .filter(
             PushToken.user_id.in_(user_ids),
-            PushToken.is_active == True,
+            PushToken.is_active == True,   # noqa: E712
             PushToken.platform == "web",
         )
         .all()
     )
-
     token_strings = [t.token for t in tokens if t.token]
 
     if not token_strings:
@@ -156,8 +132,10 @@ def send_new_pick_push(
         elif sport in ("nba", "basketball"):
             fixture_path = f"/basketball/game/{fixture.id}"
 
+    price = float(pick.price or 0.0)
+
     title = f"New pick from {tip.name} (@{tip.username})"
-    body = f"{fixture_label}: {pick.market} @ {pick.price:.2f}"
+    body = f"{fixture_label}: {pick.market} @ {price:.2f}"
 
     data = {
         "type": "new_pick",
@@ -165,7 +143,7 @@ def send_new_pick_push(
         "fixture_id": pick.fixture_id,
         "fixture_path": fixture_path or "",
         "market": pick.market,
-        "price": f"{pick.price:.2f}",
+        "price": f"{price:.2f}",
         "is_premium_only": bool(pick.is_premium_only),
         "is_subscriber_only": bool(getattr(pick, "is_subscriber_only", False)),
     }
