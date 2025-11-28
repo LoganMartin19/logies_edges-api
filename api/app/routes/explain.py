@@ -32,6 +32,15 @@ def _normalize_market(m: str) -> str:
         # 1X2
         "HOMEWIN": "HOME_WIN",
         "AWAYWIN": "AWAY_WIN",
+        # DNB (Draw No Bet)
+        "HOMEDNB": "HOME_DNB",
+        "HOME_DNB": "HOME_DNB",
+        "DRAWNOBETHOME": "HOME_DNB",
+        "HOMEDRAWNOBET": "HOME_DNB",
+        "AWAYDNB": "AWAY_DNB",
+        "AWAY_DNB": "AWAY_DNB",
+        "DRAWNOBETAWAY": "AWAY_DNB",
+        "AWAYDRAWNOBET": "AWAY_DNB",
         # (DRAW stays DRAW)
     }
     # Already canonical like O2.5 / U2.5?
@@ -59,7 +68,7 @@ def _btts_hint_from_total_xg(total_xg: float) -> str:
 @router.get("/probability")
 def explain_probability(
     fixture_id: int = Query(...),
-    market: str = Query(...),  # e.g. "O2.5", "HOMEWIN", "BTTSYES"
+    market: str = Query(...),  # e.g. "O2.5", "HOMEWIN", "BTTSYES", "HOME_DNB"
     db: Session = Depends(get_db),
 ):
     fixture = db.query(Fixture).filter(Fixture.id == fixture_id).first()
@@ -149,7 +158,6 @@ def explain_probability(
             explanation["recommendation"] = f"Bet {side} only if odds > {fair_odds:.2f}"
 
     # -------------------
-        # -------------------
     # BTTS
     # -------------------
     elif norm_market in {"BTTS_Y", "BTTS_N"}:
@@ -201,7 +209,7 @@ def explain_probability(
                 f"No recent games available for {fixture.away_team} → scoring stats are based on league/longer-term form."
             )
 
-        # --- NEW: BTTS Yes/No counts in last N games (per team perspective) ---
+        # --- BTTS Yes/No counts in last N games (per team perspective) ---
         home_btts_yes = sum(
             1
             for m in recent_home
@@ -242,7 +250,6 @@ def explain_probability(
         explanation["notes"].append(_btts_hint_from_total_xg(total_xg))
 
         # --- Model probabilities for BOTH sides ---
-        # We've already fetched `prob` for norm_market above.
         other_mkt = "BTTS_N" if norm_market == "BTTS_Y" else "BTTS_Y"
         other_row = (
             db.query(ModelProb.prob)
@@ -349,6 +356,70 @@ def explain_probability(
             if dc_prob:
                 explanation["fair_price"] = round(1 / dc_prob, 2)
                 explanation["recommendation"] = f"Bet {norm_market} only if odds > {explanation['fair_price']:.2f}"
+
+    # -------------------
+    # Draw No Bet (HOME_DNB / AWAY_DNB)
+    # -------------------
+    elif norm_market in {"HOME_DNB", "AWAY_DNB"}:
+        # Underlying 1X2 distribution – this is what DNB is built from
+        probs_1x2 = {}
+        for mkt in ["HOME_WIN", "DRAW", "AWAY_WIN"]:
+            row = (
+                db.query(ModelProb.prob)
+                .filter(ModelProb.fixture_id == fixture.id, ModelProb.market == mkt)
+                .order_by(ModelProb.as_of.desc())
+                .first()
+            )
+            if row:
+                probs_1x2[mkt] = float(row[0])
+
+        if len(probs_1x2) == 3:
+            ph, pd, pa = probs_1x2["HOME_WIN"], probs_1x2["DRAW"], probs_1x2["AWAY_WIN"]
+            explanation["notes"].append(
+                f"Underlying 1X2 model: Home {ph*100:.1f}%, Draw {pd*100:.1f}%, Away {pa*100:.1f}%."
+            )
+
+            # Theoretical DNB probabilities from 1X2 distribution
+            denom = max(1e-6, 1.0 - pd)
+            home_dnb_theoretical = ph / denom
+            away_dnb_theoretical = pa / denom
+
+            explanation["notes"].append(
+                "Draw No Bet removes the draw: a draw returns your stake (push), "
+                "only the opposing win loses the bet."
+            )
+
+            explanation["notes"].append(
+                f"Implied from 1X2: Home DNB ≈ {home_dnb_theoretical*100:.1f}%, "
+                f"Away DNB ≈ {away_dnb_theoretical*100:.1f}%."
+            )
+
+        # Market-specific side text
+        if norm_market == "HOME_DNB":
+            side_label = f"{fixture.home_team} Draw No Bet"
+            explanation["notes"].append(
+                f"{side_label}: you win if {fixture.home_team} win, stake is refunded on a draw, "
+                f"and you lose only if {fixture.away_team} win."
+            )
+        else:
+            side_label = f"{fixture.away_team} Draw No Bet"
+            explanation["notes"].append(
+                f"{side_label}: you win if {fixture.away_team} win, stake is refunded on a draw, "
+                f"and you lose only if {fixture.home_team} win."
+            )
+
+        # Use the actual calibrated DNB probability + fair price
+        if prob is not None:
+            explanation["notes"].append(
+                f"Model probability for {side_label} ≈ {prob*100:.1f}%."
+            )
+        if prob and fair_odds:
+            explanation["notes"].append(
+                f"Model fair price for {side_label} ≈ {fair_odds:.2f}."
+            )
+            explanation["recommendation"] = (
+                f"Bet {side_label} only if odds > {fair_odds:.2f}."
+            )
 
     # Always include league-strength context
     explanation["notes"].append(
