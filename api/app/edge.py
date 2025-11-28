@@ -524,7 +524,7 @@ def ensure_baseline_probs(
                     ))
 
         # -------------------------
-        # Soccer 1X2 (3-way)
+        # Soccer 1X2 (3-way) + derived Double Chance + DNB
         # -------------------------
         if not is_grid and not is_ice:
             p_home_price = median_price("HOME_WIN", min_books=1)
@@ -566,16 +566,69 @@ def ensure_baseline_probs(
                     p_a = _clip((1 - ALPHA_PRIOR) * cons_a + ALPHA_PRIOR * p_away_prior)
                     p_h, p_d, p_a = _renorm3(p_h, p_d, p_a)
 
+                    # Core 1X2 model probs
                     db.add(ModelProb(fixture_id=f.id, source=source, market="HOME_WIN", prob=p_h, as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="DRAW",     prob=p_d, as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="AWAY_WIN", prob=p_a, as_of=now))
 
                     def _cap(x: float) -> float: return min(max(x, 0.0), 1.0)
+
+                    # Double chance derived from 1X2
                     db.add(ModelProb(fixture_id=f.id, source=source, market="1X", prob=_cap(p_h + p_d), as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="12", prob=_cap(p_h + p_a), as_of=now))
                     db.add(ModelProb(fixture_id=f.id, source=source, market="X2", prob=_cap(p_d + p_a), as_of=now))
 
-                    top_side, top_prob = max([("HOME_WIN", p_h), ("DRAW", p_d), ("AWAY_WIN", p_a)], key=lambda x: x[1])
+                    # --- Derived Draw No Bet (HOME_DNB / AWAY_DNB) ---
+                    # DNB is 2-way conditional on the game not ending in a draw.
+                    # P(Home DNB wins) = P(Home wins) / (1 - P(Draw))
+                    # P(Away DNB wins) = P(Away wins) / (1 - P(Draw))
+                    denom = max(1e-6, 1.0 - p_d)
+                    p_home_dnb_raw = _clip(p_h / denom)
+                    p_away_dnb_raw = _clip(p_a / denom)
+
+                    # Optional calibration per side (kept independent since they’re not complements)
+                    p_home_dnb = _apply_calibration(db, "HOME_DNB", CAL_BOOK, p_home_dnb_raw)
+                    p_away_dnb = _apply_calibration(db, "AWAY_DNB", CAL_BOOK, p_away_dnb_raw)
+
+                    p_home_dnb = _clip(p_home_dnb)
+                    p_away_dnb = _clip(p_away_dnb)
+
+                    db.add(ModelProb(
+                        fixture_id=f.id,
+                        source=source,
+                        market="HOME_DNB",
+                        prob=p_home_dnb,
+                        as_of=now,
+                    ))
+                    db.add(ModelProb(
+                        fixture_id=f.id,
+                        source=source,
+                        market="AWAY_DNB",
+                        prob=p_away_dnb,
+                        as_of=now,
+                    ))
+
+                    # DNB prediction (nice for dashboard / explainers)
+                    dnb_side, dnb_prob = (
+                        ("HOME_DNB", p_home_dnb)
+                        if p_home_dnb >= p_away_dnb
+                        else ("AWAY_DNB", p_away_dnb)
+                    )
+                    db.add(Prediction(
+                        fixture_id=f.id,
+                        market="DNB",
+                        predicted_side=dnb_side,
+                        prob=dnb_prob,
+                        fair_price=(1 / dnb_prob if dnb_prob > 0 else None),
+                        model_source=source,
+                        confidence=confidence_from_prob(dnb_prob),
+                    ))
+
+                    # Main 1X2 prediction
+                    top_side, top_prob = max(
+                        [("HOME_WIN", p_h), ("DRAW", p_d), ("AWAY_WIN", p_a)],
+                        key=lambda x: x[1],
+                    )
                     db.add(Prediction(
                         fixture_id=f.id,
                         market="1X2",
@@ -614,10 +667,7 @@ def get_recent_form(db: Session, team: str, comp: str, current_ko: datetime, lim
         else: lost += 1
 
     return {
-        "played": played,
-        "won": wins,
-        "drawn": drawn,
-        "lost": lost,
+        "played": played, "won": wins, "drawn": drawn, "lost": lost,
         "avg_scored": goals_scored / played if played else 0,
         "avg_conceded": goals_conceded / played if played else 0,
         "goal_diff": goals_scored - goals_conceded,
