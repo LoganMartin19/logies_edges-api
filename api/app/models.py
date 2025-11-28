@@ -723,3 +723,16 @@ class TipsterApplication(Base):
 
     created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
     reviewed_at = Column(DateTime, nullable=True)
+
+class PushToken(Base):
+    __tablename__ = "push_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token = Column(String, nullable=False, index=True)
+    platform = Column(String, nullable=False, default="web")  # "web", "ios", "android"
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", backref="push_tokens")

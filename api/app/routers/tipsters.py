@@ -23,6 +23,7 @@ from ..models import (
 from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_for_pick
 from ..auth_firebase import get_current_user, optional_user
 from ..services import stripe_connect
+from ..services import send_new_pick_push
 
 router = APIRouter(prefix="/api/tipsters", tags=["tipsters"])
 
@@ -1152,7 +1153,16 @@ def create_pick(
     db.commit()
     db.refresh(p)
 
+    # Fixture context
     extra = _fixture_info(db, p.fixture_id)
+    fx = db.query(Fixture).get(p.fixture_id)
+
+    # 🔔 Fire-and-forget push notifications (followers / subscribers)
+    try:
+        send_new_pick_push(db, c, p, fx)
+    except Exception as e:
+        # Don't break pick creation if push fails
+        print("[push] error sending pick push:", e)
 
     # 🔒 sanitize required fields for PickOut
     market = p.market or "Unknown"

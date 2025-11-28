@@ -26,6 +26,7 @@ from .routers import auth as auth_router
 from .routers import tipsters as tipsters_router
 from .routers import billing as billing_router 
 from .routers import tipster_subscriptions as tipster_subscriptions_router
+from .routers import notifications as notifications_router
 
 from .routes import (
     pages as pages_router,
@@ -120,6 +121,7 @@ app.include_router(auth_router.router)
 app.include_router(billing_router.router, prefix="/api")
 app.include_router(tipsters_router.router)
 app.include_router(tipster_subscriptions_router.router)
+app.include_router(notifications_router.router)
 
 
 # Split routes
