@@ -12,6 +12,10 @@ from .services.firebase import verify_id_token
 from .db import get_db
 from .models import User
 
+# 👇 NEW imports
+from .services.email import send_email
+from .templates.welcome_email import welcome_email_html
+
 bearer = HTTPBearer(auto_error=False)
 
 
@@ -49,6 +53,7 @@ def get_current_user(
     try:
         user = db.query(User).filter(User.firebase_uid == uid).first()
         now = datetime.utcnow()
+        is_new = user is None  # 👈 track if we're creating
 
         if not user:
             user = User(
@@ -76,6 +81,19 @@ def get_current_user(
 
         db.commit()
         db.refresh(user)
+
+        # 👇 Send welcome email only once, on first creation
+        if is_new and email:
+            try:
+                html = welcome_email_html(display_name or email or "there")
+                send_email(
+                    to=email,
+                    subject="Welcome to Chartered Sports Betting",
+                    html=html,
+                )
+            except Exception as e:
+                # Never block login for email issues
+                print("Failed to send welcome email:", e)
 
         claims["db_user_id"] = user.id
         claims["is_premium"] = bool(user.is_premium)
