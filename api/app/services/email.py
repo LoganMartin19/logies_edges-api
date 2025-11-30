@@ -21,7 +21,7 @@ def send_email(to: str, subject: str, html: str):
     """
     return Emails.send(
         {
-            "from": f"CSB ✅ <{FROM_EMAIL}>",
+            "from": f"CSB <{FROM_EMAIL}>",
             "to": [to],
             "subject": subject,
             "html": html,
