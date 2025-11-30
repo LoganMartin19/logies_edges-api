@@ -3,7 +3,7 @@ import os
 from resend import Emails
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-FROM_EMAIL = os.getenv("FROM_EMAIL", "no-reply@updates.charteredsportsbetting.com")
+FROM_EMAIL = os.getenv("FROM_EMAIL", "no-reply@charteredsportsbetting.com")
 
 if not RESEND_API_KEY:
     # You can swap this for a logger.warning if you prefer
