@@ -24,6 +24,7 @@ def featured_picks_email_html(
     is_premium_user: bool = False,
     free_count: int = 0,
     premium_count: int = 0,
+    unsubscribe_url: str = "https://charteredsportsbetting.com/account",
 ) -> str:
     """
     Build a HTML digest for a set of Featured Picks, personalised per user.
@@ -34,6 +35,7 @@ def featured_picks_email_html(
     - `is_premium_user`  : whether this recipient is a paying CSB Premium user
     - `free_count`       : how many free (non-premium) picks exist for this card
     - `premium_count`    : how many premium-only picks exist for this card
+    - `unsubscribe_url`  : where users can manage / turn off email picks
     """
 
     safe_name = recipient_name or "there"
@@ -190,6 +192,12 @@ def featured_picks_email_html(
         <p style="font-size:12px;opacity:0.6;text-align:center;">
           Chartered Sports Betting • © 2025<br/>
           You’re receiving this because you have a CSB account.
+        </p>
+        <p style="font-size:11px;opacity:0.6;text-align:center;margin-top:4px;">
+          Don’t want these emails? You can{" "}
+          <a href="{unsubscribe_url}" style="color:#6ee7b7;text-decoration:underline;">
+            update your email preferences here
+          </a>.
         </p>
       </div>
     </div>
