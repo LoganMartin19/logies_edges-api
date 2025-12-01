@@ -7,6 +7,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_   # 👈 NEW
 
 from ..db import get_db
 from ..models import FeaturedPick, User
@@ -87,6 +88,15 @@ def send_featured_picks_digest(
 
     # 2) Find recipients
     q = db.query(User).filter(User.email.isnot(None))
+
+    # ✅ Honour email_picks_opt_in (NULL or TRUE => treated as opted in)
+    q = q.filter(
+        or_(
+            User.email_picks_opt_in.is_(True),
+            User.email_picks_opt_in.is_(None),
+        )
+    )
+
     if premium_only:
         q = q.filter(User.is_premium.is_(True))
 
