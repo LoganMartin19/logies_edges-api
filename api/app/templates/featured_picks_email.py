@@ -1,8 +1,7 @@
-# api/app/templates/featured_picks_email.py
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, List
 
 
 def _fmt_day(d: date) -> str:
@@ -20,21 +19,59 @@ def featured_picks_email_html(
     day: date,
     picks: Iterable[Mapping],
     recipient_name: str | None = None,
-    premium_only: bool = True,
+    premium_only: bool | None = None,
 ) -> str:
     """
-    Build a simple HTML digest for a set of Featured Picks.
+    Build a HTML digest for a set of Featured Picks.
 
     `picks` is an iterable of dict-like objects with keys:
       comp, home_team, away_team, kickoff_utc, market, bookmaker, price, edge
+    and *optionally*:
+      is_premium_only: bool
+
+    If `premium_only` is:
+      - True  -> force "premium" wording
+      - False -> force "free" wording
+      - None  -> auto-detect from picks.is_premium_only
     """
+
+    # materialise list so we can inspect it multiple times
+    picks_list: List[Mapping] = list(picks)
 
     safe_name = recipient_name or "there"
     day_str = _fmt_day(day)
-    tier_label = "premium card" if premium_only else "today's best edges"
 
+    # ---- Decide tier wording ----
+    # 1) Derive flags from picks if present
+    flags = [bool(p.get("is_premium_only")) for p in picks_list if "is_premium_only" in p]
+
+    if premium_only is True:
+        card_type = "premium"
+    elif premium_only is False:
+        card_type = "free"
+    else:
+        # auto mode
+        if flags and all(flags):
+            card_type = "premium"
+        elif flags and any(flags):
+            card_type = "mixed"
+        else:
+            # default: treat as "free featured picks"
+            card_type = "free"
+
+    if card_type == "premium":
+        heading = "Today's Premium Card"
+        intro_line = "Here’s your premium card from <strong>Chartered Sports Betting</strong>."
+    elif card_type == "mixed":
+        heading = "Today's Featured & Premium Picks"
+        intro_line = "Here’s today’s featured & premium card from <strong>Chartered Sports Betting</strong>."
+    else:  # "free"
+        heading = "Today's Free Featured Picks"
+        intro_line = "Here’s today’s free featured picks from <strong>Chartered Sports Betting</strong>."
+
+    # ---- Table rows ----
     rows_html = ""
-    for p in picks:
+    for p in picks_list:
         comp = p.get("comp") or ""
         home = p.get("home_team") or ""
         away = p.get("away_team") or ""
@@ -44,7 +81,6 @@ def featured_picks_email_html(
         price = p.get("price")
         edge = p.get("edge")
 
-        # nice-ish formatting
         price_str = f"{float(price):.2f}" if price is not None else "—"
         edge_str = f"{float(edge) * 100:.1f}%" if edge is not None else "—"
 
@@ -77,6 +113,7 @@ def featured_picks_email_html(
           </tr>
         """
 
+    # ---- Final HTML ----
     return f"""
 <!DOCTYPE html>
 <html>
@@ -90,22 +127,22 @@ def featured_picks_email_html(
                width="72" height="72"
                style="border-radius:12px;" />
           <h2 style="margin-top:12px;font-size:22px;font-weight:600;color:#6ee7b7;">
-            Today's Featured Picks
+            {heading}
           </h2>
           <div style="font-size:13px;opacity:0.8;">{day_str}</div>
         </div>
 
         <p style="font-size:15px;line-height:1.6;">
           Hi <strong>{safe_name}</strong>,<br/><br/>
-          Here’s {tier_label} from <strong>Chartered Sports Betting</strong>.
+          {intro_line}
         </p>
 
         <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:12px;background:#020817;border-radius:12px;overflow:hidden;">
           <thead>
             <tr style="background:#052e16;">
-              <th align="left" style="padding:8px 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">KO</th>
-              <th align="left" style="padding:8px 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Match</th>
-              <th align="left" style="padding:8px 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Market</th>
+              <th align="left"  style="padding:8px 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">KO</th>
+              <th align="left"  style="padding:8px 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Match</th>
+              <th align="left"  style="padding:8px 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Market</th>
               <th align="right" style="padding:8px 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Price</th>
               <th align="right" style="padding:8px 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;">Edge</th>
             </tr>

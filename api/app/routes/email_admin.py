@@ -24,7 +24,10 @@ def require_admin(user=Depends(get_current_user)):
 
 @router.post("/featured-picks")
 def send_featured_picks_digest(
-    day: date | None = Query(default=None, description="UTC day for the card (YYYY-MM-DD)"),
+    day: date | None = Query(
+        default=None,
+        description="UTC day for the card (YYYY-MM-DD)",
+    ),
     premium_only: bool = Query(
         default=True,
         description="If true, only email users with is_premium = true",
@@ -62,6 +65,8 @@ def send_featured_picks_digest(
             "bookmaker": fp.bookmaker,
             "price": fp.price,
             "edge": fp.edge,
+            # 👇 NEW: let the template see which picks are premium-only
+            "is_premium_only": fp.is_premium_only,
         }
         for fp in picks
     ]
@@ -84,7 +89,8 @@ def send_featured_picks_digest(
                 day=day,
                 picks=pick_dicts,
                 recipient_name=u.display_name or (u.email or "").split("@")[0],
-                premium_only=premium_only,
+                # 👇 Let the template auto-detect free/premium/mixed
+                premium_only=None,
             )
             send_email(
                 to=u.email,
