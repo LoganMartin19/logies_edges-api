@@ -599,6 +599,12 @@ class User(Base):
     # ⭐️ NEW: track welcome email so we only send once
     welcome_sent_at = Column(DateTime, nullable=True)
 
+    email_picks_opt_in = Column(
+        Boolean,
+        nullable=False,
+        server_default="true",  # existing users → opt in by default
+    )
+
     follows = relationship("UserFollow", back_populates="user", cascade="all, delete-orphan")
     subscriptions = relationship("TipsterSubscription", back_populates="user", cascade="all, delete-orphan")
     bets = relationship("UserBet", back_populates="user", cascade="all, delete-orphan")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+from time import sleep
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,7 +25,10 @@ def require_admin(user=Depends(get_current_user)):
 
 @router.post("/featured-picks")
 def send_featured_picks_digest(
-    day: date | None = Query(default=None, description="UTC day for the card (YYYY-MM-DD)"),
+    day: date | None = Query(
+        default=None,
+        description="UTC day for the card (YYYY-MM-DD)",
+    ),
     premium_only: bool = Query(
         default=False,
         description="If true, only email users with is_premium = true",
@@ -41,6 +45,10 @@ def send_featured_picks_digest(
       - Free users receive only free picks, plus a teaser saying how many
         extra premium picks are live on the dashboard.
       - If `premium_only=true`, we *only* target premium users.
+
+    Also:
+      - Resend is limited to 2 requests/second on free tier.
+      - We pace requests + retry a couple of times on 429s.
     """
     if day is None:
         day = date.today()
@@ -87,7 +95,10 @@ def send_featured_picks_digest(
         raise HTTPException(status_code=404, detail="No recipients found")
 
     sent = 0
+    failed = 0
     skipped_no_free = 0
+
+    day_str = day.strftime("%d %b %Y")
 
     for u in recipients:
         is_premium_user = bool(u.is_premium)
@@ -112,7 +123,6 @@ def send_featured_picks_digest(
                 continue
 
         # Build subject line per user
-        day_str = day.strftime("%d %b %Y")
         if is_premium_user:
             if user_free_count and user_premium_count:
                 subject = f"CSB Featured & Premium Picks — {day_str}"
@@ -126,24 +136,45 @@ def send_featured_picks_digest(
             else:
                 subject = f"CSB Free Picks — {day_str}"
 
-        try:
-            html = featured_picks_email_html(
-                day=day,
-                picks=user_picks,
-                recipient_name=u.display_name or (email.split("@")[0]),
-                is_premium_user=is_premium_user,
-                free_count=user_free_count,
-                premium_count=user_premium_count,
-            )
-            send_email(
-                to=email,
-                subject=subject,
-                html=html,
-            )
-            sent += 1
-        except Exception as e:
-            # don't blow up whole run if one address explodes
-            print(f"[email_admin] Failed to email {email}: {e}")
+        # Build HTML once per user
+        html = featured_picks_email_html(
+            day=day,
+            picks=user_picks,
+            recipient_name=u.display_name or (email.split("@")[0]),
+            is_premium_user=is_premium_user,
+            free_count=user_free_count,
+            premium_count=user_premium_count,
+        )
+
+        # ---- Resend-friendly send with retries ----
+        retries = 0
+        while retries < 3:
+            try:
+                send_email(
+                    to=email,
+                    subject=subject,
+                    html=html,
+                )
+                sent += 1
+                # Keep below 2 req/s. 0.6s is a safe gap.
+                sleep(0.6)
+                break
+            except Exception as e:
+                msg = str(e) or repr(e)
+                # crude detection of rate-limit
+                if "429" in msg or "rate_limit" in msg:
+                    retries += 1
+                    wait = 1.0 + retries * 0.5  # 1.5s, 2.0s, 2.5s
+                    print(
+                        f"[email_admin] Rate limited when emailing {email}, "
+                        f"retry {retries}/3 in {wait}s"
+                    )
+                    sleep(wait)
+                    continue
+                else:
+                    print(f"[email_admin] Failed to email {email}: {msg}")
+                    failed += 1
+                    break
 
     return {
         "ok": True,
@@ -153,6 +184,7 @@ def send_featured_picks_digest(
         "premium_picks": premium_count_all,
         "recipients": len(recipients),
         "sent": sent,
+        "failed": failed,
         "skipped_no_free": skipped_no_free,
         "premium_only_param": premium_only,
     }
