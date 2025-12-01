@@ -5,20 +5,20 @@ from resend import Emails
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "no-reply@charteredsportsbetting.com")
 
-if not RESEND_API_KEY:
-    # You can swap this for a logger.warning if you prefer
-    raise RuntimeError("RESEND_API_KEY not set in environment")
-
-Emails.api_key = RESEND_API_KEY
+if RESEND_API_KEY:
+    Emails.api_key = RESEND_API_KEY
+else:
+    print("⚠️ WARNING: RESEND_API_KEY not set — emails will NOT send.")
 
 
 def send_email(to: str, subject: str, html: str):
     """
     Thin wrapper around Resend's Emails.send.
-
-    Usage:
-        send_email("user@example.com", "Welcome", "<h1>Hi</h1>")
     """
+    if not RESEND_API_KEY:
+        print("❌ Email NOT sent — RESEND_API_KEY missing")
+        return {"error": "emails_disabled"}
+
     return Emails.send(
         {
             "from": f"CSB <{FROM_EMAIL}>",

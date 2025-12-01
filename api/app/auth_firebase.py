@@ -12,7 +12,7 @@ from .services.firebase import verify_id_token
 from .db import get_db
 from .models import User
 
-# 👇 NEW imports
+# 👇 welcome email bits
 from .services.email import send_email
 from .templates.welcome_email import welcome_email_html
 
@@ -28,6 +28,7 @@ def get_current_user(
       - Requires a valid Firebase ID token
       - Ensures a local User row exists (auto-create)
       - Returns a DICT of Firebase claims + db_user_id + is_premium/is_admin
+      - Sends a one-time welcome email on first creation
     """
     if not creds or not creds.scheme.lower().startswith("bearer"):
         raise HTTPException(
@@ -35,6 +36,7 @@ def get_current_user(
             detail="Missing Bearer token",
         )
 
+    # Verify Firebase ID token
     claims = verify_id_token(creds.credentials)
     if not isinstance(claims, dict) or not claims.get("uid"):
         # add a print so we can see what's wrong in Render logs
@@ -53,7 +55,7 @@ def get_current_user(
     try:
         user = db.query(User).filter(User.firebase_uid == uid).first()
         now = datetime.utcnow()
-        is_new = user is None  # 👈 track if we're creating
+        is_new = user is None  # 👈 track if we're creating for the first time
 
         if not user:
             user = User(
@@ -95,9 +97,11 @@ def get_current_user(
                 # Never block login for email issues
                 print("Failed to send welcome email:", e)
 
+        # Attach DB info back onto claims so the rest of the app can use it
         claims["db_user_id"] = user.id
         claims["is_premium"] = bool(user.is_premium)
         claims["is_admin"] = bool(user.is_admin)
+
     except Exception as e:
         print("Error syncing user from Firebase claims:", e)
         db.rollback()
@@ -116,6 +120,7 @@ def optional_user(
     Soft auth:
       - If no/invalid token → returns None
       - If valid → returns the SAME claims dict as get_current_user
+        (but without sending emails / creating users)
     """
     if not creds or not creds.scheme.lower().startswith("bearer"):
         return None
@@ -141,6 +146,9 @@ def optional_user(
 
 
 def require_premium(user=Depends(get_current_user)):
+    """
+    Guard for premium-only routes.
+    """
     if not user.get("is_premium"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

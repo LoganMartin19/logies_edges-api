@@ -596,12 +596,14 @@ class User(Base):
     is_premium = Column(Boolean, default=False)
     premium_activated_at = Column(DateTime, nullable=True)
 
+    # ⭐️ NEW: track welcome email so we only send once
+    welcome_sent_at = Column(DateTime, nullable=True)
+
     follows = relationship("UserFollow", back_populates="user", cascade="all, delete-orphan")
     subscriptions = relationship("TipsterSubscription", back_populates="user", cascade="all, delete-orphan")
     bets = relationship("UserBet", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (Index("ix_users_uid_email", "firebase_uid", "email"),)
-
 
 class UserFollow(Base):
     __tablename__ = "user_follows"
