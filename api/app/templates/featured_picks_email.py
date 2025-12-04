@@ -18,6 +18,7 @@ def featured_picks_email_html(
     day: date,
     picks: Iterable[Mapping],
     *,
+    acca: Mapping | None = None,  # ⭐ NEW: optional featured acca
     recipient_name: str | None = None,
     is_premium_user: bool = False,
     free_count: int = 0,
@@ -67,7 +68,7 @@ def featured_picks_email_html(
             )
             teaser_line = ""
 
-    # ---------- Table rows ----------
+    # ---------- Main picks table rows ----------
     rows_html = ""
     for p in picks:
         comp = p.get("comp") or ""
@@ -114,6 +115,115 @@ def featured_picks_email_html(
         </p>
         """
 
+    # ---------- Optional Acca block ----------
+    acca_block = ""
+    if acca:
+        legs = list(acca.get("legs") or [])
+        if legs:
+            acca_title = acca.get("title") or "Featured Acca"
+            acca_note = acca.get("note") or ""
+            combined_price = acca.get("combined_price")
+            stake_units = acca.get("stake_units")
+            sport = (acca.get("sport") or "Football").title()
+
+            meta_bits: list[str] = []
+            if combined_price is not None:
+                meta_bits.append(f"~{float(combined_price):.2f}x")
+            if stake_units is not None:
+                try:
+                    meta_bits.append(f"{float(stake_units):.1f}u stake")
+                except Exception:
+                    pass
+            meta_line = " • ".join(meta_bits)
+
+            acca_rows_html = ""
+            for lg in legs:
+                comp = lg.get("comp") or ""
+                home = (
+                    lg.get("home_team")
+                    or lg.get("home_name")
+                    or ""
+                )
+                away = (
+                    lg.get("away_team")
+                    or lg.get("away_name")
+                    or ""
+                )
+                ko = _fmt_time(lg.get("kickoff_utc"))
+                market = lg.get("market") or ""
+                book = (lg.get("bookmaker") or "").upper()
+                price = lg.get("price")
+                price_str = f"{float(price):.2f}" if price is not None else "—"
+
+                acca_rows_html += f"""
+                <tr>
+                  <td style="padding:6px 6px;font-size:12px;white-space:nowrap;">{ko}</td>
+                  <td style="padding:6px 6px;font-size:12px;">
+                    <strong>{home}</strong> vs <strong>{away}</strong><br/>
+                    <span style="opacity:0.8;font-size:11px;">{comp}</span>
+                  </td>
+                  <td style="padding:6px 6px;font-size:12px;">
+                    {market}<br/>
+                    <span style="opacity:0.8;font-size:11px;">{book}</span>
+                  </td>
+                  <td style="padding:6px 6px;font-size:12px;text-align:right;white-space:nowrap;">
+                    {price_str}
+                  </td>
+                </tr>
+                """
+
+            acca_note_block = ""
+            if acca_note:
+                acca_note_block = f"""
+                <p style="margin-top:6px;font-size:12px;opacity:0.85;">
+                  {acca_note}
+                </p>
+                """
+
+            acca_meta_block = ""
+            if meta_line:
+                acca_meta_block = f"""
+                <div style="font-size:12px;opacity:0.85;margin-top:4px;">
+                  {meta_line} • {sport}
+                </div>
+                """
+
+            acca_block = f"""
+            <div style="margin-top:28px;padding:16px 14px;border-radius:14px;
+                        background:rgba(15,23,42,0.95);border:1px solid rgba(56,189,248,0.4);">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <div>
+                  <div style="font-size:13px;text-transform:uppercase;letter-spacing:0.06em;opacity:0.85;">
+                    Featured Acca
+                  </div>
+                  <div style="font-size:16px;font-weight:600;margin-top:2px;">
+                    {acca_title}
+                  </div>
+                  {acca_meta_block}
+                </div>
+                <div style="font-size:22px;">🎯</div>
+              </div>
+
+              {acca_note_block}
+
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="border-collapse:collapse;margin-top:10px;background:#020817;
+                            border-radius:10px;overflow:hidden;">
+                <thead>
+                  <tr style="background:#0b1120;">
+                    <th align="left"  style="padding:6px 6px;font-size:11px;text-transform:uppercase;">KO</th>
+                    <th align="left"  style="padding:6px 6px;font-size:11px;text-transform:uppercase;">Match</th>
+                    <th align="left"  style="padding:6px 6px;font-size:11px;text-transform:uppercase;">Leg</th>
+                    <th align="right" style="padding:6px 6px;font-size:11px;text-transform:uppercase;">Price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {acca_rows_html}
+                </tbody>
+              </table>
+            </div>
+            """
+
     # ---------- Final HTML ----------
     return f"""
 <!DOCTYPE html>
@@ -154,6 +264,8 @@ def featured_picks_email_html(
             {rows_html}
           </tbody>
         </table>
+
+        {acca_block}
 
         <p style="margin-top:24px;font-size:14px;line-height:1.6;opacity:0.9;">
           You can view live odds, model probabilities, and bet tracking for these games

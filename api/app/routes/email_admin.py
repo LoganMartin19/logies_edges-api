@@ -7,10 +7,10 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_   # 👈 NEW
+from sqlalchemy import or_   # 👈 keep this
 
 from ..db import get_db
-from ..models import FeaturedPick, User
+from ..models import FeaturedPick, User, AccaTicket, AccaLeg, Fixture
 from ..auth_firebase import get_current_user
 from ..services.email import send_email
 from ..templates.featured_picks_email import featured_picks_email_html
@@ -22,6 +22,57 @@ def require_admin(user=Depends(get_current_user)):
     if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin only")
     return user
+
+
+def _featured_acca_for_day(db: Session, day: date):
+    """
+    Return the latest PUBLIC acca for this day in the dict shape
+    expected by featured_picks_email_html (acca=...).
+    """
+    t = (
+        db.query(AccaTicket)
+        .filter(AccaTicket.day == day, AccaTicket.is_public.is_(True))
+        .order_by(AccaTicket.created_at.desc())
+        .first()
+    )
+    if not t:
+        return None
+
+    legs = db.query(AccaLeg).filter(AccaLeg.ticket_id == t.id).all()
+    fixture_ids = [l.fixture_id for l in legs if l.fixture_id]
+
+    fmap = (
+        {
+            f.id: f
+            for f in db.query(Fixture).filter(Fixture.id.in_(fixture_ids)).all()
+        }
+        if fixture_ids
+        else {}
+    )
+
+    out_legs: list[dict] = []
+    for l in legs:
+        fx = fmap.get(l.fixture_id)
+        out_legs.append(
+            {
+                "comp": fx.comp if fx else "",
+                "home_team": fx.home_team if fx else "",
+                "away_team": fx.away_team if fx else "",
+                "kickoff_utc": fx.kickoff_utc if fx else None,
+                "market": l.market,
+                "bookmaker": l.bookmaker,
+                "price": l.price,
+            }
+        )
+
+    return {
+        "title": t.title,
+        "note": t.note,
+        "sport": t.sport,
+        "combined_price": t.combined_price,
+        "stake_units": t.stake_units,
+        "legs": out_legs,
+    }
 
 
 @router.post("/featured-picks")
@@ -50,6 +101,10 @@ def send_featured_picks_digest(
     Also:
       - Resend is limited to 2 requests/second on free tier.
       - We pace requests + retry a couple of times on 429s.
+
+    NEW:
+      - If there is a public AccaTicket for this day, it's included
+        as a Featured Acca block in the email (same for free & premium).
     """
     if day is None:
         day = date.today()
@@ -85,6 +140,9 @@ def send_featured_picks_digest(
     premium_picks_all = [p for p in pick_dicts if p["is_premium_only"]]
     free_count_all = len(free_picks_all)
     premium_count_all = len(premium_picks_all)
+
+    # 1b) Featured acca for the day (same for all recipients)
+    acca_payload = _featured_acca_for_day(db, day)
 
     # 2) Find recipients
     q = db.query(User).filter(User.email.isnot(None))
@@ -150,6 +208,7 @@ def send_featured_picks_digest(
         html = featured_picks_email_html(
             day=day,
             picks=user_picks,
+            acca=acca_payload,  # ⭐ include the featured acca block if available
             recipient_name=u.display_name or (email.split("@")[0]),
             is_premium_user=is_premium_user,
             free_count=user_free_count,
