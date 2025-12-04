@@ -40,6 +40,13 @@ class Fixture(Base):
     player_odds = relationship("PlayerOdds", back_populates="fixture", cascade="all, delete-orphan")
     featured_picks = relationship("FeaturedPick", back_populates="fixture", cascade="all, delete-orphan")  # ✅
 
+    # NEW: who has unlocked this fixture (for access gating)
+    fixture_accesses = relationship(
+        "UserFixtureAccess",
+        back_populates="fixture",
+        cascade="all, delete-orphan",
+    )
+
     def as_dict(self):
         return {
             "id": self.id,
@@ -293,6 +300,7 @@ class PlayerOdds(Base):
         Index("ix_player_odds_player_market", "player_id", "market"),
     )
 
+
 class FeaturedPick(Base):
     __tablename__ = "featured_picks"
 
@@ -343,6 +351,7 @@ class FeaturedPick(Base):
     # tie back to fixture
     fixture = relationship("Fixture", back_populates="featured_picks")
 
+
 # --- AI-written match previews (cached) ---
 class AIPreview(Base):
     __tablename__ = "ai_previews"
@@ -368,6 +377,7 @@ class AIPreview(Base):
         Index("ix_ai_previews_day_sport", "day", "sport"),
     )
 
+
 class TeamSeasonStats(Base):
     __tablename__ = "team_season_stats"
 
@@ -392,6 +402,7 @@ class TeamSeasonPlayers(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, index=True)
     __table_args__ = (UniqueConstraint("team_id", "season", name="uq_tsp_team_season"),)
 
+
 class PlayerSeasonStats(Base):
     """
     Cache for /players (stats list) keyed by player+season (optional league_id filter).
@@ -406,6 +417,7 @@ class PlayerSeasonStats(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, index=True)
     __table_args__ = (UniqueConstraint("player_id", "season", "league_id", name="uq_pss_player_season_league"),)
 
+
 class FixturePlayersCache(Base):
     """
     Cache for /fixtures/players?fixture=ID (lineup+bench with stats blocks).
@@ -416,6 +428,7 @@ class FixturePlayersCache(Base):
     payload = Column(JSON, nullable=False)                             # full response['response'] you use
     updated_at = Column(DateTime, default=datetime.utcnow, index=True)
     __table_args__ = (UniqueConstraint("fixture_provider_id", name="uq_fpc_fixture"),)
+
 
 # --- AccaTicket / AccaLeg --------------------------------------------------
 class AccaTicket(Base):
@@ -477,6 +490,7 @@ class AccaLeg(Base):
 
     ticket = relationship("AccaTicket", back_populates="legs")
 
+
 class ExpertPrediction(Base):
     __tablename__ = "expert_predictions"
 
@@ -501,6 +515,7 @@ class ExpertPrediction(Base):
         UniqueConstraint("fixture_id", "day", name="uq_expertpred_fixture_day"),
         Index("ix_expertpred_fixture_day", "fixture_id", "day"),
     )
+
 
 # --- Tipster ---------------------------------------------------------------
 
@@ -573,6 +588,7 @@ class TipsterPick(Base):
     tipster = relationship("Tipster", back_populates="picks")
     fixture = relationship("Fixture")
 
+
 # --- Users, Follows, Bet Log, Subscriptions ---------------------------------
 
 class User(Base):
@@ -609,7 +625,15 @@ class User(Base):
     subscriptions = relationship("TipsterSubscription", back_populates="user", cascade="all, delete-orphan")
     bets = relationship("UserBet", back_populates="user", cascade="all, delete-orphan")
 
+    # NEW: per-fixture access rows (free quota tracking)
+    fixture_accesses = relationship(
+        "UserFixtureAccess",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
     __table_args__ = (Index("ix_users_uid_email", "firebase_uid", "email"),)
+
 
 class UserFollow(Base):
     __tablename__ = "user_follows"
@@ -678,6 +702,7 @@ class TipsterSubscription(Base):
         Index("ix_subs_status", "status"),
     )
 
+
 class TipsterFollow(Base):
     __tablename__ = "tipster_follows"
 
@@ -706,6 +731,7 @@ class PlayerPropModel(Base):
 
     player_odds = relationship("PlayerOdds", backref="models")
 
+
 # --- Tipster Application pipeline -------------------------------------------
 
 class TipsterApplication(Base):
@@ -732,6 +758,7 @@ class TipsterApplication(Base):
     created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
     reviewed_at = Column(DateTime, nullable=True)
 
+
 class PushToken(Base):
     __tablename__ = "push_tokens"
 
@@ -744,3 +771,48 @@ class PushToken(Base):
     last_used_at = Column(DateTime, nullable=True)
 
     user = relationship("User", backref="push_tokens")
+
+
+class UserFixtureAccess(Base):
+    """
+    Tracks which fixtures a user has 'unlocked'.
+
+    Rules:
+      - One row per (user, fixture) for lifetime access.
+      - `day` = calendar day (UTC) when they first unlocked it.
+      - We count rows with `day == today` to enforce the daily free cap.
+    """
+    __tablename__ = "user_fixture_access"
+
+    id = Column(BigInteger, primary_key=True)
+
+    user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    fixture_id = Column(
+        BigInteger,
+        ForeignKey("fixtures.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+
+    # Day of first unlock (UTC date)
+    day = Column(Date, nullable=False, index=True)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+        index=True,
+    )
+
+    user = relationship("User", back_populates="fixture_accesses")
+    fixture = relationship("Fixture", back_populates="fixture_accesses")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "fixture_id", name="uq_user_fixture_access"),
+        Index("ix_userfixtureaccess_user_day", "user_id", "day"),
+    )

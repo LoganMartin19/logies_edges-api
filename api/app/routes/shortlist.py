@@ -10,11 +10,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from ..db import get_db
-from ..models import Edge, Fixture, Bet
+from ..models import Edge, Fixture, Bet, User
 from ..edge import ensure_baseline_probs, compute_edges
 from ..settings import settings
 from ..telegram_alert import send_telegram_alert  # legacy "today" send
 from ..services.telegram import send_alert_message  # manual single send
+
+# 🔐 NEW: auth + access helper
+from ..auth_firebase import optional_user
+from ..services.fixture_access import ensure_fixture_access
 
 router = APIRouter(prefix="", tags=["shortlist"])
 
@@ -345,4 +349,103 @@ def shortlist_best(
         "prefer_distinct_leagues": prefer_distinct_leagues,
         "count": len(payload),
         "rows": payload[:limit],
+    }
+
+# ----------------------- NEW: per-fixture edges with freemium gating -------
+
+@router.get("/fixture/{fixture_id}/edges")
+def fixture_edges(
+    fixture_id: int,
+    db: Session = Depends(get_db),
+    viewer=Depends(optional_user),
+):
+    """
+    Per-fixture edges endpoint used by the FixturePage.
+
+    Rules:
+      - CSB Premium → full edges, unlimited fixtures.
+      - Free user → can unlock up to N fixtures per day (e.g. 10).
+        * Once unlocked, that fixture stays accessible all day.
+        * If over limit, they see only a teaser: 3 worst edges.
+    """
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
+    if not fx:
+        raise HTTPException(status_code=404, detail="Fixture not found")
+
+    # Resolve viewer -> User row (if logged in)
+    user_row: Optional[User] = None
+    if viewer:
+        uid = viewer.get("uid")
+        email = (viewer.get("email") or "").lower()
+
+        if uid:
+            user_row = db.query(User).filter(User.firebase_uid == uid).first()
+        if not user_row and email:
+            user_row = db.query(User).filter(User.email == email).first()
+
+    is_premium = bool(user_row and user_row.is_premium)
+
+    # Enforce access limit for free users (uses FixtureView table under the hood)
+    has_access, used_today, limit = ensure_fixture_access(
+        db=db,
+        user=user_row,
+        fixture=fx,
+        is_premium=is_premium,
+    )
+
+    # Pull all edges for this fixture
+    edges_q = (
+        db.query(Edge)
+        .filter(Edge.fixture_id == fixture_id)
+        .order_by(Edge.edge.desc())  # best → worst
+    )
+    edges: List[Edge] = edges_q.all()
+
+    # Normalise numerics
+    def _edge_dict(e: Edge) -> dict:
+        return {
+            "id": e.id,
+            "market": e.market,
+            "bookmaker": e.bookmaker,
+            "price": _safe_float(e.price),
+            "prob": _safe_float(e.prob),
+            "edge": _safe_float(e.edge),
+            "model_source": e.model_source,
+        }
+
+    # If no edges (e.g. compute not run yet) just return empty but keep meta
+    if not edges:
+        return {
+            "fixture_id": fixture_id,
+            "is_premium": is_premium,
+            "has_access": bool(is_premium or has_access),
+            "used_today": used_today,
+            "limit": limit,
+            "edges": [],
+        }
+
+    # ✅ Premium user OR free user with quota remaining -> full card
+    if is_premium or has_access:
+        return {
+            "fixture_id": fixture_id,
+            "is_premium": is_premium,
+            "has_access": True,
+            "used_today": used_today,
+            "limit": limit,
+            "edges": [_edge_dict(e) for e in edges],
+        }
+
+    # ❌ Free user over limit → show teaser = 3 worst edges (smallest edge values)
+    # Filter to edges with numeric edge first
+    numeric_edges = [e for e in edges if _safe_float(e.edge) is not None]
+    numeric_edges.sort(key=lambda e: _safe_float(e.edge) or 0.0)  # worst first
+    teaser = numeric_edges[:3]
+
+    return {
+        "fixture_id": fixture_id,
+        "is_premium": False,
+        "has_access": False,
+        "used_today": used_today,
+        "limit": limit,
+        "edges_teaser": [_edge_dict(e) for e in teaser],
     }
