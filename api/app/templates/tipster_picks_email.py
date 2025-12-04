@@ -25,12 +25,21 @@ def tipster_picks_email_html(
     roi_30d: float | None = None,
     record_30d: str | None = None,       # e.g. "23W-12L-1P"
     unsubscribe_url: str = "https://charteredsportsbetting.com/account",
+
+    # ⭐ NEW: gating-aware teaser info
+    is_premium_user: bool = False,
+    is_tipster_subscriber: bool = False,
+    premium_only_total: int = 0,
+    subscriber_only_total: int = 0,
 ) -> str:
     """
     Email sent when a tipster posts today's picks and clicks
     'Send Picks Email' on their dashboard.
 
     Works for both FOLLOWERS and SUBSCRIBERS.
+
+    We also show a small teaser if there are premium/sub-only picks
+    that the recipient is not seeing in this email.
     """
 
     safe_name = recipient_name or "there"
@@ -60,6 +69,57 @@ def tipster_picks_email_html(
         if tipster_bio
         else ""
     )
+
+    # ---------- Teaser about hidden premium / sub-only picks ----------
+    extra_line = ""
+
+    # Plain follower (no premium, no sub)
+    if not is_premium_user and not is_tipster_subscriber:
+        if premium_only_total or subscriber_only_total:
+            parts: list[str] = []
+            if premium_only_total:
+                parts.append(
+                    f"<strong>{premium_only_total}</strong> premium-only pick"
+                    f"{'s' if premium_only_total != 1 else ''}"
+                )
+            if subscriber_only_total:
+                parts.append(
+                    f"<strong>{subscriber_only_total}</strong> subscriber-only pick"
+                    f"{'s' if subscriber_only_total != 1 else ''}"
+                )
+            joined = " and ".join(parts) if len(parts) == 2 else parts[0]
+            extra_line = (
+                f"This tipster also has {joined} live on CSB "
+                "for paying members."
+            )
+
+    # CSB Premium, but not a subscriber of this tipster
+    elif is_premium_user and not is_tipster_subscriber and subscriber_only_total:
+        extra_line = (
+            "Your CSB Premium unlocks all premium picks. "
+            f"This tipster also has <strong>{subscriber_only_total}</strong> "
+            f"subscriber-only pick{'s' if subscriber_only_total != 1 else ''} "
+            "for their paid subs."
+        )
+
+    # Subscriber of this tipster, but not CSB Premium
+    elif is_tipster_subscriber and not is_premium_user and premium_only_total:
+        extra_line = (
+            "Your subscription unlocks all of this tipster’s subscriber-only picks. "
+            f"There are also <strong>{premium_only_total}</strong> "
+            f"CSB Premium-only pick{'s' if premium_only_total != 1 else ''} today "
+            "for site-wide premium members."
+        )
+
+    # Premium + subscriber → they already see the full card → no teaser
+
+    extra_block = ""
+    if extra_line:
+        extra_block = f"""
+        <p style="font-size:13px;line-height:1.5;opacity:0.9;margin-top:8px;">
+          {extra_line}
+        </p>
+        """
 
     # ---------- Table rows ----------
     rows_html = ""
@@ -136,6 +196,8 @@ def tipster_picks_email_html(
           Hi <strong>{safe_name}</strong>,<br/><br/>
           Here are today's picks from <strong>{tipster_name}{handle_str}</strong>.
         </p>
+
+        {extra_block}
 
         <table width="100%" cellspacing="0" cellpadding="0"
                style="border-collapse:collapse;margin-top:12px;background:#020817;

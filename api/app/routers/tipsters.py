@@ -1673,10 +1673,10 @@ def connect_dashboard_link(
     return {"dashboard_url": url}
 
 class TipsterEmailResultOut(BaseModel):
-  ok: bool
-  sent_count: int
-  skipped_count: int
-  recipient_count: int
+    ok: bool
+    sent_count: int
+    skipped_count: int
+    recipient_count: int
 
 
 @router.post("/{username}/picks/email", response_model=TipsterEmailResultOut)
@@ -1686,12 +1686,16 @@ def send_tipster_picks_email(
     user=Depends(get_current_user),
 ):
     """
-    Tipster-only: send today's picks to all followers + active subscribers.
+    Tipster-only: send today's picks to followers + active subscribers.
 
-    Called from the tipster dashboard when they click
-    'Send today's picks email'.
+    Gating logic per recipient:
+      - Followers (not premium, not subscriber) → only free picks
+        (not is_premium_only, not is_subscriber_only)
+      - CSB Premium (not subscriber) → free + premium-only picks
+      - Tipster subscribers (not premium) → free + subscriber-only picks
+      - CSB Premium + subscriber → all picks
     """
-    # 1) Ensure this is the owner
+    # 1) Ensure this is the tipster owner
     tip = _require_owner(username, db, user)
     today = date.today()
 
@@ -1699,7 +1703,7 @@ def send_tipster_picks_email(
     start_dt = datetime.combine(today, datetime.min.time()).replace(tzinfo=_tz.utc)
     end_dt = start_dt + timedelta(days=1)
 
-    picks = (
+    rows = (
         db.query(TipsterPick, Fixture)
         .join(Fixture, TipsterPick.fixture_id == Fixture.id)
         .filter(
@@ -1711,12 +1715,12 @@ def send_tipster_picks_email(
         .all()
     )
 
-    if not picks:
+    if not rows:
         raise HTTPException(400, "No picks found for today – nothing to email.")
 
-    # 3) Build rows for template
+    # 3) Build pick rows for template (include gating flags)
     pick_rows: list[dict] = []
-    for p, fx in picks:
+    for p, fx in rows:
         pick_rows.append(
             {
                 "comp": fx.comp or "",
@@ -1728,8 +1732,21 @@ def send_tipster_picks_email(
                 "price": float(p.price) if p.price is not None else None,
                 "stake_units": float(p.stake) if p.stake is not None else None,
                 "note": "",  # extend later if TipsterPick gets a note field
+                "is_premium_only": bool(p.is_premium_only),
+                "is_subscriber_only": bool(getattr(p, "is_subscriber_only", False)),
             }
         )
+
+    # Some quick global splits (mainly for free users)
+    free_picks_all = [
+        r
+        for r in pick_rows
+        if not r["is_premium_only"] and not r["is_subscriber_only"]
+    ]
+
+    # ⭐ NEW: totals for teaser copy
+    premium_only_total = len([r for r in pick_rows if r["is_premium_only"]])
+    subscriber_only_total = len([r for r in pick_rows if r["is_subscriber_only"]])
 
     # 4) Recipients = followers + active subscribers
     follower_rows = (
@@ -1737,7 +1754,7 @@ def send_tipster_picks_email(
         .filter(TipsterFollow.tipster_id == tip.id)
         .all()
     )
-    follower_emails = {r[0].lower() for r in follower_rows if r[0]}
+    follower_emails = {(r[0] or "").lower() for r in follower_rows if r[0]}
 
     sub_rows = (
         db.query(TipsterSubscription, User)
@@ -1748,6 +1765,7 @@ def send_tipster_picks_email(
         )
         .all()
     )
+    subscriber_ids = {u.id for (_, u) in sub_rows if u and u.id}
     subscriber_emails = {
         (u.email or "").lower() for (_, u) in sub_rows if u and u.email
     }
@@ -1758,44 +1776,83 @@ def send_tipster_picks_email(
     if not all_emails:
         raise HTTPException(400, "No followers or subscribers to email yet.")
 
+    # Load User rows for all those emails so we can check is_premium, id, etc.
+    users = (
+        db.query(User)
+        .filter(User.email.in_(list(all_emails)))
+        .all()
+    )
+    users_by_email = {(u.email or "").lower(): u for u in users if u.email}
+
     # 5) Optional: tipster stats for header
     stats = compute_tipster_rolling_stats(db, tip.id, days=30)
     roi_30d = float(stats.get("roi") or 0.0)
-    record_30d = None  # wire a proper W-L string later if you like
+    record_30d = None  # wire up "23W-12L-1P" style string later if you like
 
-    # 6) Fire emails (simple per-recipient loop, light rate limiting)
+    # 6) Send per-recipient, respecting gating
     sent = 0
     skipped = 0
     day_str = today.strftime("%d %b %Y")
     subject = f"CSB — {tip.name} picks — {day_str}"
 
-    for email in all_emails:
+    for email in sorted(all_emails):
+        u = users_by_email.get(email)
+        is_premium_user = bool(getattr(u, "is_premium", False)) if u else False
+        user_id = getattr(u, "id", None) if u else None
+        is_tipster_subscriber = user_id in subscriber_ids
+
+        # --- Decide which picks this recipient sees ---
+        if is_premium_user and is_tipster_subscriber:
+            # Premium + subscriber → full card
+            visible_picks = pick_rows
+        elif is_premium_user:
+            # Premium only → free + premium-only (no subscriber-only)
+            visible_picks = [
+                r for r in pick_rows if not r["is_subscriber_only"]
+            ]
+        elif is_tipster_subscriber:
+            # Subscriber only → free + subscriber-only (no premium-only)
+            visible_picks = [
+                r for r in pick_rows if not r["is_premium_only"]
+            ]
+        else:
+            # Plain follower → only fully free picks
+            visible_picks = free_picks_all
+
+        # If this user would see nothing, skip sending
+        if not visible_picks:
+            skipped += 1
+            continue
+
+        first_part = email.split("@")[0]
+        recipient_name = first_part.replace(".", " ").replace("_", " ").title()
+
+        html = tipster_picks_email_html(
+            day=today,
+            tipster_name=tip.name,
+            tipster_handle=tip.username,
+            tipster_bio=tip.bio,
+            picks=visible_picks,
+            recipient_name=recipient_name,
+            roi_30d=roi_30d,
+            record_30d=record_30d,
+            unsubscribe_url="https://charteredsportsbetting.com/account",
+
+            # ⭐ NEW: per-recipient gating + global totals
+            is_premium_user=is_premium_user,
+            is_tipster_subscriber=is_tipster_subscriber,
+            premium_only_total=premium_only_total,
+            subscriber_only_total=subscriber_only_total,
+        )
+
         try:
-            first_part = email.split("@")[0]
-            # naive: "logie_martin" -> "Logie Martin"
-            recipient_name = first_part.replace(".", " ").replace("_", " ").title()
-
-            html = tipster_picks_email_html(
-                day=today,
-                tipster_name=tip.name,
-                tipster_handle=tip.username,
-                tipster_bio=tip.bio,
-                picks=pick_rows,
-                recipient_name=recipient_name,
-                roi_30d=roi_30d,
-                record_30d=record_30d,
-                unsubscribe_url="https://charteredsportsbetting.com/account",
-            )
-
-            # Use your existing helper (same as featured email)
             send_email(
                 to=email,
                 subject=subject,
                 html=html,
             )
-
             sent += 1
-            sleep(0.6)  # keep under ~2 req/s like featured email
+            sleep(0.6)  # keep under ~2 req/s
         except Exception as e:
             print("[tipster email] failed for", email, ":", e)
             skipped += 1
