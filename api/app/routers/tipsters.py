@@ -1,8 +1,9 @@
 # api/app/routers/tipsters.py
 from __future__ import annotations
 
-from datetime import date, datetime, timezone as _tz
-from typing import Optional, List
+from datetime import date, datetime, timezone as _tz, timedelta
+from time import sleep
+from typing import Optional, List  # 👈 add this
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -24,6 +25,8 @@ from ..services.tipster_perf import compute_tipster_rolling_stats, model_edge_fo
 from ..auth_firebase import get_current_user, optional_user
 from ..services import stripe_connect
 from ..services.push import send_new_pick_push
+from ..templates.tipster_picks_email import tipster_picks_email_html
+from ..services.email import send_email
 
 router = APIRouter(prefix="/api/tipsters", tags=["tipsters"])
 
@@ -1668,3 +1671,138 @@ def connect_dashboard_link(
 
     url = stripe_connect.create_login_link(tip.stripe_account_id)
     return {"dashboard_url": url}
+
+class TipsterEmailResultOut(BaseModel):
+  ok: bool
+  sent_count: int
+  skipped_count: int
+  recipient_count: int
+
+
+@router.post("/{username}/picks/email", response_model=TipsterEmailResultOut)
+def send_tipster_picks_email(
+    username: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Tipster-only: send today's picks to all followers + active subscribers.
+
+    Called from the tipster dashboard when they click
+    'Send today's picks email'.
+    """
+    # 1) Ensure this is the owner
+    tip = _require_owner(username, db, user)
+    today = date.today()
+
+    # 2) Find today's picks (created today) for this tipster
+    start_dt = datetime.combine(today, datetime.min.time()).replace(tzinfo=_tz.utc)
+    end_dt = start_dt + timedelta(days=1)
+
+    picks = (
+        db.query(TipsterPick, Fixture)
+        .join(Fixture, TipsterPick.fixture_id == Fixture.id)
+        .filter(
+            TipsterPick.tipster_id == tip.id,
+            TipsterPick.created_at >= start_dt,
+            TipsterPick.created_at < end_dt,
+        )
+        .order_by(TipsterPick.created_at.asc())
+        .all()
+    )
+
+    if not picks:
+        raise HTTPException(400, "No picks found for today – nothing to email.")
+
+    # 3) Build rows for template
+    pick_rows: list[dict] = []
+    for p, fx in picks:
+        pick_rows.append(
+            {
+                "comp": fx.comp or "",
+                "home_team": fx.home_team or "",
+                "away_team": fx.away_team or "",
+                "kickoff_utc": fx.kickoff_utc,
+                "market": p.market or "",
+                "bookmaker": p.bookmaker or "",
+                "price": float(p.price) if p.price is not None else None,
+                "stake_units": float(p.stake) if p.stake is not None else None,
+                "note": "",  # extend later if TipsterPick gets a note field
+            }
+        )
+
+    # 4) Recipients = followers + active subscribers
+    follower_rows = (
+        db.query(TipsterFollow.follower_email)
+        .filter(TipsterFollow.tipster_id == tip.id)
+        .all()
+    )
+    follower_emails = {r[0].lower() for r in follower_rows if r[0]}
+
+    sub_rows = (
+        db.query(TipsterSubscription, User)
+        .join(User, TipsterSubscription.user_id == User.id)
+        .filter(
+            TipsterSubscription.tipster_id == tip.id,
+            TipsterSubscription.status == "active",
+        )
+        .all()
+    )
+    subscriber_emails = {
+        (u.email or "").lower() for (_, u) in sub_rows if u and u.email
+    }
+
+    all_emails = follower_emails | subscriber_emails
+    all_emails = {e for e in all_emails if e}  # strip blanks
+
+    if not all_emails:
+        raise HTTPException(400, "No followers or subscribers to email yet.")
+
+    # 5) Optional: tipster stats for header
+    stats = compute_tipster_rolling_stats(db, tip.id, days=30)
+    roi_30d = float(stats.get("roi") or 0.0)
+    record_30d = None  # wire a proper W-L string later if you like
+
+    # 6) Fire emails (simple per-recipient loop, light rate limiting)
+    sent = 0
+    skipped = 0
+    day_str = today.strftime("%d %b %Y")
+    subject = f"CSB — {tip.name} picks — {day_str}"
+
+    for email in all_emails:
+        try:
+            first_part = email.split("@")[0]
+            # naive: "logie_martin" -> "Logie Martin"
+            recipient_name = first_part.replace(".", " ").replace("_", " ").title()
+
+            html = tipster_picks_email_html(
+                day=today,
+                tipster_name=tip.name,
+                tipster_handle=tip.username,
+                tipster_bio=tip.bio,
+                picks=pick_rows,
+                recipient_name=recipient_name,
+                roi_30d=roi_30d,
+                record_30d=record_30d,
+                unsubscribe_url="https://charteredsportsbetting.com/account",
+            )
+
+            # Use your existing helper (same as featured email)
+            send_email(
+                to=email,
+                subject=subject,
+                html=html,
+            )
+
+            sent += 1
+            sleep(0.6)  # keep under ~2 req/s like featured email
+        except Exception as e:
+            print("[tipster email] failed for", email, ":", e)
+            skipped += 1
+
+    return TipsterEmailResultOut(
+        ok=True,
+        sent_count=sent,
+        skipped_count=skipped,
+        recipient_count=len(all_emails),
+    )
