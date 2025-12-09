@@ -4,8 +4,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import User, UserPreference
-from ..auth import get_current_user
+from ..models import UserPreference
+from ..auth_firebase import get_current_user  # ✅ use firebase auth
 
 router = APIRouter(prefix="/me/preferences", tags=["preferences"])
 
