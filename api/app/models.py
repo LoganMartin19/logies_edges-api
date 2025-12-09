@@ -856,3 +856,32 @@ class FixtureView(Base):
     __table_args__ = (
         Index("ix_fixtureviews_fx_user", "fixture_id", "user_id"),
     )
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    id = Column(BigInteger, primary_key=True)
+
+    user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
+    # e.g. ["Celtic", "Arsenal"]
+    favorite_teams = Column(JSON, nullable=False, default=list)
+
+    # e.g. ["EPL", "SCO_PRM", "UCL"]
+    favorite_leagues = Column(JSON, nullable=False, default=list)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    user = relationship("User", backref="preferences")

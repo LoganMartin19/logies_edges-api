@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from ..db import get_db
-from ..models import Edge, Fixture, Bet, User, FixtureView  # 👈 add FixtureView
+from ..models import Edge, Fixture, Bet, User, FixtureView, UserPreference  # 👈 added UserPreference
 from ..edge import ensure_baseline_probs, compute_edges
 from ..settings import settings
 from ..telegram_alert import send_telegram_alert  # legacy "today" send
@@ -66,6 +66,89 @@ def _as_aware(dt: datetime | None) -> datetime | None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
 
+# ---------- NEW: helpers for favourites / preferences ----------
+
+def _resolve_user(db: Session, viewer) -> Optional[User]:
+    """
+    Shared helper to turn the `viewer` (Firebase token dict or None)
+    into a real User row, if possible.
+    """
+    if not viewer:
+        return None
+
+    uid = viewer.get("uid")
+    email = (viewer.get("email") or "").lower()
+
+    user_row: Optional[User] = None
+
+    if uid:
+        user_row = db.query(User).filter(User.firebase_uid == uid).first()
+    if not user_row and email:
+        user_row = db.query(User).filter(User.email == email).first()
+
+    return user_row
+
+
+def _get_favourite_sets(
+    db: Session,
+    viewer,
+) -> tuple[set[str], set[str]]:
+    """
+    Returns (fav_teams, fav_leagues) as sets for the current viewer.
+    If no logged-in user or no prefs exist → both sets empty.
+    """
+    user_row = _resolve_user(db, viewer)
+    if not user_row:
+        return set(), set()
+
+    prefs = (
+        db.query(UserPreference)
+        .filter(UserPreference.user_id == user_row.id)
+        .one_or_none()
+    )
+    if not prefs:
+        return set(), set()
+
+    fav_teams = set(prefs.favorite_teams or [])
+    fav_leagues = set(prefs.favorite_leagues or [])
+    return fav_teams, fav_leagues
+
+
+def _fav_score_shortlist_row(row: dict, fav_teams: set[str], fav_leagues: set[str]) -> int:
+    """
+    Scoring for rows from /shortlist/today.
+    row keys: comp, home_team, away_team, ...
+    """
+    score = 0
+    league = row.get("comp")
+    home = row.get("home_team")
+    away = row.get("away_team")
+
+    if league in fav_leagues:
+        score += 2
+    if home in fav_teams or away in fav_teams:
+        score += 3
+
+    return score
+
+
+def _fav_score_best_row(row: dict, fav_teams: set[str], fav_leagues: set[str]) -> int:
+    """
+    Scoring for rows from /shortlist/best.
+    row keys: league, home, away, ...
+    """
+    score = 0
+    league = row.get("league")
+    home = row.get("home")
+    away = row.get("away")
+
+    if league in fav_leagues:
+        score += 2
+    if home in fav_teams or away in fav_teams:
+        score += 3
+
+    return score
+
 # ----------------------- shortlist (raw) -----------------------
 
 @router.get("/shortlist/today")
@@ -78,10 +161,15 @@ def shortlist_today(
     leagues: Optional[str] = Query(None),
     exclude_started: bool = Query(True, description="Hide fixtures already kicked off unless unsettled"),
     grace_mins: int = Query(10, ge=0, le=120, description="In-play grace for 'exclude_started'"),
+    viewer=Depends(optional_user),  # 👈 NEW: optional signed-in user for favourites
 ):
     """
     Returns shortlist edges for the next N hours.
     Includes alert helpers (already_sent, alert_hash, alert_payload).
+
+    NEW:
+      - If viewer is logged in and has favourite teams/leagues set,
+        those fixtures float to the top (within normal edge sorting).
     """
     now = datetime.now(timezone.utc)
     until = now + timedelta(hours=hours_ahead)
@@ -160,6 +248,20 @@ def shortlist_today(
         }
         out.append(row)
 
+    # 🔹 NEW: favourites influence ordering for signed-in users
+    fav_teams, fav_leagues = _get_favourite_sets(db, viewer)
+
+    if fav_teams or fav_leagues:
+        def sort_key(r: dict):
+            fav_score = _fav_score_shortlist_row(r, fav_teams, fav_leagues)
+            edge_val = r.get("edge") or 0.0
+            ko = r.get("kickoff_utc") or ""
+            # higher fav_score first, then higher edge, then earlier kickoff
+            return (-fav_score, -edge_val, ko)
+
+        out = sorted(out, key=sort_key)
+
+    # If no favourites, we keep DB ordering (already edge-desc)
     return out
 
 # ----------------------- batch send -----------------------
@@ -267,6 +369,7 @@ def shortlist_best(
     grace_mins: int = Query(10, ge=0, le=120),
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
+    viewer=Depends(optional_user),  # 👈 NEW: personalise shortlist_best too
 ):
     now = datetime.now(timezone.utc)
     if hours_ahead:
@@ -337,7 +440,21 @@ def shortlist_best(
         if len(payload) >= limit:
             break
 
-    payload.sort(key=lambda r: (-(r["edge"] or 0.0), r["kickoff_utc"] or ""))
+    # 🔹 NEW: favourites-aware ordering
+    fav_teams, fav_leagues = _get_favourite_sets(db, viewer)
+
+    if fav_teams or fav_leagues:
+        def sort_key(r: dict):
+            fav_score = _fav_score_best_row(r, fav_teams, fav_leagues)
+            edge_val = r.get("edge") or 0.0
+            ko = r.get("kickoff_utc") or ""
+            # higher fav_score first, then higher edge, then earlier kickoff
+            return (-fav_score, -edge_val, ko)
+
+        payload.sort(key=sort_key)
+    else:
+        # original behaviour: edge desc, then kickoff
+        payload.sort(key=lambda r: (-(r["edge"] or 0.0), r["kickoff_utc"] or ""))
 
     return {
         "window": {"start": start.isoformat(), "end": end.isoformat()},
