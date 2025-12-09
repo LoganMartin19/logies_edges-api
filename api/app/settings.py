@@ -46,5 +46,7 @@ class Settings:
     # STRIPE_PRICE_ID_TIPSTER_MONTHLY = os.getenv("STRIPE_PRICE_ID_TIPSTER_MONTHLY", "")
     # STRIPE_PRICE_ID_TIPSTER_YEARLY = os.getenv("STRIPE_PRICE_ID_TIPSTER_YEARLY", "")
 
+    FIXTURE_DAILY_FREE_LIMIT: int = int(os.getenv("FIXTURE_DAILY_FREE_LIMIT", "10"))
+
 
 settings = Settings()

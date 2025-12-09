@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from ..db import get_db
-from ..models import Edge, Fixture, Bet, User
+from ..models import Edge, Fixture, Bet, User, FixtureView  # 👈 add FixtureView
 from ..edge import ensure_baseline_probs, compute_edges
 from ..settings import settings
 from ..telegram_alert import send_telegram_alert  # legacy "today" send
@@ -448,4 +448,76 @@ def fixture_edges(
         "used_today": used_today,
         "limit": limit,
         "edges_teaser": [_edge_dict(e) for e in teaser],
+    }
+
+# ----------------------- NEW: daily fixture-access summary ------------------
+
+@router.get("/fixture/access/summary")
+def fixture_access_summary(
+    db: Session = Depends(get_db),
+    viewer=Depends(optional_user),
+):
+    """
+    Returns today's fixture unlock usage for the current viewer.
+    Used by the Public Dashboard pill.
+    """
+    now = datetime.now(timezone.utc)
+
+    # Default limit – or pull from settings
+    free_limit = getattr(settings, "FIXTURE_DAILY_FREE_LIMIT", 10)
+
+    # Anonymous viewer → baseline
+    if not viewer:
+        return {
+            "is_premium": False,
+            "used_today": 0,
+            "limit": free_limit,
+        }
+
+    # Resolve user
+    user_row: Optional[User] = None
+    uid = viewer.get("uid")
+    email = (viewer.get("email") or "").lower()
+
+    if uid:
+        user_row = db.query(User).filter(User.firebase_uid == uid).first()
+    if not user_row and email:
+        user_row = db.query(User).filter(User.email == email).first()
+
+    if not user_row:
+        return {
+            "is_premium": False,
+            "used_today": 0,
+            "limit": free_limit,
+        }
+
+    is_premium = bool(user_row.is_premium)
+
+    # Premium → unlimited
+    if is_premium:
+        return {
+            "is_premium": True,
+            "used_today": 0,
+            "limit": None,  # frontend can show "Unlimited"
+        }
+
+    # Free user → count distinct fixtures viewed today
+    start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+
+    used_today = (
+        db.query(FixtureView)
+        .filter(
+            FixtureView.user_id == user_row.id,
+            FixtureView.viewed_at >= start,
+            FixtureView.viewed_at < end,
+        )
+        .distinct(FixtureView.fixture_id)
+        .count()
+    )
+
+    return {
+        "is_premium": False,
+        "used_today": used_today,
+        "limit": free_limit,
     }

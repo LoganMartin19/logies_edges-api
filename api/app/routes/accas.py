@@ -17,15 +17,18 @@ pub = APIRouter(prefix="/api/public/accas", tags=["public-accas"])
 # Helpers
 # ---------------------------------------------------------
 
+
 def _day_bounds(day_str: str):
     d = date_cls.fromisoformat(day_str)
     start = datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc)
-    end   = start + timedelta(days=1)
+    end = start + timedelta(days=1)
     return start, end
+
 
 # ---------------------------------------------------------
 # MANUAL CREATE ACCA
 # ---------------------------------------------------------
+
 
 class AccaLegIn(BaseModel):
     fixture_id: int
@@ -33,6 +36,7 @@ class AccaLegIn(BaseModel):
     price: float
     bookmaker: Optional[str] = None
     note: Optional[str] = None
+
 
 class AccaIn(BaseModel):
     day: str
@@ -43,6 +47,7 @@ class AccaIn(BaseModel):
     is_public: bool = False
     legs: List[AccaLegIn]
 
+
 @router.post("/create")
 def create_acca(payload: AccaIn, db: Session = Depends(get_db)):
     d = date_cls.fromisoformat(payload.day)
@@ -50,9 +55,7 @@ def create_acca(payload: AccaIn, db: Session = Depends(get_db)):
         raise HTTPException(400, "At least one leg required")
 
     fids = [l.fixture_id for l in payload.legs]
-    exists = {
-        f.id for f in db.query(Fixture).filter(Fixture.id.in_(fids)).all()
-    }
+    exists = {f.id for f in db.query(Fixture).filter(Fixture.id.in_(fids)).all()}
     missing = [x for x in fids if x not in exists]
     if missing:
         raise HTTPException(404, f"Fixtures not found: {missing}")
@@ -88,18 +91,23 @@ def create_acca(payload: AccaIn, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "id": t.id, "combined_price": t.combined_price}
 
+
 # ---------------------------------------------------------
 # PUBLISH / DELETE
 # ---------------------------------------------------------
 
+
 @router.post("/{ticket_id}/publish")
-def publish_acca(ticket_id: int, public: int = Query(1), db: Session = Depends(get_db)):
+def publish_acca(
+    ticket_id: int, public: int = Query(1), db: Session = Depends(get_db)
+):
     t = db.query(AccaTicket).filter(AccaTicket.id == ticket_id).one_or_none()
     if not t:
         raise HTTPException(404, "Ticket not found")
     t.is_public = bool(public)
     db.commit()
     return {"ok": True, "id": t.id, "is_public": t.is_public}
+
 
 @router.delete("/{ticket_id}")
 def delete_acca(ticket_id: int, db: Session = Depends(get_db)):
@@ -111,9 +119,11 @@ def delete_acca(ticket_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "deleted": n}
 
+
 # ---------------------------------------------------------
 # LIST ACCAS FOR ADMIN
 # ---------------------------------------------------------
+
 
 @router.get("")
 def list_admin_accas(day: str = Query(...), db: Session = Depends(get_db)):
@@ -126,10 +136,7 @@ def list_admin_accas(day: str = Query(...), db: Session = Depends(get_db)):
     )
     ids = [t.id for t in rows]
 
-    all_legs = (
-        db.query(AccaLeg).filter(AccaLeg.ticket_id.in_(ids)).all()
-        if ids else []
-    )
+    all_legs = db.query(AccaLeg).filter(AccaLeg.ticket_id.in_(ids)).all() if ids else []
 
     legs_by = {}
     for l in all_legs:
@@ -161,20 +168,22 @@ def list_admin_accas(day: str = Query(...), db: Session = Depends(get_db)):
         ],
     }
 
+
 # ---------------------------------------------------------
 # AUTO-ACCA (UPDATED: min_edge optional → can use odds only)
 # ---------------------------------------------------------
+
 
 class AutoAccaIn(BaseModel):
     day: str
     hours_ahead: int = Field(48, ge=1, le=14 * 24)
 
-    # ⬇️ optional now
+    # optional now
     min_edge: float | None = Field(
         None,
         ge=-1.0,
         le=1.0,
-        description="If set, require edge >= this. If null, ignore edge filter entirely."
+        description="If set, require edge >= this. If null, ignore edge filter entirely.",
     )
 
     bookmaker: str = "bet365"
@@ -196,11 +205,16 @@ class AutoAccaIn(BaseModel):
 
 def _market_bucket(m: str) -> str:
     m = (m or "").upper()
-    if "HOME_WIN" in m or m == "1": return "1X2"
-    if "AWAY_WIN" in m or m == "2": return "1X2"
-    if "DRAW" in m or m == "X": return "1X2"
-    if "BTTS" in m: return "BTTS"
-    if m.startswith("O") or m.startswith("U"): return "TOTALS"
+    if "HOME_WIN" in m or m == "1":
+        return "1X2"
+    if "AWAY_WIN" in m or m == "2":
+        return "1X2"
+    if "DRAW" in m or m == "X":
+        return "1X2"
+    if "BTTS" in m:
+        return "BTTS"
+    if m.startswith("O") or m.startswith("U"):
+        return "TOTALS"
     return "OTHER"
 
 
@@ -215,14 +229,14 @@ def _format_leg_note(e: Edge, fx: Fixture) -> str:
             f"{e.bookmaker} {float(e.price):.2f}",
         ]
         if prob is not None:
-            bits.append(f"model {prob*100:.1f}%")
+            bits.append(f"model {prob * 100:.1f}%")
         if fair is not None:
             bits.append(f"fair {fair:.2f}")
         if edge_pct is not None:
             bits.append(f"edge {edge_pct:.1f}%")
 
         return " | ".join(bits)
-    except:
+    except Exception:
         return f"{fx.home_team} v {fx.away_team} • {e.market} @ {e.bookmaker} {e.price}"
 
 
@@ -240,7 +254,11 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
         .filter(Fixture.kickoff_utc >= start, Fixture.kickoff_utc < window_end)
     )
 
-    # edge filter only if provided
+    # 🔹 Apply bookmaker filter if provided
+    if payload.bookmaker:
+        q = q.filter(Edge.bookmaker == payload.bookmaker)
+
+    # 🔹 edge filter only if provided
     if payload.min_edge is not None:
         q = q.filter(Edge.edge >= payload.min_edge)
 
@@ -255,7 +273,7 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
         try:
             p = float(e.price)
             return payload.min_price <= p <= payload.max_price
-        except:
+        except Exception:
             return False
 
     rows = [(e, f) for (e, f) in rows if _in_band(e)]
@@ -346,24 +364,26 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
                 note=note,
             )
         )
-        legs_out.append({
-            "fixture_id": f.id,
-            "matchup": f"{f.home_team} vs {f.away_team}",
-            "comp": f.comp,
-            "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
-            "market": e.market,
-            "bookmaker": e.bookmaker,
-            "price": float(e.price),
-            "edge": float(e.edge) if e.edge is not None else None,
-            "note": note,
-        })
+        legs_out.append(
+            {
+                "fixture_id": f.id,
+                "matchup": f"{f.home_team} vs {f.away_team}",
+                "comp": f.comp,
+                "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
+                "market": e.market,
+                "bookmaker": e.bookmaker,
+                "price": float(e.price),
+                "edge": float(e.edge) if e.edge is not None else None,
+                "note": note,
+            }
+        )
 
     db.commit()
 
     explanation = (
         f"Target {payload.target_odds}x | "
         f"Price band {payload.min_price}-{payload.max_price} | "
-        f"Tolerance ±{int(payload.target_tolerance_pct*100)}%"
+        f"Tolerance ±{int(payload.target_tolerance_pct * 100)}%"
     )
 
     return {
@@ -381,9 +401,11 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
         },
     }
 
+
 # ---------------------------------------------------------
 # PUBLIC ACCA
 # ---------------------------------------------------------
+
 
 @pub.get("/today")
 def public_acca_today(day: str, db: Session = Depends(get_db)):
@@ -402,7 +424,8 @@ def public_acca_today(day: str, db: Session = Depends(get_db)):
 
     fmap = (
         {f.id: f for f in db.query(Fixture).filter(Fixture.id.in_(ids)).all()}
-        if ids else {}
+        if ids
+        else {}
     )
 
     return {
@@ -416,7 +439,9 @@ def public_acca_today(day: str, db: Session = Depends(get_db)):
         "legs": [
             {
                 "fixture_id": l.fixture_id,
-                "matchup": f"{fmap[l.fixture_id].home_team} vs {fmap[l.fixture_id].away_team}" if l.fixture_id in fmap else "",
+                "matchup": f"{fmap[l.fixture_id].home_team} vs {fmap[l.fixture_id].away_team}"
+                if l.fixture_id in fmap
+                else "",
                 "market": l.market,
                 "bookmaker": l.bookmaker,
                 "price": l.price,
@@ -427,9 +452,11 @@ def public_acca_today(day: str, db: Session = Depends(get_db)):
         ],
     }
 
+
 # ---------------------------------------------------------
 # PUBLIC DAILY MULTI ACCA
 # ---------------------------------------------------------
+
 
 @pub.get("/daily")
 def public_accas_daily(day: str, db: Session = Depends(get_db)):
@@ -442,16 +469,14 @@ def public_accas_daily(day: str, db: Session = Depends(get_db)):
     )
     ids = [t.id for t in rows]
 
-    legs = (
-        db.query(AccaLeg).filter(AccaLeg.ticket_id.in_(ids)).all()
-        if ids else []
-    )
+    legs = db.query(AccaLeg).filter(AccaLeg.ticket_id.in_(ids)).all() if ids else []
 
     fids = list({l.fixture_id for l in legs})
 
     fmap = (
         {f.id: f for f in db.query(Fixture).filter(Fixture.id.in_(fids)).all()}
-        if fids else {}
+        if fids
+        else {}
     )
 
     legs_by = {}
@@ -470,7 +495,9 @@ def public_accas_daily(day: str, db: Session = Depends(get_db)):
                 "legs": [
                     {
                         "fixture_id": l.fixture_id,
-                        "matchup": f"{fmap[l.fixture_id].home_team} vs {fmap[l.fixture_id].away_team}" if l.fixture_id in fmap else "",
+                        "matchup": f"{fmap[l.fixture_id].home_team} vs {fmap[l.fixture_id].away_team}"
+                        if l.fixture_id in fmap
+                        else "",
                         "market": l.market,
                         "bookmaker": l.bookmaker,
                         "price": l.price,
