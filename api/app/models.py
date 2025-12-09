@@ -816,3 +816,43 @@ class UserFixtureAccess(Base):
         UniqueConstraint("user_id", "fixture_id", name="uq_user_fixture_access"),
         Index("ix_userfixtureaccess_user_day", "user_id", "day"),
     )
+
+class FixtureView(Base):
+    """
+    Lightweight tracking of fixture / shortlist views.
+
+    - fixture_id: which game was viewed
+    - user_id: optional logged-in user (nullable for anon)
+    - source: where the view came from, e.g. "shortlist", "fixture_page"
+    """
+    __tablename__ = "fixture_views"
+
+    id = Column(BigInteger, primary_key=True)
+
+    fixture_id = Column(
+        BigInteger,
+        ForeignKey("fixtures.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    user_id = Column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
+    source = Column(String, nullable=True)  # "shortlist", "fixture_page", etc.
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+        index=True,
+    )
+
+    fixture = relationship("Fixture")
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("ix_fixtureviews_fx_user", "fixture_id", "user_id"),
+    )
