@@ -870,6 +870,9 @@ class UserPreference(Base):
         nullable=False,
     )
 
+    # e.g. ["football", "nba", "nfl"]
+    favorite_sports = Column(JSON, nullable=False, default=list)  # ⭐ NEW
+
     # e.g. ["Celtic", "Arsenal"]
     favorite_teams = Column(JSON, nullable=False, default=list)
 
