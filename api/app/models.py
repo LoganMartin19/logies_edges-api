@@ -1,8 +1,9 @@
 from sqlalchemy import (
     Column, BigInteger, Integer, String, Numeric, DateTime, ForeignKey,
-    UniqueConstraint, Index, Boolean, Float, Date, func, JSON
+    UniqueConstraint, Index, Boolean, Float, Date, func, JSON, Text
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 from .db import Base
 
@@ -888,3 +889,44 @@ class UserPreference(Base):
     )
 
     user = relationship("User", backref="preferences")
+
+class ApiHttpCache(Base):
+    """
+    Generic HTTP cache table for provider API responses.
+
+    Mirrors:
+
+        CREATE TABLE api_http_cache (
+            cache_key   text PRIMARY KEY,          -- sha256 hash of url+params
+            url         text        NOT NULL,
+            params      jsonb       NOT NULL,
+            body        jsonb       NOT NULL,
+            created_at  timestamptz NOT NULL DEFAULT now(),
+            expires_at  timestamptz NOT NULL
+        );
+
+        CREATE INDEX idx_api_http_cache_expires_at
+            ON api_http_cache (expires_at);
+    """
+    __tablename__ = "api_http_cache"
+
+    cache_key = Column(Text, primary_key=True)          # sha256(url+sorted(params))
+    url       = Column(Text, nullable=False)
+    params    = Column(JSONB, nullable=False)
+    body      = Column(JSONB, nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    expires_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+
+    __table_args__ = (
+        Index("idx_api_http_cache_expires_at", "expires_at"),
+    )

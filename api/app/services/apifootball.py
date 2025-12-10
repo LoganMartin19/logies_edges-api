@@ -1,17 +1,19 @@
 # api/app/services/apifootball.py
 from __future__ import annotations
-import os, time, requests
+import os
+import time
+import requests
 from typing import Dict, Tuple, List, Optional
 from datetime import date, datetime, timezone
 
 # ---------------- Config ----------------
 BASE_URL = os.getenv("FOOTBALL_API_URL", "https://v3.football.api-sports.io")
-API_URL  = f"{BASE_URL}/fixtures"
+API_URL = f"{BASE_URL}/fixtures"
 ODDS_URL = f"{BASE_URL}/odds"
 
 # If you're using RapidAPI proxy, keep these headers. If you use direct API-Football,
 # swap to: {"x-apisports-key": API_KEY}
-API_KEY  = os.getenv("FOOTBALL_API_KEY")
+API_KEY = os.getenv("FOOTBALL_API_KEY")
 API_HOST = os.getenv("RAPIDAPI_HOST", "v3.football.api-sports.io")
 HEADERS = {
     "X-RapidAPI-Key": API_KEY or "",
@@ -104,6 +106,7 @@ LEAGUE_MAP = {
     "WCQ_EUR": 32, "FIFA World Cup Qualifiers - Europe": 32,
 }
 
+
 def canonicalize_comp(league_obj: dict) -> str:
     """
     Map an API-Football league object to our internal competition key.
@@ -145,15 +148,18 @@ LAST_HTTP: Dict[str, Optional[object]] = {
     "timestamp": None,          # ISO8601
 }
 
+
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
 
 # ---------------- Caching + HTTP ----------------
 _CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Tuple[float, List[dict]]] = {}
-_CACHE_TTL = 86400.0
+_CACHE_TTL = 60.0
+
 
 def _cache_key(url: str, params: dict) -> Tuple[str, Tuple[Tuple[str, str], ...]]:
     return (url, tuple(sorted((k, str(v)) for k, v in (params or {}).items())))
+
 
 def _sleep_for_429(r, fallback: float) -> float:
     ra = r.headers.get("Retry-After")
@@ -177,6 +183,7 @@ def _sleep_for_429(r, fallback: float) -> float:
             pass
     return min(max(fallback, 1.0), 120.0)
 
+
 def _parse_iso_utc(s: str) -> Optional[datetime]:
     """
     Robust ISO parser -> timezone-aware UTC datetime.
@@ -196,10 +203,11 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
+
 def _get(url: str, params: dict, retries: int = 4, backoff: float = 0.75) -> List[dict]:
     """
     Resilient GET that:
-      - uses a in-proc cache
+      - uses a 60s in-proc cache
       - handles 429 with reset/backoff
       - retries 5xx with backoff
       - ALWAYS returns a list ( [] on error/empty/null )
@@ -298,6 +306,7 @@ def _get(url: str, params: dict, retries: int = 4, backoff: float = 0.75) -> Lis
             })
 
             if provider_err:
+                _CACHE[key] = (time.time(), [])
                 return []
 
             _CACHE[key] = (time.time(), data)
@@ -308,7 +317,9 @@ def _get(url: str, params: dict, retries: int = 4, backoff: float = 0.75) -> Lis
                 LAST_HTTP.update({
                     "url": url,
                     "params": dict(params or {}),
-                    "status": getattr(e, "response", None).status_code if hasattr(e, "response") and e.response else "error",
+                    "status": getattr(e, "response", None).status_code
+                    if hasattr(e, "response") and e.response
+                    else "error",
                     "error": repr(e),
                     "response_count": 0,
                     "cached": False,
@@ -320,6 +331,7 @@ def _get(url: str, params: dict, retries: int = 4, backoff: float = 0.75) -> Lis
 
     _CACHE[key] = (time.time(), [])
     return []
+
 
 def _get_all_pages(url: str, params: dict) -> List[dict]:
     """
@@ -352,8 +364,10 @@ def fetch_fixtures(day: date, leagues: List[str]) -> List[dict]:
         return all_for_day
     return [fx for fx in all_for_day if fx.get("league", {}).get("id") in wanted_ids]
 
+
 def fetch_fixture_by_id(fixture_id: int) -> List[dict]:
     return _get(API_URL, {"id": int(fixture_id)})
+
 
 def fetch_fixtures_by_date(date_str: Optional[str] = None, league_id: Optional[int] = None) -> List[dict]:
     params = {}
@@ -363,11 +377,14 @@ def fetch_fixtures_by_date(date_str: Optional[str] = None, league_id: Optional[i
         params["league"] = int(league_id)
     return _get_all_pages(API_URL, params)
 
+
 def fetch_fixtures_by_league_and_date(league_id: int, day: date) -> List[dict]:
     return _get_all_pages(API_URL, {"date": day.isoformat(), "league": int(league_id)})
 
+
 def fetch_fixtures_all_pages_for_date(day: date) -> List[dict]:
     return _get_all_pages(API_URL, {"date": day.isoformat()})
+
 
 def fetch_odds_for_fixture(fixture_id: int) -> List[dict]:
     return _get(ODDS_URL, {"fixture": fixture_id})
@@ -413,7 +430,13 @@ def get_standings_for_league(league_id: int, season: int = 2025):
 # ---------------- Core JSON passthroughs used elsewhere ----------------
 def get_fixture(fixture_id: int):
     """Raw fixture details by provider fixture ID (JSON passthrough)."""
-    return requests.get(f"{BASE_URL}/fixtures", headers=HEADERS, params={"id": fixture_id}).json()
+    return requests.get(
+        f"{BASE_URL}/fixtures",
+        headers=HEADERS,
+        params={"id": int(fixture_id)},
+        timeout=20,
+    ).json()
+
 
 def get_players(team_id: int, league_id: Optional[int], season: int):
     """
@@ -423,37 +446,76 @@ def get_players(team_id: int, league_id: Optional[int], season: int):
     params = {"team": team_id, "season": season}
     if league_id is not None:
         params["league"] = league_id
-    return requests.get(f"{BASE_URL}/players", headers=HEADERS, params=params).json()
+    return requests.get(
+        f"{BASE_URL}/players",
+        headers=HEADERS,
+        params=params,
+        timeout=20,
+    ).json()
+
 
 def get_predictions(fixture_id: int):
-    return requests.get(f"{BASE_URL}/predictions", headers=HEADERS, params={"fixture": fixture_id}).json()
+    return requests.get(
+        f"{BASE_URL}/predictions",
+        headers=HEADERS,
+        params={"fixture": int(fixture_id)},
+        timeout=20,
+    ).json()
+
 
 def get_lineups(fixture_id: int):
-    return requests.get(f"{BASE_URL}/fixtures/lineups", headers=HEADERS, params={"fixture": fixture_id}).json()
+    return requests.get(
+        f"{BASE_URL}/fixtures/lineups",
+        headers=HEADERS,
+        params={"fixture": int(fixture_id)},
+        timeout=20,
+    ).json()
+
 
 def get_h2h(team1: int, team2: int):
-    return requests.get(f"{BASE_URL}/fixtures/headtohead", headers=HEADERS, params={"h2h": f"{team1}-{team2}"}).json()
+    return requests.get(
+        f"{BASE_URL}/fixtures/headtohead",
+        headers=HEADERS,
+        params={"h2h": f"{team1}-{team2}"},
+        timeout=20,
+    ).json()
+
 
 def get_team_stats(team_id: int, league_id: int, season: int):
     return requests.get(
         f"{BASE_URL}/teams/statistics",
         headers=HEADERS,
         params={"team": team_id, "league": league_id, "season": season},
+        timeout=20,
     ).json()
 
+
 def get_top_scorers(league: int, season: int):
-    return requests.get(f"{BASE_URL}/players/topscorers", headers=HEADERS, params={"league": league, "season": season}).json()
+    return requests.get(
+        f"{BASE_URL}/players/topscorers",
+        headers=HEADERS,
+        params={"league": league, "season": season},
+        timeout=20,
+    ).json()
+
 
 def get_injuries(team_id: int, league_id: int, season: int):
     return requests.get(
         f"{BASE_URL}/injuries",
         headers=HEADERS,
         params={"team": team_id, "league": league_id, "season": season},
+        timeout=20,
     ).json()
+
 
 def get_events(fixture_id: int):
     # Using same BASE_URL+headers so it stays consistent with the rest
-    return requests.get(f"{BASE_URL}/fixtures/events", headers=HEADERS, params={"fixture": fixture_id}).json()
+    return requests.get(
+        f"{BASE_URL}/fixtures/events",
+        headers=HEADERS,
+        params={"fixture": int(fixture_id)},
+        timeout=20,
+    ).json()
 
 # ---------------- Form / Recent fixtures ----------------
 def get_team_recent_results(
@@ -477,7 +539,6 @@ def get_team_recent_results(
 
     matches = _get(f"{BASE_URL}/fixtures", params) or []
 
-    # optional cutoff
     cutoff = _parse_iso_utc(before_iso) if before_iso else None
 
     cleaned: List[dict] = []
@@ -513,20 +574,23 @@ def get_team_recent_results(
             "league_id": lg.get("id"),
             "league_name": lg.get("name"),
             "league_country": lg.get("country"),
-            # 🔑 internal key for filtering/joins (e.g. UCL, EPL, CHAMP, etc.)
             "comp_key": canonicalize_comp(lg),
         })
 
     cleaned.sort(key=lambda x: x["date"] or "", reverse=True)
     return cleaned[:limit]
 
-# ---------------- Player props (cards, shots, fouls, etc.) ----------------
+# ---------------- Player props helpers ----------------
 def get_player_stats(team_id: int, league_id: int, season: int = 2025) -> List[dict]:
     """
     Player-level stats (cards, shots, fouls etc) for a team in league/season.
     Uses paging aggregator to fetch all players.
     """
-    return _get_all_pages(f"{BASE_URL}/players", {"team": team_id, "league": league_id, "season": season})
+    return _get_all_pages(
+        f"{BASE_URL}/players",
+        {"team": team_id, "league": league_id, "season": season},
+    )
+
 
 def get_fixture_fouls_drawn(fixture_id: int, team_id: int) -> float:
     """
@@ -539,7 +603,7 @@ def get_fixture_fouls_drawn(fixture_id: int, team_id: int) -> float:
             f"{BASE_URL}/fixtures/events",
             headers=HEADERS,
             params={"fixture": int(fixture_id)},
-            timeout=20
+            timeout=20,
         ).json() or {}
         events = j.get("response") or []
         if not isinstance(events, list):
@@ -550,7 +614,6 @@ def get_fixture_fouls_drawn(fixture_id: int, team_id: int) -> float:
 
     drawn = 0
     for ev in events:
-        # team.id is the team associated with the event (for 'Foul', this is the committing team)
         ev_team_id = (ev.get("team") or {}).get("id")
         ev_type = ev.get("type")
         if ev_type == "Foul" and ev_team_id and ev_team_id != team_id:
@@ -558,286 +621,6 @@ def get_fixture_fouls_drawn(fixture_id: int, team_id: int) -> float:
 
     return float(drawn)
 
-# api/app/routes/football_extra.py
-from fastapi import APIRouter, Query, HTTPException, Depends
-from sqlalchemy.orm import Session
-from ..db import get_db
-from ..models import Fixture, PlayerOdds
-from ..services.apifootball import (
-    get_predictions,
-    get_lineups,
-    get_h2h,
-    get_team_stats,
-    get_top_scorers,
-    get_players,
-    get_injuries,
-    get_events,
-    get_fixture,
-    get_player_stats,
-    get_fixture_fouls_drawn,   # 🔑 new helper
-)
-from ..services.player_odds import ingest_player_odds
-from ..services.player_model import prob_over_xpoint5, prob_card, fair_odds, edge
-
-router = APIRouter(prefix="/football", tags=["football"])
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def resolve_provider_fixture_id(db: Session, fixture_id: int) -> int:
-    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
-    if not fx or not fx.provider_fixture_id:
-        raise HTTPException(status_code=404, detail="Fixture not found")
-    return int(fx.provider_fixture_id)
-
-
-def _get_player_props_data(fixture_id: int, db: Session) -> dict:
-    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
-    if not fx or not fx.provider_fixture_id:
-        raise HTTPException(status_code=404, detail="Fixture not found")
-
-    pfx = int(fx.provider_fixture_id)
-    fx_json = get_fixture(pfx)
-    if not fx_json.get("response"):
-        raise HTTPException(status_code=404, detail="Fixture detail not found")
-    fr = fx_json["response"][0]
-
-    league_id = fr["league"]["id"]
-    season    = int(fr["league"]["season"])
-    home_id   = fr["teams"]["home"]["id"]
-    away_id   = fr["teams"]["away"]["id"]
-    league_name_lc = (fr["league"]["name"] or "").strip().lower()
-
-    def _pick_block(stat_blocks: list[dict]) -> dict | None:
-        for s in stat_blocks or []:
-            lg = (s.get("league", {}) or {})
-            if int(lg.get("id") or 0) == int(league_id):
-                return s
-        for s in stat_blocks or []:
-            lg = (s.get("league", {}) or {})
-            if (lg.get("name") or "").strip().lower() == league_name_lc:
-                return s
-        return None
-
-    def _flatten(items: list[dict]) -> list[dict]:
-        out = []
-        for row in items or []:
-            player = row.get("player", {}) or {}
-            stats  = row.get("statistics") or []
-            s = _pick_block(stats)
-            if not s:
-                continue
-
-            games = s.get("games", {}) or {}
-            shots = s.get("shots", {}) or {}
-            cards = s.get("cards", {}) or {}
-            fouls = s.get("fouls", {}) or {}
-
-            name = player.get("name") or "—"
-            mins = int(games.get("minutes") or 0)
-
-            sh_total = int(shots.get("total") or 0)
-            sh_on    = int(shots.get("on") or 0)
-            sot_pct  = round((sh_on / sh_total * 100.0), 1) if sh_total else 0.0
-
-            fouls_comm = int((fouls.get("committed") or 0) or 0)
-
-            per90 = (lambda v: round((v * 90.0) / mins, 2) if mins else 0.0)
-
-            out.append({
-                "id": player.get("id"),
-                "name": name,
-                "photo": player.get("photo"),
-                "pos": games.get("position") or player.get("position") or "?",
-                "minutes": mins,
-                "shots": sh_total,
-                "shots_on": sh_on,
-                "sot_pct": sot_pct,
-                "yellow": int(cards.get("yellow") or 0),
-                "red":    int(cards.get("red") or 0),
-                "fouls_committed": fouls_comm,
-                "shots_per90": per90(sh_total),
-                "fouls_committed_per90": per90(fouls_comm),
-            })
-        out.sort(key=lambda r: (r["minutes"], r["shots"], r["yellow"]), reverse=True)
-        return out
-
-    def normalize_team(team_id: int) -> list[dict]:
-        rows = get_player_stats(team_id, league_id, season)
-        flat = _flatten(rows if isinstance(rows, list) else [])
-        if any(r["minutes"] or r["shots"] or r["yellow"] for r in flat):
-            return flat
-
-        prev = get_player_stats(team_id, league_id, season - 1)
-        flat_prev = _flatten(prev if isinstance(prev, list) else [])
-        if any(r["minutes"] or r["shots"] or r["yellow"] for r in flat_prev):
-            return flat_prev
-
-        from ..services.apifootball import _get_all_pages, BASE_URL
-        all_comp = _get_all_pages(f"{BASE_URL}/players", {"team": team_id, "season": season})
-        return _flatten(all_comp)
-
-    return {
-        "league_id": league_id,
-        "season": season,
-        "home_team": fx.home_team,
-        "away_team": fx.away_team,
-        "home": normalize_team(home_id),
-        "away": normalize_team(away_id),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-@router.get("/player-props/fair")
-def player_props_fair(
-    fixture_id: int,
-    team: str | None = Query(None, description="home|away"),
-    markets: str | None = Query(None, description="CSV of markets"),
-    min_prob: float = Query(0.0, ge=0.0, le=1.0),
-    minutes: int | None = Query(None, ge=10, le=120),
-    opponent_adj: bool = Query(True, description="apply opponent fouls-drawn bump"),
-    ref_adj: bool = Query(True, description="apply referee cards bump (if known)"),
-    ref_factor_override: float | None = Query(None, ge=0.5, le=1.5),
-    db: Session = Depends(get_db),
-):
-    fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
-    if not fx:
-        raise HTTPException(status_code=404, detail="Fixture not found")
-
-    try:
-        pfx = int(fx.provider_fixture_id)
-    except Exception:
-        pfx = None
-
-    league_id = season = home_pid = away_pid = None
-    referee_name = (fx.referee or "").strip()
-
-    if pfx:
-        try:
-            fjson = get_fixture(pfx)
-            core = (fjson.get("response") or [None])[0] or {}
-            lg = core.get("league") or {}
-            league_id = lg.get("id")
-            season = lg.get("season")
-            teams = core.get("teams") or {}
-            home_pid = (teams.get("home") or {}).get("id")
-            away_pid = (teams.get("away") or {}).get("id")
-            if not referee_name:
-                referee_name = (core.get("fixture") or {}).get("referee") or ""
-        except Exception:
-            pass
-
-    # 🔑 Opponent context from events API
-    home_drawn90 = get_fixture_fouls_drawn(pfx, home_pid) if pfx and home_pid else 0.0
-    away_drawn90 = get_fixture_fouls_drawn(pfx, away_pid) if pfx and away_pid else 0.0
-
-    LEAGUE_FOULS_DRAWN_AVG = 10.0
-
-    def clamp(x: float, lo: float, hi: float) -> float:
-        return max(lo, min(hi, x))
-
-    def opponent_fouls_factor(opponent_drawn90: float) -> float:
-        if not opponent_adj:
-            return 1.0
-        if opponent_drawn90 <= 0:
-            return 1.0
-        return clamp(opponent_drawn90 / LEAGUE_FOULS_DRAWN_AVG, 0.80, 1.25)
-
-    def referee_cards_factor() -> float:
-        if not ref_adj:
-            return 1.0
-        if ref_factor_override:
-            return ref_factor_override
-        return 1.0
-
-    stats_data = _get_player_props_data(fixture_id, db)
-
-    stored_odds = db.query(PlayerOdds).filter(PlayerOdds.fixture_id == fixture_id).all()
-    odds_map: dict[tuple[int, str, float], dict] = {}
-    for o in stored_odds:
-        key = (int(o.player_id), (o.market or "").lower(), float(o.line or 0.0))
-        best = odds_map.get(key)
-        if not best or float(o.price) > best["price"]:
-            odds_map[key] = {"bookmaker": o.bookmaker, "price": float(o.price)}
-
-    team_norm = (team or "").strip().lower()
-    want_team = team_norm in {"home", "away"}
-    market_set = set(m.strip().lower() for m in (markets or "").split(",") if m and m.strip())
-
-    out = {"fixture_id": fixture_id, "props": []}
-
-    for side in ("home", "away"):
-        if want_team and side != team_norm:
-            continue
-
-        roster = stats_data.get(side, []) or []
-        opp_drawn90 = away_drawn90 if side == "home" else home_drawn90
-        fouls_ctx = opponent_fouls_factor(opp_drawn90)
-        ref_ctx = referee_cards_factor()
-
-        for pl in roster:
-            mins_played = int(pl.get("minutes") or 0)
-            m_used = minutes or (80 if mins_played >= 600 else 30)
-
-            shots_per90 = float(pl.get("shots_per90") or 0.0)
-            fouls90 = float(pl.get("fouls_committed_per90") or 0.0)
-
-            if mins_played > 0:
-                sot_per90 = (float(pl.get("shots_on") or 0.0) * 90.0) / mins_played
-                cards_per90 = (float(pl.get("yellow") or 0.0) * 90.0) / mins_played
-            else:
-                sot_per90 = 0.0
-                cards_per90 = 0.0
-
-            p_shots15 = prob_over_xpoint5(shots_per90, m_used, 1.5)
-            p_sot05 = prob_over_xpoint5(sot_per90, m_used, 0.5)
-            p_fouls05 = prob_over_xpoint5(fouls90, m_used, 0.5, opponent_factor=fouls_ctx)
-            p_card = prob_card(cards_per90, m_used, ref_factor=ref_ctx, opponent_factor=fouls_ctx)
-
-            markets_calc = [
-                ("shots_over_1.5", 1.5, p_shots15, fair_odds(p_shots15)),
-                ("sot_over_0.5", 0.5, p_sot05, fair_odds(p_sot05)),
-                ("fouls_over_0.5", 0.5, p_fouls05, fair_odds(p_fouls05)),
-                ("to_be_booked", 0.5, p_card, fair_odds(p_card)),
-            ]
-
-            for market, line, prob, fair in markets_calc:
-                if prob < min_prob:
-                    continue
-                if market_set and market not in market_set:
-                    continue
-
-                key = (int(pl["id"]), market, float(line))
-                bm = odds_map.get(key)
-
-                out["props"].append({
-                    "player_id": int(pl["id"]),
-                    "player": pl.get("name") or "",
-                    "team_side": side,
-                    "market": market,
-                    "line": float(line),
-                    "proj_minutes": int(m_used),
-                    "prob": float(prob),
-                    "fair_odds": float(fair) if fair else None,
-                    "best_price": bm["price"] if bm else None,
-                    "bookmaker": bm["bookmaker"] if bm else None,
-                    "edge": edge(prob, bm["price"]) if bm and fair else None,
-                    "per90_shots": round(shots_per90, 2),
-                    "per90_sot": round(sot_per90, 2),
-                    "per90_fouls": round(fouls90, 2),
-                    "cards_per90": round(cards_per90, 2),
-                    "opp_fouls_drawn_per90": round(opp_drawn90, 2),
-                    "opponent_factor": round(fouls_ctx, 3),
-                    "ref_factor": round(ref_ctx, 3),
-                })
-
-    out["props"].sort(key=lambda r: (float(r.get("edge") or 0.0), float(r["prob"])), reverse=True)
-    return out
 
 def get_fixture_players(fixture_id: int):
     """
@@ -845,12 +628,16 @@ def get_fixture_players(fixture_id: int):
     Returns { response: [ { team:{...}, players:[ { player:{...}, statistics:[...] } ] } ] }
     """
     url = f"{BASE_URL}/fixtures/players"
-    r = requests.get(url, headers=HEADERS, params={"fixture": int(fixture_id)}, timeout=30)
+    r = requests.get(
+        url,
+        headers=HEADERS,
+        params={"fixture": int(fixture_id)},
+        timeout=30,
+    )
     r.raise_for_status()
     return r.json()
 
 # --- Opponent context averages (events-first, stats fallback) ----------------
-
 def _events_fouls_committed_in_fixture(fixture_id: int, team_id: int) -> int:
     """Count fouls COMMITTED by team_id in a single fixture using events."""
     try:
@@ -858,7 +645,7 @@ def _events_fouls_committed_in_fixture(fixture_id: int, team_id: int) -> int:
             f"{BASE_URL}/fixtures/events",
             headers=HEADERS,
             params={"fixture": int(fixture_id)},
-            timeout=20
+            timeout=20,
         ).json() or {}
         events = j.get("response") or []
         if not isinstance(events, list):
@@ -870,40 +657,46 @@ def _events_fouls_committed_in_fixture(fixture_id: int, team_id: int) -> int:
     for ev in events:
         if ev.get("type") == "Foul":
             ev_team_id = (ev.get("team") or {}).get("id")
-            if ev_team_id and ev_team_id == team_id:  # committing team
+            if ev_team_id and ev_team_id == team_id:
                 committed += 1
     return committed
 
 
-def get_team_fouls_committed_avg(team_id: int, season: int, league_id: int | None = None, lookback: int = 5) -> float:
+def get_team_fouls_committed_avg(
+    team_id: int,
+    season: int,
+    league_id: int | None = None,
+    lookback: int = 5,
+) -> float:
     """
     Average fouls COMMITTED per match by team_id over last `lookback` fixtures (events-first).
     Fallback: /teams/statistics fouls.committed.total / fixtures.played.total
     """
-    # 1) Try events over last N finished fixtures
-    recent = get_team_recent_results(team_id, season=season, limit=lookback, league_id=league_id) or []
-    ev_counts = []
+    recent = get_team_recent_results(
+        team_id, season=season, limit=lookback, league_id=league_id
+    ) or []
+    ev_counts: List[int] = []
+
     for fx in recent:
         fid = fx.get("fixture_id")
         if not fid:
             continue
         c = _events_fouls_committed_in_fixture(int(fid), team_id)
-        # Some comps have no events; skip zeros ONLY if there are no events at all:
         ev_counts.append(c)
 
-    # If we got at least one non-None entry, compute average (zeros are legit if events existed)
     if ev_counts and any(x is not None for x in ev_counts):
         denom = max(1, len(ev_counts))
         return float(sum(ev_counts)) / float(denom)
 
-    # 2) Fallback to team stats if events were empty or unavailable
     try:
         if league_id is not None:
             stats = get_team_stats(team_id, league_id, season) or {}
             r = stats.get("response") or {}
-            fouls = (r.get("fouls") or {})
-            committed_total = int(((fouls.get("committed") or {}).get("total")) or 0)
-            played = int(((r.get("fixtures") or {}).get("played") or {}).get("total") or 0)
+            fouls = (r.get("fouls") or {}) or {}
+            committed_total = int((fouls.get("committed") or {}).get("total") or 0)
+            played = int(
+                ((r.get("fixtures") or {}).get("played") or {}).get("total") or 0
+            )
             return (committed_total / played) if played else 0.0
     except Exception:
         pass
@@ -911,16 +704,23 @@ def get_team_fouls_committed_avg(team_id: int, season: int, league_id: int | Non
     return 0.0
 
 
-def get_team_fouls_drawn_avg(team_id: int, season: int, league_id: int | None = None, lookback: int = 5) -> float:
+def get_team_fouls_drawn_avg(
+    team_id: int,
+    season: int,
+    league_id: int | None = None,
+    lookback: int = 5,
+) -> float:
     """
     Average fouls DRAWN per match by team_id over last `lookback` fixtures.
     For each fixture: fouls drawn by team A == fouls COMMITTED by the opponent.
     We compute it directly from events by counting fouls where event.team.id != team_id.
-    Fallback: if events missing, approximate using opponent-committed via team stats.
+    Fallback: /teams/statistics fouls.drawn.total if available.
     """
-    # 1) Events-based over last N fixtures
-    recent = get_team_recent_results(team_id, season=season, limit=lookback, league_id=league_id) or []
-    drawn_counts = []
+    recent = get_team_recent_results(
+        team_id, season=season, limit=lookback, league_id=league_id
+    ) or []
+    drawn_counts: List[int] = []
+
     for fx in recent:
         fid = fx.get("fixture_id")
         if not fid:
@@ -930,7 +730,7 @@ def get_team_fouls_drawn_avg(team_id: int, season: int, league_id: int | None = 
                 f"{BASE_URL}/fixtures/events",
                 headers=HEADERS,
                 params={"fixture": int(fid)},
-                timeout=20
+                timeout=20,
             ).json() or {}
             events = j.get("response") or []
             if not isinstance(events, list):
@@ -942,7 +742,6 @@ def get_team_fouls_drawn_avg(team_id: int, season: int, league_id: int | None = 
         for ev in events:
             if ev.get("type") == "Foul":
                 ev_team_id = (ev.get("team") or {}).get("id")
-                # opponent committed -> our team drew
                 if ev_team_id and ev_team_id != team_id:
                     drawn += 1
         drawn_counts.append(drawn)
@@ -950,22 +749,22 @@ def get_team_fouls_drawn_avg(team_id: int, season: int, league_id: int | None = 
     if drawn_counts and any(x is not None for x in drawn_counts):
         return float(sum(drawn_counts)) / float(len(drawn_counts))
 
-    # 2) Fallback: approximate with our opponents' committed via stats is messy without opponent IDs here,
-    # so fall back to our own team-stats if provider exposes 'drawn'. If not, return 0.
     try:
         if league_id is not None:
             stats = get_team_stats(team_id, league_id, season) or {}
             r = stats.get("response") or {}
-            fouls = (r.get("fouls") or {})
-            drawn_total = int(((fouls.get("drawn") or {}).get("total")) or 0)
-            played = int(((r.get("fixtures") or {}).get("played") or {}).get("total") or 0)
+            fouls = (r.get("fouls") or {}) or {}
+            drawn_total = int((fouls.get("drawn") or {}).get("total") or 0)
+            played = int(
+                ((r.get("fixtures") or {}).get("played") or {}).get("total") or 0
+            )
             return (drawn_total / played) if played else 0.0
     except Exception:
         pass
 
     return 0.0
 
-# --- NEW: single-fixture statistics (shots, SoT, fouls, xG, etc.) ---
+# --- single-fixture statistics (shots, SoT, fouls, xG, etc.) ---
 def get_fixture_statistics(fixture_id: int):
     """Raw fixture stats (shots, SoT, fouls, xG, etc.) for a single fixture."""
     return requests.get(
@@ -974,6 +773,7 @@ def get_fixture_statistics(fixture_id: int):
         params={"fixture": int(fixture_id)},
         timeout=20,
     ).json()
+
 
 def _read_stat(stats_list, *aliases) -> float:
     """
@@ -993,7 +793,7 @@ def _read_stat(stats_list, *aliases) -> float:
                 return 0.0
     return 0.0
 
-# --- NEW: rolling averages from recent finished fixtures' statistics ---
+# --- rolling averages from recent finished fixtures' statistics ---
 def get_team_shots_against_avgs(
     team_id: int,
     *,
@@ -1008,7 +808,9 @@ def get_team_shots_against_avgs(
       2) call /fixtures/statistics for each fixture,
       3) read the OPPONENT's 'Total Shots' & 'Shots on Goal' (i.e., shots conceded).
     """
-    recent = get_team_recent_results(team_id, season=season, limit=lookback, league_id=league_id) or []
+    recent = get_team_recent_results(
+        team_id, season=season, limit=lookback, league_id=league_id
+    ) or []
     rows = []
     tot_sh = 0.0
     tot_sot = 0.0
@@ -1022,17 +824,18 @@ def get_team_shots_against_avgs(
         j = get_fixture_statistics(int(fid)) or {}
         resp = j.get("response") or []
         if not isinstance(resp, list) or len(resp) < 2:
-            # some comps won’t have statistics
             continue
 
-        # Opponent = the statistics block whose team.id != our team_id
-        opp_row = next((r for r in resp if (r.get("team") or {}).get("id") != team_id), None)
+        opp_row = next(
+            (r for r in resp if (r.get("team") or {}).get("id") != team_id),
+            None,
+        )
         if not opp_row:
             continue
 
         stats = opp_row.get("statistics") or []
         opp_total_shots = _read_stat(stats, "total shots", "shots total")
-        opp_sot         = _read_stat(stats, "shots on goal", "shots on target")
+        opp_sot = _read_stat(stats, "shots on goal", "shots on target")
 
         rows.append({
             "fixture_id": fid,
@@ -1042,16 +845,17 @@ def get_team_shots_against_avgs(
             "shots_against": opp_total_shots,
             "sot_against": opp_sot,
         })
-        tot_sh  += opp_total_shots
+        tot_sh += opp_total_shots
         tot_sot += opp_sot
         counted += 1
 
     return {
         "matches_counted": counted,
         "shots_against_per_match": (tot_sh / counted) if counted else 0.0,
-        "sot_against_per_match":   (tot_sot / counted) if counted else 0.0,
+        "sot_against_per_match": (tot_sot / counted) if counted else 0.0,
         "fixtures": rows,
     }
+
 
 def get_team_xg_avgs(
     team_id: int,
@@ -1064,7 +868,9 @@ def get_team_xg_avgs(
     Rolling averages of xG for and xG against over last N finished fixtures, using /fixtures/statistics.
     We read our own xG from our block, and xG against from opponent's block.
     """
-    recent = get_team_recent_results(team_id, season=season, limit=lookback, league_id=league_id) or []
+    recent = get_team_recent_results(
+        team_id, season=season, limit=lookback, league_id=league_id
+    ) or []
     rows = []
     tot_xg_for = 0.0
     tot_xg_against = 0.0
@@ -1080,15 +886,21 @@ def get_team_xg_avgs(
         if not isinstance(resp, list) or len(resp) < 2:
             continue
 
-        our_row = next((r for r in resp if (r.get("team") or {}).get("id") == team_id), None)
-        opp_row = next((r for r in resp if (r.get("team") or {}).get("id") != team_id), None)
+        our_row = next(
+            (r for r in resp if (r.get("team") or {}).get("id") == team_id),
+            None,
+        )
+        opp_row = next(
+            (r for r in resp if (r.get("team") or {}).get("id") != team_id),
+            None,
+        )
         if not our_row or not opp_row:
             continue
 
         our_stats = our_row.get("statistics") or []
         opp_stats = opp_row.get("statistics") or []
 
-        xg_for     = _read_stat(our_stats, "expected_goals", "xg")
+        xg_for = _read_stat(our_stats, "expected_goals", "xg")
         xg_against = _read_stat(opp_stats, "expected_goals", "xg")
 
         rows.append({
@@ -1099,7 +911,7 @@ def get_team_xg_avgs(
             "xg_for": xg_for,
             "xg_against": xg_against,
         })
-        tot_xg_for     += xg_for
+        tot_xg_for += xg_for
         tot_xg_against += xg_against
         counted += 1
 
@@ -1109,6 +921,7 @@ def get_team_xg_avgs(
         "xg_against_per_match": (tot_xg_against / counted) if counted else 0.0,
         "fixtures": rows,
     }
+
 
 def get_team_fouls_from_statistics_avg(
     team_id: int,
@@ -1121,7 +934,9 @@ def get_team_fouls_from_statistics_avg(
     Rolling averages of fouls committed and fouls drawn using /fixtures/statistics only.
     'Fouls' in opponent's block = fouls *they* committed => fouls we drew.
     """
-    recent = get_team_recent_results(team_id, season=season, limit=lookback, league_id=league_id) or []
+    recent = get_team_recent_results(
+        team_id, season=season, limit=lookback, league_id=league_id
+    ) or []
     rows = []
     tot_comm = 0.0
     tot_drawn = 0.0
@@ -1137,15 +952,20 @@ def get_team_fouls_from_statistics_avg(
         if not isinstance(resp, list) or len(resp) < 2:
             continue
 
-        our_row = next((r for r in resp if (r.get("team") or {}).get("id") == team_id), None)
-        opp_row = next((r for r in resp if (r.get("team") or {}).get("id") != team_id), None)
+        our_row = next(
+            (r for r in resp if (r.get("team") or {}).get("id") == team_id),
+            None,
+        )
+        opp_row = next(
+            (r for r in resp if (r.get("team") or {}).get("id") != team_id),
+            None,
+        )
         if not our_row or not opp_row:
             continue
 
         our_fouls = _read_stat(our_row.get("statistics") or [], "fouls")
         opp_fouls = _read_stat(opp_row.get("statistics") or [], "fouls")
 
-        # our_fouls = committed by us; opp_fouls = committed by them -> we drew
         rows.append({
             "fixture_id": fid,
             "date": fx.get("date"),
@@ -1154,13 +974,13 @@ def get_team_fouls_from_statistics_avg(
             "fouls_committed": our_fouls,
             "fouls_drawn": opp_fouls,
         })
-        tot_comm  += our_fouls
+        tot_comm += our_fouls
         tot_drawn += opp_fouls
-        counted   += 1
+        counted += 1
 
     return {
         "matches_counted": counted,
         "fouls_committed_per_match": (tot_comm / counted) if counted else 0.0,
-        "fouls_drawn_per_match":     (tot_drawn / counted) if counted else 0.0,
+        "fouls_drawn_per_match": (tot_drawn / counted) if counted else 0.0,
         "fixtures": rows,
     }
