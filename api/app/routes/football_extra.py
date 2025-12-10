@@ -1399,18 +1399,16 @@ def player_props_fair(
         roster = stats_data.get(side, []) or []
 
         if side == "home":
-            # fouls_committed context uses *opponent fouls drawn*
-            fouls_ctx_committed = opponent_fouls_factor(away_drawn90)
-            # fouls_drawn context uses *opponent fouls committed*
-            fouls_ctx_drawn = opponent_fouls_factor(away_comm90)
+            fouls_ctx = opponent_fouls_factor(away_drawn90)  # for committed
+            fouls_drawn_ctx = opponent_fouls_factor(away_comm90)  # for drawn
             shots_ctx = pace_factor(away_opp_shotsA, LEAGUE_AVG_SHOTS_AGAINST)
             sot_ctx = pace_factor(away_opp_sotA, LEAGUE_AVG_SOT_AGAINST)
             opp_drawn90 = away_drawn90
             opp_comm90 = away_comm90
             opp_shotsA, opp_sotA = away_opp_shotsA, away_opp_sotA
         else:
-            fouls_ctx_committed = opponent_fouls_factor(home_drawn90)
-            fouls_ctx_drawn = opponent_fouls_factor(home_comm90)
+            fouls_ctx = opponent_fouls_factor(home_drawn90)
+            fouls_drawn_ctx = opponent_fouls_factor(home_comm90)
             shots_ctx = pace_factor(home_opp_shotsA, LEAGUE_AVG_SHOTS_AGAINST)
             sot_ctx = pace_factor(home_opp_sotA, LEAGUE_AVG_SOT_AGAINST)
             opp_drawn90 = home_drawn90
@@ -1453,7 +1451,7 @@ def player_props_fair(
             # ---- per-90 inputs ----
             shots_per90 = float(pl.get("shots_per90") or 0.0)
             fouls_comm90 = float(pl.get("fouls_committed_per90") or 0.0)
-            fouls_drawn90 = float(pl.get("fouls_drawn_per90") or 0.0)  # 👈 NEW
+            fouls_drawn90 = float(pl.get("fouls_drawn_per90") or 0.0)
 
             if mins_played > 0:
                 sot_per90 = (float(pl.get("shots_on") or 0.0) * 90.0) / mins_played
@@ -1469,19 +1467,17 @@ def player_props_fair(
             p_sot05 = prob_over_xpoint5(
                 sot_per90, m_used, 0.5, opponent_factor=sot_ctx
             )
-            # fouls committed (by this player)
             p_fouls_comm05 = prob_over_xpoint5(
-                fouls_comm90, m_used, 0.5, opponent_factor=fouls_ctx_committed
+                fouls_comm90, m_used, 0.5, opponent_factor=fouls_ctx
             )
-            # fouls drawn (by this player)
             p_fouls_drawn05 = prob_over_xpoint5(
-                fouls_drawn90, m_used, 0.5, opponent_factor=fouls_ctx_drawn
+                fouls_drawn90, m_used, 0.5, opponent_factor=fouls_drawn_ctx
             )
             p_card = prob_card(
                 cards_per90,
                 m_used,
                 ref_factor=ref_ctx,
-                opponent_factor=fouls_ctx_committed,
+                opponent_factor=fouls_ctx,
             )
 
             markets_calc = [
@@ -1489,7 +1485,7 @@ def player_props_fair(
                 ("sot_over_0.5", 0.5, p_sot05, fair_odds(p_sot05)),
                 ("fouls_over_0.5", 0.5, p_fouls_comm05, fair_odds(p_fouls_comm05)),
                 (
-                    "fouls_drawn_over_0.5",  # 👈 NEW MARKET
+                    "fouls_drawn_over_0.5",
                     0.5,
                     p_fouls_drawn05,
                     fair_odds(p_fouls_drawn05),
@@ -1521,13 +1517,13 @@ def player_props_fair(
                         "edge": edge(prob, bm["price"]) if bm and fair else None,
                         # context (for Why/preview UIs)
                         "per90_shots": round(shots_per90, 2),
-                        "per90_sot": round(sot_per90, 2),
                         "per90_fouls": round(fouls_comm90, 2),
-                        "per90_fouls_drawn": round(fouls_drawn90, 2),  # 👈 NEW
+                        "per90_fouls_drawn": round(fouls_drawn90, 2),
+                        "per90_sot": round(sot_per90, 2),
                         "cards_per90": round(cards_per90, 2),
                         "opp_fouls_drawn_per90": round(opp_drawn90, 2),
                         "opp_fouls_committed_per90": round(opp_comm90, 2),
-                        "opponent_factor": round(fouls_ctx_committed, 3),
+                        "opponent_factor": round(fouls_ctx, 3),
                         "ref_factor": round(ref_ctx, 3),
                         "opp_shots_against_per_match": round(opp_shotsA, 2),
                         "opp_sot_against_per_match": round(opp_sotA, 2),
@@ -1541,7 +1537,7 @@ def player_props_fair(
         reverse=True,
     )
     return out
-
+    
 @router.get("/preview")
 def preview(
     fixture_id: int,
