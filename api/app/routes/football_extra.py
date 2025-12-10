@@ -234,40 +234,50 @@ def _get_player_props_data(fixture_id: int, db: Session) -> dict:
             sh_total = int(shots.get("total") or 0)
             sh_on = int(shots.get("on") or 0)
             fouls_comm = int((fouls.get("committed") or 0) or 0)
+            # ✅ NEW: fouls drawn
+            fouls_drawn = int((fouls.get("drawn") or 0) or 0)
 
-            per90 = lambda v: round((v * 90.0) / comp_minutes, 2) if comp_minutes else 0.0
+            per90 = (
+                lambda v: round((v * 90.0) / comp_minutes, 2)
+                if comp_minutes
+                else 0.0
+            )
 
-            out.append({
-                "id": player.get("id"),
-                "name": player.get("name"),
-                "photo": player.get("photo"),
-                "pos": games.get("position") or player.get("position") or "?",
+            out.append(
+                {
+                    "id": player.get("id"),
+                    "name": player.get("name"),
+                    "photo": player.get("photo"),
+                    "pos": games.get("position") or player.get("position") or "?",
 
-                # competition minutes (single league/cup)
-                "minutes": comp_minutes,
+                    # competition minutes (single league/cup)
+                    "minutes": comp_minutes,
 
-                # 🔥 NEW: full season totals (used for projected minutes)
-                "season_stats": {
-                    "apps": season_apps,
-                    "minutes": season_minutes,
-                },
+                    # 🔥 full season totals (used for projected minutes)
+                    "season_stats": {
+                        "apps": season_apps,
+                        "minutes": season_minutes,
+                    },
 
-                # raw stats
-                "shots": sh_total,
-                "shots_on": sh_on,
-                "yellow": int(cards.get("yellow") or 0),
-                "red": int(cards.get("red") or 0),
-                "fouls_committed": fouls_comm,
+                    # raw stats
+                    "shots": sh_total,
+                    "shots_on": sh_on,
+                    "yellow": int(cards.get("yellow") or 0),
+                    "red": int(cards.get("red") or 0),
+                    "fouls_committed": fouls_comm,
+                    "fouls_drawn": fouls_drawn,          # ✅ NEW
 
-                # per-90 from competition
-                "shots_per90": per90(sh_total),
-                "fouls_committed_per90": per90(fouls_comm),
-            })
+                    # per-90 from competition
+                    "shots_per90": per90(sh_total),
+                    "fouls_committed_per90": per90(fouls_comm),
+                    "fouls_drawn_per90": per90(fouls_drawn),  # ✅ NEW
+                }
+            )
 
         # sort by meaningful players (season minutes first)
         out.sort(
             key=lambda r: (r["season_stats"]["minutes"], r["shots"], r["yellow"]),
-            reverse=True
+            reverse=True,
         )
         return out
 
@@ -301,7 +311,6 @@ def _get_player_props_data(fixture_id: int, db: Session) -> dict:
         "home": normalize_team(home_id),
         "away": normalize_team(away_id),
     }
-
 # ---------------------------------------------------------------------------
 # Injury utils (dedupe & ranking)
 # ---------------------------------------------------------------------------
@@ -1537,7 +1546,7 @@ def player_props_fair(
         reverse=True,
     )
     return out
-    
+
 @router.get("/preview")
 def preview(
     fixture_id: int,
