@@ -1074,6 +1074,79 @@ def team_shots(
         "lookback": lookback,
         **data,
     }
+def _season_profile_all_comps(team_id: int, season: int, lookback: int = 60) -> dict:
+    """
+    Build a season profile for this team using ALL competitions in the given season.
+    Uses get_team_recent_results with league_id=None and a big lookback (e.g. 60)
+    and then pulls scores via /fixtures to get GF/GA + W/D/L.
+    """
+    recent = get_team_recent_results(
+        team_id,
+        season=season,
+        limit=lookback,   # big enough to cover a full season in most leagues
+        league_id=None,   # ✅ all competitions
+    ) or []
+
+    played = wins = draws = losses = 0
+    gf = ga = 0
+
+    for m in recent:
+        fid = m.get("fixture_id")
+        if not fid:
+            continue
+
+        try:
+            fdet = get_fixture(int(fid)) or {}
+            fr = (fdet.get("response") or [None])[0] or {}
+            goals = fr.get("goals") or {}
+
+            gh = int(goals.get("home") or 0)
+            ga_ = int(goals.get("away") or 0)
+            is_home = bool(m.get("is_home"))
+
+            # orient score from this team's POV
+            if is_home:
+                gf_match, ga_match = gh, ga_
+            else:
+                gf_match, ga_match = ga_, gh
+
+            played += 1
+            gf += gf_match
+            ga += ga_match
+
+            if gf_match > ga_match:
+                wins += 1
+            elif gf_match == ga_match:
+                draws += 1
+            else:
+                losses += 1
+
+        except Exception:
+            # if any fixture call fails, just skip that match
+            continue
+
+    if played <= 0:
+        return {
+            "played_total": 0,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+            "gf": 0,
+            "ga": 0,
+            "avg_gf": 0.0,
+            "avg_ga": 0.0,
+        }
+
+    return {
+        "played_total": played,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "gf": gf,
+        "ga": ga,
+        "avg_gf": round(gf / played, 3),
+        "avg_ga": round(ga / played, 3),
+    }
 
 @router.get("/team-stats")
 def team_stats(
@@ -1083,13 +1156,18 @@ def team_stats(
 ):
     """
     Return API-Football team statistics for both sides of a fixture (with DB caching).
+
     Shape:
       {
         fixture_id, provider_fixture_id, league_id, season,
         home_team, away_team,
-        home: { ...provider response... },
+        home: { ...provider response... },          # league-only provider stats
         away: { ...provider response... },
-        summary: { home: {...}, away: {...} }   # handy subset
+        summary: { home: {...}, away: {...} },      # league-only subset
+        season_all_comps: {                         # ✅ ALL competitions, this season
+          home: { played_total, wins, draws, losses, gf, ga, avg_gf, avg_ga },
+          away: { ... }
+        }
       }
     """
     # resolve provider IDs
@@ -1102,32 +1180,40 @@ def team_stats(
     core = (fjson.get("response") or [None])[0] or {}
     lg = core.get("league") or {}
     league_id = int(lg.get("id") or 0)
-    season    = int(lg.get("season") or 0)
+    season = int(lg.get("season") or 0)
 
     teams = core.get("teams") or {}
     home_pid = int(((teams.get("home") or {}).get("id")) or 0)
     away_pid = int(((teams.get("away") or {}).get("id")) or 0)
 
     if not (league_id and season and home_pid and away_pid):
-        raise HTTPException(status_code=502, detail="Missing league/season/team ids from provider")
+        raise HTTPException(
+            status_code=502,
+            detail="Missing league/season/team ids from provider",
+        )
 
     # fetch (cached) team-season stats for this league
-    home_json = _get_team_stats_cached(db, home_pid, league_id, season, refresh=refresh) or {}
-    away_json = _get_team_stats_cached(db, away_pid, league_id, season, refresh=refresh) or {}
+    home_json = (
+        _get_team_stats_cached(db, home_pid, league_id, season, refresh=refresh) or {}
+    )
+    away_json = (
+        _get_team_stats_cached(db, away_pid, league_id, season, refresh=refresh) or {}
+    )
 
     # provider puts payload under 'response' – keep that node for UI
     home = home_json.get("response") or {}
     away = away_json.get("response") or {}
 
-    # tiny, safe summary block your UI can use if desired
+    # tiny, safe summary block your UI can use if desired (league-only)
     def _safe(v, *path, default=0.0):
         cur = v
         try:
             for k in path:
                 cur = cur.get(k) if isinstance(cur, dict) else {}
             x = cur
-            if isinstance(x, (int, float)): return float(x)
-            s = str(x).strip().replace("%","")
+            if isinstance(x, (int, float)):
+                return float(x)
+            s = str(x).strip().replace("%", "")
             return float(s) if s else default
         except Exception:
             return default
@@ -1145,6 +1231,10 @@ def team_stats(
             "form": (r.get("form") or None),
         }
 
+    # ✅ NEW: season profile across ALL competitions
+    home_all = _season_profile_all_comps(home_pid, season)
+    away_all = _season_profile_all_comps(away_pid, season)
+
     return {
         "fixture_id": fixture_id,
         "provider_fixture_id": pfx,
@@ -1154,7 +1244,11 @@ def team_stats(
         "away_team": fx.away_team,
         "home": home,
         "away": away,
-        "summary": {"home": _summ(home), "away": _summ(away)},
+        "summary": {"home": _summ(home), "away": _summ(away)},  # league-only
+        "season_all_comps": {                                   # all comps
+            "home": home_all,
+            "away": away_all,
+        },
     }
 
 @router.get("/opponent-pace")
