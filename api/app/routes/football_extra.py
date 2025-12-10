@@ -925,7 +925,32 @@ def team_fouls(
     season: int,
     league_id: int | None = Query(None),
     lookback: int = Query(5, ge=1, le=10),
+    db: Session = Depends(get_db),
 ):
+    """
+    Per-team fouls profile (last N matches):
+
+      • events-first averages from /fixtures/events
+      • plus debug per-fixture breakdown
+      • plus provider team-stats fallback (season totals) when league_id is given
+
+    Returns:
+      {
+        "team_id": ...,
+        "season": ...,
+        "league_id": ...,
+        "lookback": ...,
+        "averages": {
+          "drawn_per_match": float,
+          "committed_per_match": float,
+          "source": "events-first with team-stats fallback",
+        },
+        "events_seen_any": bool,
+        "recent_fixtures": [ ... ],
+        "stats_fallback": { ... } | null
+      }
+    """
+    # primary averages from our events-based helpers
     drawn_avg = get_team_fouls_drawn_avg(
         team_id, season=season, league_id=league_id, lookback=lookback
     )
@@ -933,30 +958,35 @@ def team_fouls(
         team_id, season=season, league_id=league_id, lookback=lookback
     )
 
+    # recent fixtures for debug
     recent = get_team_recent_results(
         team_id, season=season, limit=lookback, league_id=league_id
     ) or []
 
-    fixtures_debug = []
+    fixtures_debug: list[dict] = []
     events_seen_any = False
+
     for m in recent:
         fid = m.get("fixture_id")
         if not fid:
-            fixtures_debug.append({
-                "fixture_id": None,
-                "date": m.get("date"),
-                "opponent": m.get("opponent"),
-                "is_home": m.get("is_home"),
-                "events_available": False,
-                "fouls_committed_by_team": None,
-                "fouls_committed_by_opp": None,
-            })
+            fixtures_debug.append(
+                {
+                    "fixture_id": None,
+                    "date": m.get("date"),
+                    "opponent": m.get("opponent"),
+                    "is_home": m.get("is_home"),
+                    "events_available": False,
+                    "fouls_committed_by_team": None,
+                    "fouls_committed_by_opp": None,
+                }
+            )
             continue
 
         ev = get_events(int(fid))
         ev_rows = ev.get("response", []) if isinstance(ev, dict) else []
         fouls_by_team = 0
         fouls_by_opp = 0
+
         if isinstance(ev_rows, list) and ev_rows:
             events_seen_any = True
             for e in ev_rows:
@@ -968,31 +998,42 @@ def team_fouls(
                 elif t_id is not None:
                     fouls_by_opp += 1
 
-        fixtures_debug.append({
-            "fixture_id": fid,
-            "date": m.get("date"),
-            "opponent": m.get("opponent"),
-            "is_home": m.get("is_home"),
-            "events_available": bool(ev_rows),
-            "fouls_committed_by_team": fouls_by_team if ev_rows else None,
-            "fouls_committed_by_opp": fouls_by_opp if ev_rows else None,
-        })
+        fixtures_debug.append(
+            {
+                "fixture_id": fid,
+                "date": m.get("date"),
+                "opponent": m.get("opponent"),
+                "is_home": m.get("is_home"),
+                "events_available": bool(ev_rows),
+                "fouls_committed_by_team": fouls_by_team if ev_rows else None,
+                "fouls_committed_by_opp": fouls_by_opp if ev_rows else None,
+            }
+        )
 
+    # provider team-stats fallback (season totals)
     stats_fallback = None
     if league_id is not None:
         try:
-            s = _get_team_stats_cached(team_id, league_id, season) or {}
+            s = _get_team_stats_cached(db, team_id, league_id, season) or {}
             r = s.get("response") or {}
-            fouls = (r.get("fouls") or {})
-            fixtures_total = int(((r.get("fixtures") or {}).get("played") or {}).get("total") or 0)
-            drawn_total = int(((fouls.get("drawn") or {}).get("total")) or 0)
-            committed_total = int(((fouls.get("committed") or {}).get("total")) or 0)
+
+            fouls = (r.get("fouls") or {}) or {}
+            fixtures_total = int(
+                ((r.get("fixtures") or {}).get("played") or {}).get("total") or 0
+            )
+            drawn_total = int((fouls.get("drawn") or {}).get("total") or 0)
+            committed_total = int((fouls.get("committed") or {}).get("total") or 0)
+
             stats_fallback = {
                 "fixtures_played": fixtures_total,
                 "drawn_total": drawn_total,
                 "committed_total": committed_total,
-                "drawn_per_match": (drawn_total / fixtures_total) if fixtures_total else 0.0,
-                "committed_per_match": (committed_total / fixtures_total) if fixtures_total else 0.0,
+                "drawn_per_match": (
+                    drawn_total / fixtures_total if fixtures_total else 0.0
+                ),
+                "committed_per_match": (
+                    committed_total / fixtures_total if fixtures_total else 0.0
+                ),
             }
         except Exception:
             stats_fallback = None
@@ -1580,9 +1621,9 @@ def preview(
     away_pid = int((tinfo.get("away") or {}).get("id") or 0)
     referee_name = (core.get("fixture") or {}).get("referee") or (fx.referee or "")
 
-    # --- Poisson backbone
-    home_stats = _get_team_stats_cached(home_pid, league_id, season) or {}
-    away_stats = _get_team_stats_cached(away_pid, league_id, season) or {}
+    # --- Poisson backbone from team-season stats --------------------------
+    home_stats = _get_team_stats_cached(db, home_pid, league_id, season) or {}
+    away_stats = _get_team_stats_cached(db, away_pid, league_id, season) or {}
     hs = (home_stats.get("response") or {})
     as_ = (away_stats.get("response") or {})
 
@@ -1618,7 +1659,7 @@ def preview(
     ou_poi = totals_btts["over_2_5"]
     btts_poi = totals_btts["btts_yes"]
 
-    # --- Pull latest team_form model probabilities and overlay
+    # --- Pull latest team_form model probabilities and overlay ------------
     model = _latest_probs_for_fixture(db, fixture_id, source="team_form")
     p_home_use = model.get("HOME_WIN", p_home_poi)
     p_draw_use = model.get("DRAW", p_draw_poi)
@@ -1627,7 +1668,7 @@ def preview(
     btts_use = model.get("BTTS_Y", btts_poi)
     model_source_used = "team_form" if model else "poisson"
 
-    # Opponent pace
+    # --- Opponent pace (shots/SoT conceded) -------------------------------
     LOOKBACK = 5
     away_conc = get_team_shots_against_avgs(
         away_pid, season=season, league_id=league_id, lookback=LOOKBACK
@@ -1638,6 +1679,7 @@ def preview(
     LEAGUE_AVG_SHOTS = 12.5
     LEAGUE_AVG_SOT = 4.4
     clamp = lambda x, lo, hi: max(lo, min(hi, x))
+
     home_ctx = {
         "opp_team_id": away_pid,
         "matches_counted": away_conc.get("matches_counted", 0),
@@ -1671,7 +1713,7 @@ def preview(
         ),
     }
 
-    # Rolling team stats for narrative
+    # --- Rolling team stats for narrative (shots/xG/fouls etc.) ----------
     home_attack = get_team_attack_avgs(
         home_pid, season=season, league_id=league_id, lookback=LOOKBACK
     )
@@ -1691,9 +1733,11 @@ def preview(
         away_pid, season=season, league_id=league_id, lookback=LOOKBACK
     )
 
-    # Player props preview (top-N by minutes) with fouls/pace context
-    home_drawn90 = home_fouls.get("fouls_drawn_per_match", 0.0)
-    away_drawn90 = away_fouls.get("fouls_drawn_per_match", 0.0)
+    # --- Team fouls (committed & drawn) for context -----------------------
+    home_drawn90 = float(home_fouls.get("fouls_drawn_per_match", 0.0) or 0.0)
+    home_comm90 = float(home_fouls.get("fouls_committed_per_match", 0.0) or 0.0)
+    away_drawn90 = float(away_fouls.get("fouls_drawn_per_match", 0.0) or 0.0)
+    away_comm90 = float(away_fouls.get("fouls_committed_per_match", 0.0) or 0.0)
 
     def opponent_fouls_factor(opponent_drawn90: float) -> float:
         if not opponent_adj:
@@ -1705,61 +1749,128 @@ def preview(
     def referee_cards_factor() -> float:
         if not ref_adj:
             return 1.0
-        if ref_factor_override:
-            return ref_factor_override
+        if ref_factor_override is not None:
+            return float(ref_factor_override)
         return 1.0
 
-    fouls_ctx_home = opponent_fouls_factor(away_drawn90)
-    fouls_ctx_away = opponent_fouls_factor(home_drawn90)
+    # For committed fouls: scale by opponent fouls drawn
+    # For fouls drawn: scale by opponent fouls committed
+    fouls_comm_ctx_home = opponent_fouls_factor(away_drawn90)
+    fouls_drawn_ctx_home = opponent_fouls_factor(away_comm90)
+    fouls_comm_ctx_away = opponent_fouls_factor(home_drawn90)
+    fouls_drawn_ctx_away = opponent_fouls_factor(home_comm90)
     ref_ctx = referee_cards_factor()
 
+    # --- Player props preview (top-N by minutes) -------------------------
     pdata = _get_player_props_data(fixture_id, db)
     top_players = {"home": [], "away": []}
+
     for side in ("home", "away"):
         roster = sorted(
-            pdata.get(side, []) or [], key=lambda r: r.get("minutes", 0), reverse=True
+            pdata.get(side, []) or [],
+            key=lambda r: r.get("minutes", 0),
+            reverse=True,
         )[:top_n_per_team]
-        opp_fouls_ctx = fouls_ctx_home if side == "home" else fouls_ctx_away
-        pace_s = home_ctx["pace_factor_shots"] if side == "home" else away_ctx["pace_factor_shots"]
-        pace_t = home_ctx["pace_factor_sot"] if side == "home" else away_ctx["pace_factor_sot"]
+
+        if side == "home":
+            fouls_comm_ctx = fouls_comm_ctx_home
+            fouls_drawn_ctx = fouls_drawn_ctx_home
+            pace_s = home_ctx["pace_factor_shots"]
+            pace_t = home_ctx["pace_factor_sot"]
+        else:
+            fouls_comm_ctx = fouls_comm_ctx_away
+            fouls_drawn_ctx = fouls_drawn_ctx_away
+            pace_s = away_ctx["pace_factor_shots"]
+            pace_t = away_ctx["pace_factor_sot"]
+
         block = []
         for pl in roster:
             mins_played = int(pl.get("minutes") or 0)
-            m_used = minutes or (80 if mins_played >= 600 else 30)
+
+            # season-aware projected minutes (fallback 80/30 like before)
+            season_stats = pl.get("season_stats") or {}
+            apps = (
+                season_stats.get("apps")
+                or pl.get("apps")
+                or pl.get("appearances")
+                or 0
+            )
+            mins_total = (
+                season_stats.get("minutes")
+                or pl.get("minutes_total")
+                or 0
+            )
+
+            if apps and mins_total:
+                avg_mins = mins_total / apps
+            elif mins_played:
+                avg_mins = 80 if mins_played >= 600 else 60
+            else:
+                avg_mins = 75
+
+            avg_mins = max(50, min(avg_mins, 95))
+            m_used = int(minutes or avg_mins)
+
             shots_per90 = float(pl.get("shots_per90") or 0.0)
-            fouls90 = float(pl.get("fouls_committed_per90") or 0.0)
-            shots_on = float(pl.get("shots_on") or 0.0)
+            fouls_comm90 = float(pl.get("fouls_committed_per90") or 0.0)
+            fouls_drawn90 = float(pl.get("fouls_drawn_per90") or 0.0)
+            shots_on_total = float(pl.get("shots_on") or 0.0)
 
             if mins_played > 0:
-                sot_per90 = (shots_on * 90.0) / mins_played
+                sot_per90 = (shots_on_total * 90.0) / mins_played
                 cards_per90 = (float(pl.get("yellow") or 0.0) * 90.0) / mins_played
             else:
                 sot_per90 = 0.0
                 cards_per90 = 0.0
 
+            # Apply context bumps (pace + fouls)
             p_shots15 = prob_over_xpoint5(shots_per90 * pace_s, m_used, 1.5)
             p_sot05 = prob_over_xpoint5(sot_per90 * pace_t, m_used, 0.5)
-            p_fouls05 = prob_over_xpoint5(
-                fouls90, m_used, 0.5, opponent_factor=opp_fouls_ctx
+            p_fouls_comm05 = prob_over_xpoint5(
+                fouls_comm90, m_used, 0.5, opponent_factor=fouls_comm_ctx
+            )
+            p_fouls_drawn05 = prob_over_xpoint5(
+                fouls_drawn90, m_used, 0.5, opponent_factor=fouls_drawn_ctx
             )
             p_card = prob_card(
-                cards_per90, m_used, ref_factor=ref_ctx, opponent_factor=opp_fouls_ctx
+                cards_per90,
+                m_used,
+                ref_factor=ref_ctx,
+                opponent_factor=fouls_comm_ctx,
             )
 
-            block.append({
-                "player_id": pl.get("id"),
-                "player": html.unescape(pl.get("name") or ""),
-                "minutes": m_used,
-                "markets": {
-                    "shots_over_1.5": {"p": p_shots15, "fair": fair_odds(p_shots15)},
-                    "sot_over_0.5": {"p": p_sot05, "fair": fair_odds(p_sot05)},
-                    "fouls_over_0.5": {"p": p_fouls05, "fair": fair_odds(p_fouls05)},
-                    "to_be_booked": {"p": p_card, "fair": fair_odds(p_card)},
-                },
-            })
+            block.append(
+                {
+                    "player_id": pl.get("id"),
+                    "player": html.unescape(pl.get("name") or ""),
+                    "minutes": m_used,
+                    "markets": {
+                        "shots_over_1.5": {
+                            "p": p_shots15,
+                            "fair": fair_odds(p_shots15),
+                        },
+                        "sot_over_0.5": {
+                            "p": p_sot05,
+                            "fair": fair_odds(p_sot05),
+                        },
+                        "fouls_over_0.5": {
+                            "p": p_fouls_comm05,
+                            "fair": fair_odds(p_fouls_comm05),
+                        },
+                        "fouls_drawn_over_0.5": {
+                            "p": p_fouls_drawn05,
+                            "fair": fair_odds(p_fouls_drawn05),
+                        },
+                        "to_be_booked": {
+                            "p": p_card,
+                            "fair": fair_odds(p_card),
+                        },
+                    },
+                }
+            )
         top_players[side] = block
 
-    # Narrative
+    # --- Narrative --------------------------------------------------------
     ht = fx.home_team
     at = fx.away_team
     fmt = lambda x: f"{x:.2f}"
@@ -1818,7 +1929,6 @@ def preview(
         },
         "summary": narrative,
     }
-
 # add if it's not already there
 # from ..services.apifootball import get_fixture_players
 
