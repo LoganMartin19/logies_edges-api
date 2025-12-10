@@ -150,7 +150,7 @@ def _now_iso() -> str:
 
 # ---------------- Caching + HTTP ----------------
 _CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Tuple[float, List[dict]]] = {}
-_CACHE_TTL = 60.0
+_CACHE_TTL = 86400.0
 
 def _cache_key(url: str, params: dict) -> Tuple[str, Tuple[Tuple[str, str], ...]]:
     return (url, tuple(sorted((k, str(v)) for k, v in (params or {}).items())))
@@ -199,7 +199,7 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
 def _get(url: str, params: dict, retries: int = 4, backoff: float = 0.75) -> List[dict]:
     """
     Resilient GET that:
-      - uses a 60s in-proc cache
+      - uses a in-proc cache
       - handles 429 with reset/backoff
       - retries 5xx with backoff
       - ALWAYS returns a list ( [] on error/empty/null )
