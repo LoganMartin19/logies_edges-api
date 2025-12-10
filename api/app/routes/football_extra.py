@@ -1738,8 +1738,12 @@ def player_game_log(
     db: Session = Depends(get_db),
 ):
     """
-    Return last-N matches for this player (minutes, shots, SoT, goals, cards, fouls, rating, etc.)
-    Data source: /fixtures (team recent games) + /fixtures/players per fixture.
+    Return last-N matches for this player (minutes, shots, SoT, goals, cards,
+    fouls, rating, etc.).
+
+    IMPORTANT: this route should NOT 404 just because fixture_players cache
+    is missing for some past games. It falls back to live provider and then
+    simply skips if still no data.
     """
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
     if not fx or not fx.provider_fixture_id:
@@ -1755,9 +1759,10 @@ def player_game_log(
     home_pid = int((teams.get("home") or {}).get("id") or 0)
     away_pid = int((teams.get("away") or {}).get("id") or 0)
 
-    # --- determine home or away ---
-    home_rows = get_team_season_players_cached(db, home_pid, season)
-    away_rows = get_team_season_players_cached(db, away_pid, season)
+    # --- determine which team this player belongs to (home / away) ---
+    home_rows = get_team_season_players_cached(db, home_pid, season) or []
+    away_rows = get_team_season_players_cached(db, away_pid, season) or []
+
     belongs_home = any(
         int((r.get("player") or {}).get("id") or 0) == int(player_id)
         for r in home_rows
@@ -1768,20 +1773,22 @@ def player_game_log(
     recent = get_team_recent_results(
         team_id,
         season=season,
-        limit=max(last * 2, last),  # request extras in case of DNP
+        limit=max(last * 2, last),  # ask for extra in case of DNPs
         league_id=(league_id if league_only else None),
     ) or []
 
-    out = []
+    out: list[dict] = []
+
     for m in recent:
         fid = m.get("fixture_id")
         if not fid:
             continue
 
-        # -------- get fixture details --------
+        # -------- fixture details (score, league name) --------
         score_str = None
         result = None
         league_name = None
+        fresp = {}
         try:
             fdet = get_fixture(int(fid)) or {}
             fresp = (fdet.get("response") or [None])[0] or {}
@@ -1790,7 +1797,6 @@ def player_game_log(
             ga = int(goals.get("away") or 0)
             league_name = (fresp.get("league") or {}).get("name") or None
 
-            # score from player's team perspective
             if bool(m.get("is_home")):
                 score_str = f"{gh}-{ga}"
                 result = "W" if gh > ga else ("L" if gh < ga else "D")
@@ -1802,15 +1808,28 @@ def player_game_log(
             result = None
             league_name = None
 
-        # -------- fetch player stats from fixture --------
-        pj = get_fixture_players_cached(db, fid) or {}
+        # -------- player stats from fixture: CACHE → LIVE FALLBACK --------
+        pj = {}
+        try:
+            pj = get_fixture_players_cached(db, int(fid)) or {}
+        except HTTPException as e:
+            if e.status_code == 404:
+                # cache miss → hit provider directly
+                try:
+                    pj = get_fixture_players(int(fid)) or {}
+                except Exception:
+                    pj = {}
+            else:
+                # any other HTTP error, bubble up
+                raise
+
         resp = pj.get("response") or []
         if not isinstance(resp, list):
             resp = []
 
         found = False
         for side in resp:
-            players_list = (side.get("players") or [])
+            players_list = side.get("players") or []
             for pl in players_list:
                 if int((pl.get("player") or {}).get("id") or 0) != int(player_id):
                     continue
@@ -1825,7 +1844,7 @@ def player_game_log(
                 lg_s   = stats.get("league") or {}
                 tm     = side.get("team")    or {}
 
-                # opponent name
+                # opponent name (other team in response)
                 opp_name = None
                 for other in resp:
                     tid = (other.get("team") or {}).get("id")
@@ -1833,7 +1852,6 @@ def player_game_log(
                         opp_name = (other.get("team") or {}).get("name")
                         break
 
-                # pick best competition label
                 comp_name = (
                     lg_s.get("name")
                     or league_name
@@ -1841,7 +1859,6 @@ def player_game_log(
                     or "Unknown"
                 )
 
-                # clean date to ISO (backend passes correct value)
                 date_iso = m.get("date")
 
                 out.append({
@@ -1883,8 +1900,6 @@ def player_game_log(
         "season": season,
         "games": out[:last],
     }
-
-from fastapi import Query
 
 @router.post("/admin/prime-team-stats")
 def prime_team_stats(
