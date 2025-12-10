@@ -590,19 +590,90 @@ def season_players(fixture_id: int, db: Session = Depends(get_db)):
     if not (season and home_id and away_id):
         raise HTTPException(status_code=400, detail="Fixture missing season/team ids")
 
-    # ✅ cached pulls
+    # ✅ cached pulls (raw API-Football team-season players)
     home_rows = get_team_season_players_cached(db, home_id, season) or []
     away_rows = get_team_season_players_cached(db, away_id, season) or []
 
+    def _build_player_view(rows: list[dict]) -> list[dict]:
+        out: list[dict] = []
+
+        def n(x):
+            try:
+                return int(x or 0)
+            except Exception:
+                return 0
+
+        for row in rows:
+            player = (row.get("player") or {}) or {}
+            stats_all = row.get("statistics") or []
+
+            comp_blocks: list[dict] = []
+            apps = minutes = goals = assists = shots = shots_on = yellow = red = 0
+
+            for s in stats_all:
+                lg_s = (s.get("league") or {}) or {}
+                if int(lg_s.get("season") or 0) != season:
+                    continue
+
+                games = (s.get("games") or {}) or {}
+                goals_s = (s.get("goals") or {}) or {}
+                shots_s = (s.get("shots") or {}) or {}
+                cards_s = (s.get("cards") or {}) or {}
+
+                comp_blocks.append(
+                    {
+                        "league_id": lg_s.get("id"),
+                        "league": lg_s.get("name"),
+                        "games": games,
+                        "goals": goals_s,
+                        "assists": (goals_s or {}).get("assists"),
+                        "shots": shots_s,
+                        "cards": cards_s,
+                        "minutes": games.get("minutes") or 0,
+                    }
+                )
+
+                apps      += n(games.get("appearences") or games.get("appearances"))
+                minutes   += n(games.get("minutes"))
+                goals     += n(goals_s.get("total"))
+                assists   += n((goals_s or {}).get("assists"))
+                shots     += n(shots_s.get("total"))
+                shots_on  += n(shots_s.get("on"))
+                yellow    += n(cards_s.get("yellow"))
+                red       += n(cards_s.get("red"))
+
+            totals = {
+                "apps": apps,
+                "minutes": minutes,
+                "goals": goals,
+                "assists": assists,
+                "shots": shots,
+                "shots_on": shots_on,
+                "yellow": yellow,
+                "red": red,
+            }
+
+            out.append(
+                {
+                    "player": player,
+                    "total": totals,
+                    "competitions": comp_blocks,
+                }
+            )
+
+        return out
+
     return {
-        "source": "API-Football (cached)",
+        "source": "API-Football (cached, season totals)",
         "fixture_id": fixture_id,
         "season": season,
         "home_team": fx.home_team,
         "away_team": fx.away_team,
-        "players": {"home": home_rows, "away": away_rows},
+        "players": {
+            "home": _build_player_view(home_rows),
+            "away": _build_player_view(away_rows),
+        },
     }
-
 @router.get("/player/summary")
 def player_summary(
     fixture_id: int,
