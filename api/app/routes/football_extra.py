@@ -1399,14 +1399,18 @@ def player_props_fair(
         roster = stats_data.get(side, []) or []
 
         if side == "home":
-            fouls_ctx = opponent_fouls_factor(away_drawn90)
+            # fouls_committed context uses *opponent fouls drawn*
+            fouls_ctx_committed = opponent_fouls_factor(away_drawn90)
+            # fouls_drawn context uses *opponent fouls committed*
+            fouls_ctx_drawn = opponent_fouls_factor(away_comm90)
             shots_ctx = pace_factor(away_opp_shotsA, LEAGUE_AVG_SHOTS_AGAINST)
             sot_ctx = pace_factor(away_opp_sotA, LEAGUE_AVG_SOT_AGAINST)
             opp_drawn90 = away_drawn90
             opp_comm90 = away_comm90
             opp_shotsA, opp_sotA = away_opp_shotsA, away_opp_sotA
         else:
-            fouls_ctx = opponent_fouls_factor(home_drawn90)
+            fouls_ctx_committed = opponent_fouls_factor(home_drawn90)
+            fouls_ctx_drawn = opponent_fouls_factor(home_comm90)
             shots_ctx = pace_factor(home_opp_shotsA, LEAGUE_AVG_SHOTS_AGAINST)
             sot_ctx = pace_factor(home_opp_sotA, LEAGUE_AVG_SOT_AGAINST)
             opp_drawn90 = home_drawn90
@@ -1448,7 +1452,8 @@ def player_props_fair(
 
             # ---- per-90 inputs ----
             shots_per90 = float(pl.get("shots_per90") or 0.0)
-            fouls90 = float(pl.get("fouls_committed_per90") or 0.0)
+            fouls_comm90 = float(pl.get("fouls_committed_per90") or 0.0)
+            fouls_drawn90 = float(pl.get("fouls_drawn_per90") or 0.0)  # 👈 NEW
 
             if mins_played > 0:
                 sot_per90 = (float(pl.get("shots_on") or 0.0) * 90.0) / mins_played
@@ -1464,20 +1469,31 @@ def player_props_fair(
             p_sot05 = prob_over_xpoint5(
                 sot_per90, m_used, 0.5, opponent_factor=sot_ctx
             )
-            p_fouls05 = prob_over_xpoint5(
-                fouls90, m_used, 0.5, opponent_factor=fouls_ctx
+            # fouls committed (by this player)
+            p_fouls_comm05 = prob_over_xpoint5(
+                fouls_comm90, m_used, 0.5, opponent_factor=fouls_ctx_committed
+            )
+            # fouls drawn (by this player)
+            p_fouls_drawn05 = prob_over_xpoint5(
+                fouls_drawn90, m_used, 0.5, opponent_factor=fouls_ctx_drawn
             )
             p_card = prob_card(
                 cards_per90,
                 m_used,
                 ref_factor=ref_ctx,
-                opponent_factor=fouls_ctx,
+                opponent_factor=fouls_ctx_committed,
             )
 
             markets_calc = [
                 ("shots_over_1.5", 1.5, p_shots15, fair_odds(p_shots15)),
                 ("sot_over_0.5", 0.5, p_sot05, fair_odds(p_sot05)),
-                ("fouls_over_0.5", 0.5, p_fouls05, fair_odds(p_fouls05)),
+                ("fouls_over_0.5", 0.5, p_fouls_comm05, fair_odds(p_fouls_comm05)),
+                (
+                    "fouls_drawn_over_0.5",  # 👈 NEW MARKET
+                    0.5,
+                    p_fouls_drawn05,
+                    fair_odds(p_fouls_drawn05),
+                ),
                 ("to_be_booked", 0.5, p_card, fair_odds(p_card)),
             ]
 
@@ -1506,11 +1522,12 @@ def player_props_fair(
                         # context (for Why/preview UIs)
                         "per90_shots": round(shots_per90, 2),
                         "per90_sot": round(sot_per90, 2),
-                        "per90_fouls": round(fouls90, 2),
+                        "per90_fouls": round(fouls_comm90, 2),
+                        "per90_fouls_drawn": round(fouls_drawn90, 2),  # 👈 NEW
                         "cards_per90": round(cards_per90, 2),
                         "opp_fouls_drawn_per90": round(opp_drawn90, 2),
                         "opp_fouls_committed_per90": round(opp_comm90, 2),
-                        "opponent_factor": round(fouls_ctx, 3),
+                        "opponent_factor": round(fouls_ctx_committed, 3),
                         "ref_factor": round(ref_ctx, 3),
                         "opp_shots_against_per_match": round(opp_shotsA, 2),
                         "opp_sot_against_per_match": round(opp_sotA, 2),
