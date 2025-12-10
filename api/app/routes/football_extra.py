@@ -1164,12 +1164,12 @@ def opponent_pace(
     db: Session = Depends(get_db),
 ):
     """
-    Per-fixture context:
-      - Opponent defensive profile: shots/SoT conceded per match (last N)
+    Per-fixture context (last N matches in ALL competitions, not league-only):
+      - Opponent defensive profile: shots/SoT conceded per match (last N, all comps)
       - Pace multipliers for shots/SoT (vs league baselines)
-      - Team attacking avgs: Shots, SoT, Corners, Cards, xG (last N)
-      - Team xG for/against (last N)
-      - Team fouls committed/drawn (last N)
+      - Team attacking avgs: Shots, SoT, Corners, Cards, xG (last N, all comps)
+      - Team xG for/against (last N, all comps)
+      - Team fouls committed/drawn (last N, all comps)
     """
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
     if not fx or not fx.provider_fixture_id:
@@ -1186,36 +1186,38 @@ def opponent_pace(
     home_id = int(fr["teams"]["home"]["id"])
     away_id = int(fr["teams"]["away"]["id"])
 
+    # 🔁 Now using ALL competitions (league_id=None) for lookback stats
+
     # Opponent defensive profiles (concessions)
     away_conc = get_team_shots_against_avgs(
-        away_id, season=season, league_id=league_id, lookback=lookback
+        away_id, season=season, league_id=None, lookback=lookback
     )
     home_conc = get_team_shots_against_avgs(
-        home_id, season=season, league_id=league_id, lookback=lookback
+        home_id, season=season, league_id=None, lookback=lookback
     )
 
     # Our attacking profiles (using fixtures/statistics)
     home_att = get_team_attack_avgs(
-        home_id, season=season, league_id=league_id, lookback=lookback
+        home_id, season=season, league_id=None, lookback=lookback
     )
     away_att = get_team_attack_avgs(
-        away_id, season=season, league_id=league_id, lookback=lookback
+        away_id, season=season, league_id=None, lookback=lookback
     )
 
     # xG for/against
     home_xg = get_team_xg_avgs(
-        home_id, season=season, league_id=league_id, lookback=lookback
+        home_id, season=season, league_id=None, lookback=lookback
     )
     away_xg = get_team_xg_avgs(
-        away_id, season=season, league_id=league_id, lookback=lookback
+        away_id, season=season, league_id=None, lookback=lookback
     )
 
     # fouls committed/drawn
     home_fouls = get_team_fouls_from_statistics_avg(
-        home_id, season=season, league_id=league_id, lookback=lookback
+        home_id, season=season, league_id=None, lookback=lookback
     )
     away_fouls = get_team_fouls_from_statistics_avg(
-        away_id, season=season, league_id=league_id, lookback=lookback
+        away_id, season=season, league_id=None, lookback=lookback
     )
 
     LEAGUE_AVG_SHOTS = 12.5
