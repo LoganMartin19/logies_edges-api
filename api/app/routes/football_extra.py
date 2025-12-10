@@ -503,40 +503,72 @@ def lineups(fixture_id: int, db: Session = Depends(get_db)):
 
 @router.get("/players")
 def players(fixture_id: int, db: Session = Depends(get_db)):
+    """
+    Match-level player stats for this fixture, using the cached
+    /fixtures/players endpoint (primed via /football/admin/prime-players).
+    Shape matches the old route: players.home / players.away are arrays of
+    { player: {...}, statistics: [...] } rows.
+    """
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
     if not fx or not fx.provider_fixture_id:
         raise HTTPException(status_code=404, detail="Fixture not found")
 
     try:
         pfx = int(fx.provider_fixture_id)
-        fx_resp = get_fixture(pfx) or {}
-        resp_list = fx_resp.get("response") or []
-        if not isinstance(resp_list, list) or not resp_list:
-            raise HTTPException(status_code=404, detail="Fixture details not found")
-        fr = resp_list[0]
 
-        league_id = fr["league"]["id"]
-        season = fr["league"]["season"]
-        home_id = fr["teams"]["home"]["id"]
-        away_id = fr["teams"]["away"]["id"]
+        # 1) Fixture details – to know which provider team ID is home/away
+        fjson = get_fixture(pfx) or {}
+        core = (fjson.get("response") or [None])[0] or {}
+        teams = core.get("teams") or {}
+        home_pid = int((teams.get("home") or {}).get("id") or 0)
+        away_pid = int((teams.get("away") or {}).get("id") or 0)
 
-        raw_home = get_players(home_id, league_id, season) or {}
-        raw_away = get_players(away_id, league_id, season) or {}
-        home_players = raw_home.get("response", []) if isinstance(raw_home, dict) else []
-        away_players = raw_away.get("response", []) if isinstance(raw_away, dict) else []
+        if not (home_pid and away_pid):
+            raise HTTPException(
+                status_code=502, detail="Missing provider team IDs for fixture"
+            )
+
+        # 2) Cached fixture players
+        pj = get_fixture_players_cached(db, pfx) or {}
+        resp = pj.get("response") or []
+        if not isinstance(resp, list) or not resp:
+            raise HTTPException(
+                status_code=404, detail="No fixture players data available"
+            )
+
+        home_players: list[dict] = []
+        away_players: list[dict] = []
+
+        for side in resp:
+            team_block = side.get("team") or {}
+            tid = int(team_block.get("id") or 0)
+            plist = side.get("players") or []
+
+            if tid == home_pid:
+                home_players.extend(plist)
+            elif tid == away_pid:
+                away_players.extend(plist)
+            else:
+                # if something weird happens, just ignore extra teams
+                continue
 
         return {
-            "source": "API-Football",
+            "source": "API-Football (cached /fixtures/players)",
             "fixture_id": fixture_id,
-            "league_id": league_id,
-            "season": season,
+            "league_id": (core.get("league") or {}).get("id"),
+            "season": (core.get("league") or {}).get("season"),
             "home_team": fx.home_team,
             "away_team": fx.away_team,
-            "players": {"home": home_players, "away": away_players},
+            "players": {
+                "home": home_players,
+                "away": away_players,
+            },
         }
+
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Players fetch failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/season-players")
