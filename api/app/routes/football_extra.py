@@ -281,24 +281,32 @@ def _get_player_props_data(fixture_id: int, db: Session) -> dict:
         )
         return out
 
-    # -----------------------
-    # normalization fallback
+        
+        # -----------------------
+    # normalization fallback (CACHE-ONLY)
     # -----------------------
     def normalize_team(team_id: int) -> list[dict]:
-        rows = get_player_stats(team_id, league_id, season)
+        """
+        Build a normalized roster for this team using ONLY the cached
+        team-season players. We never hit /v3/players directly here – that
+        should be primed via /football/admin/prime-players.
+        """
+
+        # 1) current season, all competitions (cached)
+        rows = get_team_season_players_cached(db, team_id, season) or []
         flat = _flatten(rows if isinstance(rows, list) else [])
         if any(r["minutes"] > 0 for r in flat):
             return flat
 
-        # try previous season
-        prev = get_player_stats(team_id, league_id, season - 1)
-        flat_prev = _flatten(prev if isinstance(prev, list) else [])
+        # 2) previous season, all competitions (cached)
+        prev_rows = get_team_season_players_cached(db, team_id, season - 1) or []
+        flat_prev = _flatten(prev_rows if isinstance(prev_rows, list) else [])
         if any(r["minutes"] > 0 for r in flat_prev):
             return flat_prev
 
-        # final fallback: ALL competitions
-        all_comp = get_team_season_players_cached(db, team_id, season)
-        return _flatten(all_comp)
+        # 3) last resort: return whatever we have (even if minutes == 0),
+        # but do NOT call the live provider.
+        return flat or flat_prev
 
     # -----------------------
     # return payload
