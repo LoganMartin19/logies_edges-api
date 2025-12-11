@@ -170,6 +170,7 @@ def list_admin_accas(day: str = Query(...), db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------
+# ---------------------------------------------------------
 # AUTO-ACCA (UPDATED: min_edge optional → can use odds only)
 # ---------------------------------------------------------
 
@@ -190,17 +191,21 @@ class AutoAccaIn(BaseModel):
     target_odds: float = Field(5.0, ge=1.1)
     legs_min: int = Field(3, ge=2, le=6)
     legs_max: int = Field(4, ge=2, le=8)
-    diversify_markets: bool = True
+
+    # 🔓 Relaxed: don't force different market buckets by default
+    diversify_markets: bool = False
+
     avoid_same_fixture: bool = True
     is_public: bool = False
     title: Optional[str] = None
     note: Optional[str] = None
     stake_units: float = Field(1.0, ge=0)
 
-    min_price: float = Field(1.4, ge=1.01)
-    max_price: float = Field(2.4, ge=1.05)
-    target_tolerance_pct: float = Field(0.25, ge=0.05, le=1.0)
-    search_pool_size: int = Field(16, ge=6, le=40)
+    # 🔓 Relaxed price band + tolerance + pool size
+    min_price: float = Field(1.2, ge=1.01)
+    max_price: float = Field(3.0, ge=1.05)
+    target_tolerance_pct: float = Field(0.5, ge=0.05, le=1.0)  # ±50%
+    search_pool_size: int = Field(24, ge=6, le=60)
 
 
 def _market_bucket(m: str) -> str:
@@ -281,7 +286,7 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
         raise HTTPException(404, "No markets within price band.")
 
     # dedupe per fixture, best market wins
-    best_by_fx = {}
+    best_by_fx: dict[int, tuple[Edge, Fixture]] = {}
     for e, f in rows:
         if f.id not in best_by_fx:
             best_by_fx[f.id] = (e, f)
@@ -296,7 +301,7 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
         raise HTTPException(404, "Too few fixtures for acca.")
 
     # combination logic
-    def _ok(combo):
+    def _ok(combo: list[tuple[Edge, Fixture]]) -> bool:
         if payload.avoid_same_fixture:
             if len({f.id for _, f in combo}) != len(combo):
                 return False
@@ -307,15 +312,15 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
 
     log_target = log(payload.target_odds)
 
-    def _score(combo):
+    def _score(combo: list[tuple[Edge, Fixture]]) -> tuple[float, float]:
         prod = 1.0
         for e, _ in combo:
             prod *= float(e.price)
         return abs(log(prod) - log_target), prod
 
-    best_combo = None
+    best_combo: list[tuple[Edge, Fixture]] | None = None
     best_dist = 1e9
-    best_prod = None
+    best_prod: float | None = None
 
     tol_low = payload.target_odds * (1 - payload.target_tolerance_pct)
     tol_high = payload.target_odds * (1 + payload.target_tolerance_pct)
@@ -333,7 +338,7 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
             elif best_combo is None and dist < best_dist:
                 best_combo, best_dist, best_prod = combo, dist, prod
 
-    if not best_combo:
+    if not best_combo or best_prod is None:
         raise HTTPException(500, "Could not assemble an acca.")
 
     d = date_cls.fromisoformat(payload.day)
@@ -400,7 +405,6 @@ def admin_auto_acca(payload: AutoAccaIn, db: Session = Depends(get_db)):
             "explanation": explanation,
         },
     }
-
 
 # ---------------------------------------------------------
 # PUBLIC ACCA
