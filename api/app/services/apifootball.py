@@ -436,6 +436,8 @@ def get_fixture(fixture_id: int):
     Raw fixture details by provider fixture ID (JSON passthrough),
     backed by FixtureDetailCache in Postgres.
     """
+    from .fixture_cache import get_fixture_detail_cached  # 👈 local import
+
     db = SessionLocal()
     try:
         return get_fixture_detail_cached(db, int(fixture_id))
@@ -517,6 +519,8 @@ def get_events(fixture_id: int):
     """
     Raw events JSON, backed by FixtureEventsCache (short TTL ~5 minutes).
     """
+    from .fixture_cache import get_fixture_events_cached  # 👈 local import
+
     db = SessionLocal()
     try:
         return get_fixture_events_cached(db, int(fixture_id))
@@ -761,6 +765,8 @@ def get_fixture_statistics(fixture_id: int):
     Raw fixture stats (shots, SoT, fouls, xG, etc.) for a single fixture,
     backed by FixtureStatsCache.
     """
+    from .fixture_cache import get_fixture_stats_cached  # 👈 local import
+
     db = SessionLocal()
     try:
         return get_fixture_stats_cached(db, int(fixture_id))
