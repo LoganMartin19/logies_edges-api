@@ -98,7 +98,7 @@ def prime_fixtures(
     db: Session = Depends(get_db),
 ):
     """
-    Prime fixture-level caches for all SOCCER fixtures between [day, day+days):
+    Prime fixture-level caches for all fixtures between [day, day+days):
 
       - Fixture detail (/fixtures?id=...)
       - Fixture statistics (/fixtures/statistics?fixture=...)
@@ -116,20 +116,27 @@ def prime_fixtures(
 
     primed = 0
     skipped = 0
+    errors: list[dict] = []  # 👈 collect some error info
 
     for f in fixtures:
         try:
             pfx = int(f.provider_fixture_id)
 
-            # Hit DB-backed caches (they internally decide when to call provider)
-            get_fixture_detail_cached(db, pfx)   # 👈 no refresh kwarg
-            get_fixture_stats_cached(db, pfx)    # 👈
-            get_fixture_events_cached(db, pfx)   # 👈
+            # DB-backed caches (no refresh kwarg now)
+            get_fixture_detail_cached(db, pfx)
+            get_fixture_stats_cached(db, pfx)
+            get_fixture_events_cached(db, pfx)
 
             primed += 1
-        except Exception:
+        except Exception as e:
             skipped += 1
-            continue
+            # record a tiny bit of context for debugging
+            errors.append({
+                "fixture_id": f.id,
+                "provider_fixture_id": f.provider_fixture_id,
+                "error": repr(e),
+            })
+            # don't blow up, just continue
 
     return {
         "day": day,
@@ -137,4 +144,6 @@ def prime_fixtures(
         "refresh": refresh,
         "primed_fixtures": primed,
         "skipped": skipped,
+        # 👇 only show first few errors so the JSON isn't insane
+        "errors_sample": errors[:5],
     }
