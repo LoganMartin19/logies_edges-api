@@ -7,6 +7,7 @@ from typing import Dict, Tuple, List, Optional
 from datetime import date, datetime, timezone
 
 from ..db import SessionLocal
+from .team_stats_cache import get_team_season_stats_cached 
 
 
 # ---------------- Config ----------------
@@ -488,13 +489,33 @@ def get_h2h(team1: int, team2: int):
     ).json()
 
 
-def get_team_stats(team_id: int, league_id: int, season: int):
-    return requests.get(
-        f"{BASE_URL}/teams/statistics",
-        headers=HEADERS,
-        params={"team": team_id, "league": league_id, "season": season},
-        timeout=20,
-    ).json()
+
+
+def get_team_stats(team_id: int, league_id: int, season: int, *, refresh: bool = False):
+    """
+    Team-level season statistics, DB-backed via TeamSeasonStats.
+
+    Returns the same shape as the raw API:
+        {
+          "get": "...",
+          "parameters": {...},
+          "errors": {...},
+          "results": ...,
+          "response": { ... }
+        }
+    so existing callers using stats.get("response") keep working.
+    """
+    db = SessionLocal()
+    try:
+        return get_team_season_stats_cached(
+            db,
+            team_id=int(team_id),
+            league_id=int(league_id),
+            season=int(season),
+            refresh=refresh,
+        )
+    finally:
+        db.close()
 
 
 def get_top_scorers(league: int, season: int):
