@@ -890,6 +890,59 @@ class UserPreference(Base):
 
     user = relationship("User", backref="preferences")
 
+class FixtureDetailCache(Base):
+    """
+    Cache for /fixtures?id=ID (full fixture detail).
+    """
+    __tablename__ = "fixture_detail_cache"
+
+    fixture_provider_id = Column(Integer, primary_key=True, index=True)
+    payload = Column(JSONB, nullable=False)
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+        index=True,
+    )
+    
+
+class FixtureStatsCache(Base):
+    """
+    Cache for /fixtures/statistics?fixture=ID.
+    """
+    __tablename__ = "fixture_stats_cache"
+
+    fixture_provider_id = Column(Integer, primary_key=True, index=True)
+    payload = Column(JSONB, nullable=False)
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+
+class FixtureEventsCache(Base):
+    """
+    Cache for /fixtures/events?fixture=ID.
+    """
+    __tablename__ = "fixture_events_cache"
+
+    fixture_provider_id = Column(Integer, primary_key=True, index=True)
+    payload = Column(JSONB, nullable=False)
+
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+        index=True,
+    )
+
 class ApiHttpCache(Base):
     """
     Generic HTTP cache table for provider API responses.
@@ -930,3 +983,4 @@ class ApiHttpCache(Base):
     __table_args__ = (
         Index("idx_api_http_cache_expires_at", "expires_at"),
     )
+

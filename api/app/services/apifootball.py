@@ -6,6 +6,13 @@ import requests
 from typing import Dict, Tuple, List, Optional
 from datetime import date, datetime, timezone
 
+from ..db import SessionLocal
+from .fixture_cache import (
+    get_fixture_detail_cached,
+    get_fixture_stats_cached,
+    get_fixture_events_cached,
+)
+
 # ---------------- Config ----------------
 BASE_URL = os.getenv("FOOTBALL_API_URL", "https://v3.football.api-sports.io")
 API_URL = f"{BASE_URL}/fixtures"
@@ -152,9 +159,9 @@ LAST_HTTP: Dict[str, Optional[object]] = {
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
 
-# ---------------- Caching + HTTP ----------------
+# ---------------- In-proc HTTP cache (short-lived) ----------------
 _CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Tuple[float, List[dict]]] = {}
-_CACHE_TTL = 60.0
+_CACHE_TTL = 36000.0
 
 
 def _cache_key(url: str, params: dict) -> Tuple[str, Tuple[Tuple[str, str], ...]]:
@@ -207,7 +214,7 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
 def _get(url: str, params: dict, retries: int = 4, backoff: float = 0.75) -> List[dict]:
     """
     Resilient GET that:
-      - uses a 60s in-proc cache
+      - uses a short in-proc cache
       - handles 429 with reset/backoff
       - retries 5xx with backoff
       - ALWAYS returns a list ( [] on error/empty/null )
@@ -429,13 +436,15 @@ def get_standings_for_league(league_id: int, season: int = 2025):
 
 # ---------------- Core JSON passthroughs used elsewhere ----------------
 def get_fixture(fixture_id: int):
-    """Raw fixture details by provider fixture ID (JSON passthrough)."""
-    return requests.get(
-        f"{BASE_URL}/fixtures",
-        headers=HEADERS,
-        params={"id": int(fixture_id)},
-        timeout=20,
-    ).json()
+    """
+    Raw fixture details by provider fixture ID (JSON passthrough),
+    backed by FixtureDetailCache in Postgres.
+    """
+    db = SessionLocal()
+    try:
+        return get_fixture_detail_cached(db, int(fixture_id))
+    finally:
+        db.close()
 
 
 def get_players(team_id: int, league_id: Optional[int], season: int):
@@ -509,13 +518,14 @@ def get_injuries(team_id: int, league_id: int, season: int):
 
 
 def get_events(fixture_id: int):
-    # Using same BASE_URL+headers so it stays consistent with the rest
-    return requests.get(
-        f"{BASE_URL}/fixtures/events",
-        headers=HEADERS,
-        params={"fixture": int(fixture_id)},
-        timeout=20,
-    ).json()
+    """
+    Raw events JSON, backed by FixtureEventsCache (short TTL ~5 minutes).
+    """
+    db = SessionLocal()
+    try:
+        return get_fixture_events_cached(db, int(fixture_id))
+    finally:
+        db.close()
 
 # ---------------- Form / Recent fixtures ----------------
 def get_team_recent_results(
@@ -596,15 +606,10 @@ def get_fixture_fouls_drawn(fixture_id: int, team_id: int) -> float:
     """
     Fouls drawn by team_id in THIS fixture.
     We count 'Foul' events committed by the OPPONENT (team != team_id).
-    Returns raw count (per-match ≈ per90 at team level).
+    Uses cached events via get_events().
     """
     try:
-        j = requests.get(
-            f"{BASE_URL}/fixtures/events",
-            headers=HEADERS,
-            params={"fixture": int(fixture_id)},
-            timeout=20,
-        ).json() or {}
+        j = get_events(int(fixture_id)) or {}
         events = j.get("response") or []
         if not isinstance(events, list):
             return 0.0
@@ -639,14 +644,9 @@ def get_fixture_players(fixture_id: int):
 
 # --- Opponent context averages (events-first, stats fallback) ----------------
 def _events_fouls_committed_in_fixture(fixture_id: int, team_id: int) -> int:
-    """Count fouls COMMITTED by team_id in a single fixture using events."""
+    """Count fouls COMMITTED by team_id in a single fixture using events (cached)."""
     try:
-        j = requests.get(
-            f"{BASE_URL}/fixtures/events",
-            headers=HEADERS,
-            params={"fixture": int(fixture_id)},
-            timeout=20,
-        ).json() or {}
+        j = get_events(int(fixture_id)) or {}
         events = j.get("response") or []
         if not isinstance(events, list):
             return 0
@@ -726,12 +726,7 @@ def get_team_fouls_drawn_avg(
         if not fid:
             continue
         try:
-            j = requests.get(
-                f"{BASE_URL}/fixtures/events",
-                headers=HEADERS,
-                params={"fixture": int(fid)},
-                timeout=20,
-            ).json() or {}
+            j = get_events(int(fid)) or {}
             events = j.get("response") or []
             if not isinstance(events, list):
                 continue
@@ -766,13 +761,15 @@ def get_team_fouls_drawn_avg(
 
 # --- single-fixture statistics (shots, SoT, fouls, xG, etc.) ---
 def get_fixture_statistics(fixture_id: int):
-    """Raw fixture stats (shots, SoT, fouls, xG, etc.) for a single fixture."""
-    return requests.get(
-        f"{BASE_URL}/fixtures/statistics",
-        headers=HEADERS,
-        params={"fixture": int(fixture_id)},
-        timeout=20,
-    ).json()
+    """
+    Raw fixture stats (shots, SoT, fouls, xG, etc.) for a single fixture,
+    backed by FixtureStatsCache.
+    """
+    db = SessionLocal()
+    try:
+        return get_fixture_stats_cached(db, int(fixture_id))
+    finally:
+        db.close()
 
 
 def _read_stat(stats_list, *aliases) -> float:
@@ -805,7 +802,7 @@ def get_team_shots_against_avgs(
     Rolling averages of shots conceded and SoT conceded over last N finished fixtures.
     We:
       1) get last N finished fixtures for team_id (optionally filtered to league_id),
-      2) call /fixtures/statistics for each fixture,
+      2) call get_fixture_statistics (DB-backed),
       3) read the OPPONENT's 'Total Shots' & 'Shots on Goal' (i.e., shots conceded).
     """
     recent = get_team_recent_results(
@@ -865,7 +862,7 @@ def get_team_xg_avgs(
     lookback: int = 5,
 ) -> dict:
     """
-    Rolling averages of xG for and xG against over last N finished fixtures, using /fixtures/statistics.
+    Rolling averages of xG for and xG against over last N finished fixtures, using get_fixture_statistics (DB-backed).
     We read our own xG from our block, and xG against from opponent's block.
     """
     recent = get_team_recent_results(
@@ -931,7 +928,7 @@ def get_team_fouls_from_statistics_avg(
     lookback: int = 5,
 ) -> dict:
     """
-    Rolling averages of fouls committed and fouls drawn using /fixtures/statistics only.
+    Rolling averages of fouls committed and fouls drawn using get_fixture_statistics only.
     'Fouls' in opponent's block = fouls *they* committed => fouls we drew.
     """
     recent = get_team_recent_results(
