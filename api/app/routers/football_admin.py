@@ -2,12 +2,20 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
+
 from ..db import get_db
 from ..models import Fixture
 from ..services.apifootball import get_fixture
 from ..services.player_cache import (
     get_team_season_players_cached,
     get_fixture_players_cached,
+)
+
+# 🔥 NEW: fixture-level cache helpers (you should already have these in services/fixture_cache.py)
+from ..services.fixture_cache import (
+    get_fixture_detail_cached,
+    get_fixture_stats_cached,
+    get_fixture_events_cached,
 )
 
 admin = APIRouter(prefix="/football/admin", tags=["football-admin"])
@@ -20,6 +28,20 @@ def prime_players(
     refresh: bool = Query(False, description="Force refresh from provider"),
     db: Session = Depends(get_db),
 ):
+    """
+    Prime player-level caches for fixtures between [day, day+days):
+
+      - TeamSeasonPlayers (all comps for this season) for both teams
+      - FixturePlayersCache (/fixtures/players for the match)
+
+    This is used by:
+      - /football/players
+      - /football/season-players
+      - /football/player-summary
+      - /football/player/game-log
+      - /football/player-props/fair
+      - /football/preview (top_players block)
+    """
     start = datetime.fromisoformat(day).replace(tzinfo=timezone.utc)
     end = start + timedelta(days=days)
 
@@ -31,23 +53,103 @@ def prime_players(
     )
 
     primed = 0
+    skipped = 0
+
     for f in fixtures:
         try:
             pfx = int(f.provider_fixture_id)
-            fx_json = get_fixture(pfx)
+            fx_json = get_fixture(pfx) or {}
             fr = (fx_json.get("response") or [None])[0] or {}
-            season = int((fr.get("league") or {}).get("season") or 0)
-            home_id = int(((fr.get("teams") or {}).get("home") or {}).get("id") or 0)
-            away_id = int(((fr.get("teams") or {}).get("away") or {}).get("id") or 0)
+
+            league_block = fr.get("league") or {}
+            season = int(league_block.get("season") or 0)
+
+            teams_block = fr.get("teams") or {}
+            home_id = int((teams_block.get("home") or {}).get("id") or 0)
+            away_id = int((teams_block.get("away") or {}).get("id") or 0)
 
             if season and home_id:
                 get_team_season_players_cached(db, home_id, season, refresh=refresh)
             if season and away_id:
                 get_team_season_players_cached(db, away_id, season, refresh=refresh)
 
+            # Match-level /fixtures/players payload
             get_fixture_players_cached(db, pfx, refresh=refresh)
+
             primed += 1
         except Exception:
+            skipped += 1
             continue
 
-    return {"day": day, "days": days, "refresh": refresh, "primed": primed}
+    return {
+        "day": day,
+        "days": days,
+        "refresh": refresh,
+        "primed_fixtures": primed,
+        "skipped": skipped,
+    }
+
+
+@admin.post("/prime-fixtures")
+def prime_fixtures(
+    day: str = Query(..., description="UTC YYYY-MM-DD"),
+    days: int = Query(1, ge=1, le=7),
+    refresh: bool = Query(False, description="Force refresh from provider"),
+    db: Session = Depends(get_db),
+):
+    """
+    Prime fixture-level caches for all SOCCER fixtures between [day, day+days):
+
+      - Fixture detail (/fixtures?id=...)
+      - Fixture statistics (/fixtures/statistics?fixture=...)
+      - Fixture events (/fixtures/events?fixture=...)
+
+    Assumes you have DB-backed cache helpers:
+
+      get_fixture_detail_cached(db, provider_fixture_id, refresh=False)
+      get_fixture_stats_cached(db, provider_fixture_id, refresh=False)
+      get_fixture_events_cached(db, provider_fixture_id, refresh=False)
+
+    These caches are used (directly or indirectly) by:
+      - /football/opponent-pace
+      - /football/team-fouls
+      - /football/team-shots
+      - /football/preview
+      - /football/player/game-log
+      - any other route that relies on fixture-level stats/events
+    """
+    start = datetime.fromisoformat(day).replace(tzinfo=timezone.utc)
+    end = start + timedelta(days=days)
+
+    fixtures = (
+        db.query(Fixture)
+        .filter(Fixture.kickoff_utc >= start, Fixture.kickoff_utc < end)
+        .filter(Fixture.provider_fixture_id.isnot(None))
+        .all()
+    )
+
+    primed = 0
+    skipped = 0
+
+    for f in fixtures:
+        try:
+            pfx = int(f.provider_fixture_id)
+
+            # 🔁 These should each hit your DB cache first and only call the
+            # provider when stale/missing.
+            get_fixture_detail_cached(db, pfx, refresh=refresh)
+            get_fixture_stats_cached(db, pfx, refresh=refresh)
+            get_fixture_events_cached(db, pfx, refresh=refresh)
+
+            primed += 1
+        except Exception:
+            skipped += 1
+            continue
+
+    return {
+        "day": day,
+        "days": days,
+        "refresh": refresh,
+        "primed_fixtures": primed,
+        "skipped": skipped,
+    }

@@ -7,11 +7,7 @@ from typing import Dict, Tuple, List, Optional
 from datetime import date, datetime, timezone
 
 from ..db import SessionLocal
-from .fixture_cache import (
-    get_fixture_detail_cached,
-    get_fixture_stats_cached,
-    get_fixture_events_cached,
-)
+
 
 # ---------------- Config ----------------
 BASE_URL = os.getenv("FOOTBALL_API_URL", "https://v3.football.api-sports.io")
