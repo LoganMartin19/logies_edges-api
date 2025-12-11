@@ -103,20 +103,6 @@ def prime_fixtures(
       - Fixture detail (/fixtures?id=...)
       - Fixture statistics (/fixtures/statistics?fixture=...)
       - Fixture events (/fixtures/events?fixture=...)
-
-    Assumes you have DB-backed cache helpers:
-
-      get_fixture_detail_cached(db, provider_fixture_id, refresh=False)
-      get_fixture_stats_cached(db, provider_fixture_id, refresh=False)
-      get_fixture_events_cached(db, provider_fixture_id, refresh=False)
-
-    These caches are used (directly or indirectly) by:
-      - /football/opponent-pace
-      - /football/team-fouls
-      - /football/team-shots
-      - /football/preview
-      - /football/player/game-log
-      - any other route that relies on fixture-level stats/events
     """
     start = datetime.fromisoformat(day).replace(tzinfo=timezone.utc)
     end = start + timedelta(days=days)
@@ -135,11 +121,10 @@ def prime_fixtures(
         try:
             pfx = int(f.provider_fixture_id)
 
-            # 🔁 These should each hit your DB cache first and only call the
-            # provider when stale/missing.
-            get_fixture_detail_cached(db, pfx, refresh=refresh)
-            get_fixture_stats_cached(db, pfx, refresh=refresh)
-            get_fixture_events_cached(db, pfx, refresh=refresh)
+            # Hit DB-backed caches (they internally decide when to call provider)
+            get_fixture_detail_cached(db, pfx)   # 👈 no refresh kwarg
+            get_fixture_stats_cached(db, pfx)    # 👈
+            get_fixture_events_cached(db, pfx)   # 👈
 
             primed += 1
         except Exception:
