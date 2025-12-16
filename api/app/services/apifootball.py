@@ -33,7 +33,7 @@ LEAGUE_MAP = {
     "LG1": 41, "League One": 41,
     "LG2": 42, "League Two": 42,
     "ENG_FA": 45, "FA Cup": 45,
-    "EFL_CUP": 185, "EFL Cup": 185,
+    "EFL_CUP": 48, "EFL Cup": 48,
     "EFL_TROPHY": 46, "EFL Trophy": 46,
 
     # Scotland 🏴
