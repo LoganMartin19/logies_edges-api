@@ -221,7 +221,7 @@ def admin_run_dates(
         # USA
         "MLS,"
         # Europe comps
-        "UCL,UEL,UECL,UWCL,WCQ_EUR,"
+        "UCL,UEL,UECL,UWCL,WCQ_EUR,AFCON,"
         # Other sports you already run through here
         "NFL,NCAA,NHL,NBA",
         description="CSV of league keys to ingest"
