@@ -35,6 +35,9 @@ LEAGUE_MAP = {
     "ENG_FA": 45, "FA Cup": 45,
     "EFL_CUP": 48, "EFL Cup": 48,
     "EFL_TROPHY": 46, "EFL Trophy": 46,
+    "NAT_LEAGUE": 49, "National League": 43,
+    "NAT_NORTH": 50, "National League North": 50,
+    "NAT_SOUTH": 51, "National League South": 51,
 
     # Scotland 🏴
     "SCO_PREM": 179, "Scottish Premiership": 179,

@@ -191,7 +191,7 @@ def admin_run_dates(
     days: str = Query(..., description="CSV of YYYY-MM-DD"),
     leagues: str = Query(
         # England + Cups
-        "EPL,CHAMP,LG1,LG2,ENG_FA,EFL_CUP,EFL_TROPHY,"
+        "EPL,CHAMP,LG1,LG2,ENG_FA,EFL_CUP,EFL_TROPHY,NAT_LEAGUE,NAT_NORTH,NAT_SOUTH,"
         # Scotland + Cups
         "SCO_PREM,SCO_CHAMP,SCO1,SCO2,SCO_SC,SCO_LC,SCO_CHAL,"
         # Spain + Cup
