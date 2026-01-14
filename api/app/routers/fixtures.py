@@ -89,25 +89,32 @@ def fixture_detail_json(fixture_id: int, db: Session = Depends(get_db)):
     return JSONResponse({
         "fixture": {
             "id": f.id,
+            "provider_fixture_id": getattr(f, "provider_fixture_id", None),
+
+            # ✅ KEY FIX: include provider team IDs for clickable Club links
+            "provider_home_team_id": getattr(f, "provider_home_team_id", None),
+            "provider_away_team_id": getattr(f, "provider_away_team_id", None),
+
             "home_team": f.home_team,
             "away_team": f.away_team,
             "comp": f.comp,
-            "kickoff_utc": f.kickoff_utc.isoformat(),
+            "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
         },
         "best_edges": [
             {
                 "market": e.market,
-                "price": float(e.price),
-                "edge": float(e.edge),
+                "price": float(e.price) if e.price is not None else None,
+                "edge": float(e.edge) if e.edge is not None else None,
                 "bookmaker": e.bookmaker,
+                "prob": float(e.prob) if getattr(e, "prob", None) is not None else None,
             } for e in best
         ],
         "odds": [
             {
                 "market": o.market,
-                "price": float(o.price),
+                "price": float(o.price) if o.price is not None else None,
                 "bookmaker": o.bookmaker,
-                "last_seen": o.last_seen.isoformat(),
+                "last_seen": o.last_seen.isoformat() if o.last_seen else None,
             } for o in odds
         ],
     })
