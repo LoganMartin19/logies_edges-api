@@ -2259,123 +2259,6 @@ def prime_team_stats(
 # CLUB ROUTES
 # -----------------------------
 
-@router.get("/club/{team_id}")
-def club_page(
-    team_id: int,
-    lookback_recent: int = Query(10, ge=1, le=25),
-    lookahead_upcoming: int = Query(10, ge=1, le=25),
-    db: Session = Depends(get_db),
-):
-    """
-    Club page data from fixtures table.
-
-    Returns:
-      {
-        team_id,
-        team_name,
-        stats: {played,wins,draws,losses,gf,ga,avg_gf,avg_ga},
-        recent: [...],
-        upcoming: [...]
-      }
-    """
-    now = datetime.utcnow()
-
-    # --- recent finished fixtures (kickoff <= now) ---
-    recent_fx = (
-        db.query(Fixture)
-        .filter(
-            Fixture.sport.in_(["football", "soccer"]),
-            or_(
-                Fixture.provider_home_team_id == team_id,
-                Fixture.provider_away_team_id == team_id,
-            ),
-            Fixture.kickoff_utc != None,
-            Fixture.kickoff_utc <= now,
-        )
-        .order_by(Fixture.kickoff_utc.desc())
-        .limit(lookback_recent)
-        .all()
-    )
-
-    # --- upcoming fixtures (kickoff > now) ---
-    upcoming_fx = (
-        db.query(Fixture)
-        .filter(
-            Fixture.sport.in_(["football", "soccer"]),
-            or_(
-                Fixture.provider_home_team_id == team_id,
-                Fixture.provider_away_team_id == team_id,
-            ),
-            Fixture.kickoff_utc != None,
-            Fixture.kickoff_utc > now,
-        )
-        .order_by(Fixture.kickoff_utc.asc())
-        .limit(lookahead_upcoming)
-        .all()
-    )
-
-    # best-effort team_name from any fixture row
-    team_name = None
-    sample = (upcoming_fx[:1] or recent_fx[:1])
-    if sample:
-        s = sample[0]
-        if s.provider_home_team_id == team_id:
-            team_name = s.home_team
-        elif s.provider_away_team_id == team_id:
-            team_name = s.away_team
-
-    # --- compute simple W/D/L + GF/GA from recent settled scores only ---
-    played = wins = draws = losses = gf = ga = 0
-    for f in recent_fx:
-        if f.full_time_home is None or f.full_time_away is None:
-            continue
-
-        is_home = f.provider_home_team_id == team_id
-        gf_m = f.full_time_home if is_home else f.full_time_away
-        ga_m = f.full_time_away if is_home else f.full_time_home
-
-        played += 1
-        gf += int(gf_m or 0)
-        ga += int(ga_m or 0)
-
-        if gf_m > ga_m:
-            wins += 1
-        elif gf_m < ga_m:
-            losses += 1
-        else:
-            draws += 1
-
-    stats = {
-        "played": played,
-        "wins": wins,
-        "draws": draws,
-        "losses": losses,
-        "gf": gf,
-        "ga": ga,
-        "avg_gf": round(gf / played, 3) if played else 0.0,
-        "avg_ga": round(ga / played, 3) if played else 0.0,
-    }
-
-    def _row(f: Fixture):
-        return {
-            "fixture_id": int(f.id),
-            "provider_fixture_id": f.provider_fixture_id,
-            "comp": f.comp,
-            "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
-            "home_team": f.home_team,
-            "away_team": f.away_team,
-            "full_time_home": f.full_time_home,
-            "full_time_away": f.full_time_away,
-        }
-
-    return {
-        "team_id": team_id,
-        "team_name": team_name or str(team_id),
-        "stats": stats,
-        "recent": [_row(x) for x in recent_fx],
-        "upcoming": [_row(x) for x in upcoming_fx],
-    }
-
 @router.get("/club/overview")
 def club_overview(
     team_id: int = Query(..., description="API-Football team id"),
@@ -2639,3 +2522,120 @@ def club_top_scorers(
         return get_top_scorers(league_id, season)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Top scorers fetch failed: {e}")
+
+@router.get("/club/{team_id}")
+def club_page(
+    team_id: int,
+    lookback_recent: int = Query(10, ge=1, le=25),
+    lookahead_upcoming: int = Query(10, ge=1, le=25),
+    db: Session = Depends(get_db),
+):
+    """
+    Club page data from fixtures table.
+
+    Returns:
+      {
+        team_id,
+        team_name,
+        stats: {played,wins,draws,losses,gf,ga,avg_gf,avg_ga},
+        recent: [...],
+        upcoming: [...]
+      }
+    """
+    now = datetime.utcnow()
+
+    # --- recent finished fixtures (kickoff <= now) ---
+    recent_fx = (
+        db.query(Fixture)
+        .filter(
+            Fixture.sport.in_(["football", "soccer"]),
+            or_(
+                Fixture.provider_home_team_id == team_id,
+                Fixture.provider_away_team_id == team_id,
+            ),
+            Fixture.kickoff_utc != None,
+            Fixture.kickoff_utc <= now,
+        )
+        .order_by(Fixture.kickoff_utc.desc())
+        .limit(lookback_recent)
+        .all()
+    )
+
+    # --- upcoming fixtures (kickoff > now) ---
+    upcoming_fx = (
+        db.query(Fixture)
+        .filter(
+            Fixture.sport.in_(["football", "soccer"]),
+            or_(
+                Fixture.provider_home_team_id == team_id,
+                Fixture.provider_away_team_id == team_id,
+            ),
+            Fixture.kickoff_utc != None,
+            Fixture.kickoff_utc > now,
+        )
+        .order_by(Fixture.kickoff_utc.asc())
+        .limit(lookahead_upcoming)
+        .all()
+    )
+
+    # best-effort team_name from any fixture row
+    team_name = None
+    sample = (upcoming_fx[:1] or recent_fx[:1])
+    if sample:
+        s = sample[0]
+        if s.provider_home_team_id == team_id:
+            team_name = s.home_team
+        elif s.provider_away_team_id == team_id:
+            team_name = s.away_team
+
+    # --- compute simple W/D/L + GF/GA from recent settled scores only ---
+    played = wins = draws = losses = gf = ga = 0
+    for f in recent_fx:
+        if f.full_time_home is None or f.full_time_away is None:
+            continue
+
+        is_home = f.provider_home_team_id == team_id
+        gf_m = f.full_time_home if is_home else f.full_time_away
+        ga_m = f.full_time_away if is_home else f.full_time_home
+
+        played += 1
+        gf += int(gf_m or 0)
+        ga += int(ga_m or 0)
+
+        if gf_m > ga_m:
+            wins += 1
+        elif gf_m < ga_m:
+            losses += 1
+        else:
+            draws += 1
+
+    stats = {
+        "played": played,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "gf": gf,
+        "ga": ga,
+        "avg_gf": round(gf / played, 3) if played else 0.0,
+        "avg_ga": round(ga / played, 3) if played else 0.0,
+    }
+
+    def _row(f: Fixture):
+        return {
+            "fixture_id": int(f.id),
+            "provider_fixture_id": f.provider_fixture_id,
+            "comp": f.comp,
+            "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
+            "home_team": f.home_team,
+            "away_team": f.away_team,
+            "full_time_home": f.full_time_home,
+            "full_time_away": f.full_time_away,
+        }
+
+    return {
+        "team_id": team_id,
+        "team_name": team_name or str(team_id),
+        "stats": stats,
+        "recent": [_row(x) for x in recent_fx],
+        "upcoming": [_row(x) for x in upcoming_fx],
+    }
