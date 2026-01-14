@@ -2254,3 +2254,271 @@ def prime_team_stats(
             skipped += 1
 
     return {"day": day, "days": days, "primed": primed, "skipped": skipped}
+
+# -----------------------------
+# CLUB ROUTES
+# -----------------------------
+
+@router.get("/club/overview")
+def club_overview(
+    team_id: int = Query(..., description="API-Football team id"),
+    season: int = Query(..., description="Season (e.g. 2025)"),
+    league_id: int | None = Query(None, description="Optional league id for league-only stats"),
+    lookback: int = Query(5, ge=3, le=15),
+    db: Session = Depends(get_db),
+):
+    """
+    Overview payload for ClubPage.
+    - Basic team info from /players (team metadata is stable there)
+    - Form summary from recent results
+    - (Optional) league stats if league_id provided (cached via TeamSeasonStats)
+    """
+
+    # 1) basic team metadata via get_players (has team object + logo)
+    team_meta = {}
+    try:
+        pj = get_players(team_id=team_id, season=season, page=1) or {}
+        resp = pj.get("response") or []
+        if resp:
+            # API-Football shape often includes: response[i].team and response[i].players
+            maybe_team = (resp[0] or {}).get("team") or {}
+            if maybe_team:
+                team_meta = {
+                    "id": maybe_team.get("id"),
+                    "name": maybe_team.get("name"),
+                    "logo": maybe_team.get("logo"),
+                }
+    except Exception:
+        team_meta = {"id": team_id}
+
+    # 2) recent form (W/D/L + GF/GA) using your existing helper-style logic
+    recent = get_team_recent_results(team_id, season=season, limit=lookback, league_id=None) or []
+    form = []
+    wins = draws = losses = 0
+    gf = ga = 0
+
+    for m in recent:
+        fid = m.get("fixture_id")
+        if not fid:
+            continue
+        try:
+            fdet = get_fixture(int(fid)) or {}
+            fr = (fdet.get("response") or [None])[0] or {}
+            goals = fr.get("goals") or {}
+
+            gh = int(goals.get("home") or 0)
+            ga_ = int(goals.get("away") or 0)
+            is_home = bool(m.get("is_home"))
+
+            gf_match = gh if is_home else ga_
+            ga_match = ga_ if is_home else gh
+
+            gf += gf_match
+            ga += ga_match
+
+            if gf_match > ga_match:
+                res = "W"
+                wins += 1
+            elif gf_match == ga_match:
+                res = "D"
+                draws += 1
+            else:
+                res = "L"
+                losses += 1
+
+            form.append({
+                "fixture_id": int(fid),
+                "date": m.get("date"),
+                "opponent": m.get("opponent"),
+                "is_home": is_home,
+                "score_for": gf_match,
+                "score_against": ga_match,
+                "result": res,
+                "competition": (fr.get("league") or {}).get("name"),
+            })
+        except Exception:
+            continue
+
+    form_summary = {
+        "lookback": lookback,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "gf": gf,
+        "ga": ga,
+        "avg_gf": round(gf / max(1, (wins + draws + losses)), 3),
+        "avg_ga": round(ga / max(1, (wins + draws + losses)), 3),
+    }
+
+    # 3) league-only cached stats (optional)
+    league_stats = None
+    if league_id is not None:
+        try:
+            league_stats = _get_team_stats_cached(db, team_id, int(league_id), int(season)) or None
+        except Exception:
+            league_stats = None
+
+    return {
+        "team": team_meta or {"id": team_id},
+        "season": season,
+        "league_id": league_id,
+        "form_summary": form_summary,
+        "recent_form": form[:lookback],
+        "league_stats": league_stats,
+    }
+
+
+@router.get("/club/fixtures")
+def club_fixtures(
+    team_id: int = Query(..., description="API-Football team id"),
+    season: int = Query(...),
+    last: int = Query(10, ge=1, le=25),
+    next: int = Query(5, ge=0, le=25),
+    league_only: bool = Query(False),
+    league_id: int | None = Query(None, description="If league_only=true, provide league_id when possible"),
+):
+    """
+    Club fixtures list for the club page:
+    - last N matches (played)
+    - next N matches (upcoming)
+    Uses get_team_recent_results for played.
+    For upcoming, we can’t rely on get_team_recent_results, so we do a lightweight
+    approach: call provider fixtures endpoint if you have it, OR just omit upcoming.
+    (If you already have a provider helper for upcoming fixtures, wire it in.)
+    """
+
+    # Played (last N) – you already have this helper
+    played = get_team_recent_results(
+        team_id, season=season, limit=last, league_id=(league_id if league_only else None)
+    ) or []
+
+    # Normalize played into UI-friendly list
+    played_out = []
+    for m in played:
+        fid = m.get("fixture_id")
+        if not fid:
+            continue
+        try:
+            fdet = get_fixture(int(fid)) or {}
+            fr = (fdet.get("response") or [None])[0] or {}
+            goals = fr.get("goals") or {}
+            teams = fr.get("teams") or {}
+            lg = fr.get("league") or {}
+            fixture = fr.get("fixture") or {}
+
+            played_out.append({
+                "fixture_id": int(fid),
+                "date": fixture.get("date"),
+                "league": lg.get("name"),
+                "league_id": lg.get("id"),
+                "home": (teams.get("home") or {}).get("name"),
+                "away": (teams.get("away") or {}).get("name"),
+                "home_goals": goals.get("home"),
+                "away_goals": goals.get("away"),
+                "status": ((fixture.get("status") or {}) or {}).get("short"),
+            })
+        except Exception:
+            continue
+
+    # Upcoming – if you don’t have a helper, return empty for now
+    # (If you *do* have a get_team_upcoming_fixtures helper, plug it here)
+    upcoming_out = []
+
+    return {
+        "team_id": team_id,
+        "season": season,
+        "league_only": league_only,
+        "league_id": league_id,
+        "played": played_out,
+        "upcoming": upcoming_out,
+    }
+
+
+@router.get("/club/squad")
+def club_squad(
+    team_id: int = Query(..., description="API-Football team id"),
+    season: int = Query(...),
+):
+    """
+    Squad list for ClubPage.
+    Uses provider /players; returns a flat list (name, id, photo, position, age, etc.)
+    """
+    try:
+        rows = []
+        # get_players likely paginates; if your service supports page param, you can loop.
+        # We'll just pull page 1 for now; if you want full paging, tell me the shape.
+        pj = get_players(team_id=team_id, season=season, page=1) or {}
+        resp = pj.get("response") or []
+
+        for r in resp:
+            pl = (r.get("player") or {}) or {}
+            st = (r.get("statistics") or [None])[0] or {}
+            g = (st.get("games") or {}) if isinstance(st, dict) else {}
+
+            rows.append({
+                "id": pl.get("id"),
+                "name": pl.get("name"),
+                "photo": pl.get("photo"),
+                "age": pl.get("age"),
+                "nationality": pl.get("nationality"),
+                "position": g.get("position") or pl.get("position"),
+                "appearances": g.get("appearences") or g.get("appearances"),
+                "minutes": g.get("minutes"),
+                "rating": g.get("rating"),
+            })
+
+        # sort: most minutes / apps first
+        def _n(x):
+            try:
+                return float(x or 0)
+            except Exception:
+                return 0.0
+
+        rows.sort(key=lambda r: (_n(r.get("minutes")), _n(r.get("appearances"))), reverse=True)
+
+        return {
+            "team_id": team_id,
+            "season": season,
+            "squad": rows,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Club squad fetch failed: {e}")
+
+
+@router.get("/club/stats")
+def club_stats(
+    team_id: int = Query(..., description="API-Football team id"),
+    league_id: int = Query(..., description="API-Football league id"),
+    season: int = Query(...),
+    refresh: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    """
+    League-only team stats (cached with TeamSeasonStats table).
+    This powers your ClubPage 'Season Stats' section.
+    """
+    try:
+        data = _get_team_stats_cached(db, team_id, league_id, season, refresh=refresh) or {}
+        return {
+            "team_id": team_id,
+            "league_id": league_id,
+            "season": season,
+            "stats": data,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Club stats fetch failed: {e}")
+
+
+@router.get("/club/topscorers")
+def club_top_scorers(
+    league_id: int = Query(...),
+    season: int = Query(...),
+):
+    """
+    League top scorers (for club page context / league panel).
+    """
+    try:
+        return get_top_scorers(league_id, season)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Top scorers fetch failed: {e}")
