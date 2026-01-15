@@ -112,6 +112,9 @@ LEAGUE_MAP = {
     "UWCL": 525, "UEFA Women's Champions League": 525,
     "WCQ_EUR": 32, "FIFA World Cup Qualifiers - Europe": 32,
     "AFCON": 6, "Africa Cup of Nations": 6,
+
+    #Rest of the World 🌍
+    "AUS_A_LEAGUE": 188, "A-League": 188,
 }
 
 
