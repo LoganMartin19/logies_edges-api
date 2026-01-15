@@ -46,6 +46,39 @@ router = APIRouter(prefix="/football", tags=["football"])
 # at top with other imports
 from ..services.apifootball import BASE_URL, _get_all_pages
 
+def _get_team_info(team_id: int) -> dict:
+    """
+    Fetch team + venue metadata from API-Football /teams?id=...
+    Returns:
+      { id, name, logo, venue: {name, city, capacity, image}, venue_name }
+    """
+    try:
+        j = _get_all_pages(f"{BASE_URL}/teams", {"id": int(team_id)})
+        # _get_all_pages returns list of response items
+        if not j:
+            return {"id": team_id}
+
+        row = j[0] or {}
+        t = row.get("team") or {}
+        v = row.get("venue") or {}
+
+        return {
+            "id": t.get("id") or team_id,
+            "name": t.get("name"),
+            "logo": t.get("logo"),
+            "venue": {
+                "id": v.get("id"),
+                "name": v.get("name"),
+                "city": v.get("city"),
+                "capacity": v.get("capacity"),
+                "image": v.get("image"),
+                "address": v.get("address"),
+                "surface": v.get("surface"),
+            },
+            "venue_name": v.get("name"),
+        }
+    except Exception:
+        return {"id": team_id}
 
 def _fetch_team_season_players(team_id: int, season: int) -> list[dict]:
     """
@@ -2269,30 +2302,20 @@ def club_overview(
 ):
     """
     Overview payload for ClubPage.
-    - Basic team info from /players (team metadata is stable there)
-    - Form summary from recent results
-    - (Optional) league stats if league_id provided (cached via TeamSeasonStats)
+
+    - Team info (logo + venue) from /teams?id=...
+    - Form summary from recent results (all competitions)
+    - Optional: league-only cached stats if league_id provided
     """
 
-    # 1) basic team metadata via get_players (has team object + logo)
-    team_meta = {}
-    try:
-        pj = get_players(team_id=team_id, season=season, page=1) or {}
-        resp = pj.get("response") or []
-        if resp:
-            # API-Football shape often includes: response[i].team and response[i].players
-            maybe_team = (resp[0] or {}).get("team") or {}
-            if maybe_team:
-                team_meta = {
-                    "id": maybe_team.get("id"),
-                    "name": maybe_team.get("name"),
-                    "logo": maybe_team.get("logo"),
-                }
-    except Exception:
-        team_meta = {"id": team_id}
+    # ✅ 1) team metadata (logo + venue)
+    team_meta = _get_team_info(team_id)
 
-    # 2) recent form (W/D/L + GF/GA) using your existing helper-style logic
-    recent = get_team_recent_results(team_id, season=season, limit=lookback, league_id=None) or []
+    # ✅ 2) recent form + GF/GA etc (all competitions)
+    recent = get_team_recent_results(
+        team_id, season=season, limit=lookback, league_id=None
+    ) or []
+
     form = []
     wins = draws = losses = 0
     gf = ga = 0
@@ -2317,14 +2340,11 @@ def club_overview(
             ga += ga_match
 
             if gf_match > ga_match:
-                res = "W"
-                wins += 1
+                res = "W"; wins += 1
             elif gf_match == ga_match:
-                res = "D"
-                draws += 1
+                res = "D"; draws += 1
             else:
-                res = "L"
-                losses += 1
+                res = "L"; losses += 1
 
             form.append({
                 "fixture_id": int(fid),
@@ -2339,6 +2359,7 @@ def club_overview(
         except Exception:
             continue
 
+    played = wins + draws + losses
     form_summary = {
         "lookback": lookback,
         "wins": wins,
@@ -2346,15 +2367,17 @@ def club_overview(
         "losses": losses,
         "gf": gf,
         "ga": ga,
-        "avg_gf": round(gf / max(1, (wins + draws + losses)), 3),
-        "avg_ga": round(ga / max(1, (wins + draws + losses)), 3),
+        "avg_gf": round(gf / max(1, played), 3),
+        "avg_ga": round(ga / max(1, played), 3),
     }
 
-    # 3) league-only cached stats (optional)
+    # ✅ 3) league-only stats cached (optional)
     league_stats = None
     if league_id is not None:
         try:
-            league_stats = _get_team_stats_cached(db, team_id, int(league_id), int(season)) or None
+            league_stats = _get_team_stats_cached(
+                db, int(team_id), int(league_id), int(season)
+            )
         except Exception:
             league_stats = None
 
@@ -2523,119 +2546,119 @@ def club_top_scorers(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Top scorers fetch failed: {e}")
 
-@router.get("/club/{team_id}")
-def club_page(
-    team_id: int,
-    lookback_recent: int = Query(10, ge=1, le=25),
-    lookahead_upcoming: int = Query(10, ge=1, le=25),
-    db: Session = Depends(get_db),
-):
-    """
-    Club page data from fixtures table.
+# @router.get("/club/{team_id}")
+# def club_page(
+#     team_id: int,
+#     lookback_recent: int = Query(10, ge=1, le=25),
+#     lookahead_upcoming: int = Query(10, ge=1, le=25),
+#     db: Session = Depends(get_db),
+# ):
+#     """
+#     Club page data from fixtures table.
 
-    Returns:
-      {
-        team_id,
-        team_name,
-        stats: {played,wins,draws,losses,gf,ga,avg_gf,avg_ga},
-        recent: [...],
-        upcoming: [...]
-      }
-    """
-    now = datetime.utcnow()
+#     Returns:
+#       {
+#         team_id,
+#         team_name,
+#         stats: {played,wins,draws,losses,gf,ga,avg_gf,avg_ga},
+#         recent: [...],
+#         upcoming: [...]
+#       }
+#     """
+#     now = datetime.utcnow()
 
-    # --- recent finished fixtures (kickoff <= now) ---
-    recent_fx = (
-        db.query(Fixture)
-        .filter(
-            Fixture.sport.in_(["football", "soccer"]),
-            or_(
-                Fixture.provider_home_team_id == team_id,
-                Fixture.provider_away_team_id == team_id,
-            ),
-            Fixture.kickoff_utc != None,
-            Fixture.kickoff_utc <= now,
-        )
-        .order_by(Fixture.kickoff_utc.desc())
-        .limit(lookback_recent)
-        .all()
-    )
+#     # --- recent finished fixtures (kickoff <= now) ---
+#     recent_fx = (
+#         db.query(Fixture)
+#         .filter(
+#             Fixture.sport.in_(["football", "soccer"]),
+#             or_(
+#                 Fixture.provider_home_team_id == team_id,
+#                 Fixture.provider_away_team_id == team_id,
+#             ),
+#             Fixture.kickoff_utc != None,
+#             Fixture.kickoff_utc <= now,
+#         )
+#         .order_by(Fixture.kickoff_utc.desc())
+#         .limit(lookback_recent)
+#         .all()
+#     )
 
-    # --- upcoming fixtures (kickoff > now) ---
-    upcoming_fx = (
-        db.query(Fixture)
-        .filter(
-            Fixture.sport.in_(["football", "soccer"]),
-            or_(
-                Fixture.provider_home_team_id == team_id,
-                Fixture.provider_away_team_id == team_id,
-            ),
-            Fixture.kickoff_utc != None,
-            Fixture.kickoff_utc > now,
-        )
-        .order_by(Fixture.kickoff_utc.asc())
-        .limit(lookahead_upcoming)
-        .all()
-    )
+#     # --- upcoming fixtures (kickoff > now) ---
+#     upcoming_fx = (
+#         db.query(Fixture)
+#         .filter(
+#             Fixture.sport.in_(["football", "soccer"]),
+#             or_(
+#                 Fixture.provider_home_team_id == team_id,
+#                 Fixture.provider_away_team_id == team_id,
+#             ),
+#             Fixture.kickoff_utc != None,
+#             Fixture.kickoff_utc > now,
+#         )
+#         .order_by(Fixture.kickoff_utc.asc())
+#         .limit(lookahead_upcoming)
+#         .all()
+#     )
 
-    # best-effort team_name from any fixture row
-    team_name = None
-    sample = (upcoming_fx[:1] or recent_fx[:1])
-    if sample:
-        s = sample[0]
-        if s.provider_home_team_id == team_id:
-            team_name = s.home_team
-        elif s.provider_away_team_id == team_id:
-            team_name = s.away_team
+#     # best-effort team_name from any fixture row
+#     team_name = None
+#     sample = (upcoming_fx[:1] or recent_fx[:1])
+#     if sample:
+#         s = sample[0]
+#         if s.provider_home_team_id == team_id:
+#             team_name = s.home_team
+#         elif s.provider_away_team_id == team_id:
+#             team_name = s.away_team
 
-    # --- compute simple W/D/L + GF/GA from recent settled scores only ---
-    played = wins = draws = losses = gf = ga = 0
-    for f in recent_fx:
-        if f.full_time_home is None or f.full_time_away is None:
-            continue
+#     # --- compute simple W/D/L + GF/GA from recent settled scores only ---
+#     played = wins = draws = losses = gf = ga = 0
+#     for f in recent_fx:
+#         if f.full_time_home is None or f.full_time_away is None:
+#             continue
 
-        is_home = f.provider_home_team_id == team_id
-        gf_m = f.full_time_home if is_home else f.full_time_away
-        ga_m = f.full_time_away if is_home else f.full_time_home
+#         is_home = f.provider_home_team_id == team_id
+#         gf_m = f.full_time_home if is_home else f.full_time_away
+#         ga_m = f.full_time_away if is_home else f.full_time_home
 
-        played += 1
-        gf += int(gf_m or 0)
-        ga += int(ga_m or 0)
+#         played += 1
+#         gf += int(gf_m or 0)
+#         ga += int(ga_m or 0)
 
-        if gf_m > ga_m:
-            wins += 1
-        elif gf_m < ga_m:
-            losses += 1
-        else:
-            draws += 1
+#         if gf_m > ga_m:
+#             wins += 1
+#         elif gf_m < ga_m:
+#             losses += 1
+#         else:
+#             draws += 1
 
-    stats = {
-        "played": played,
-        "wins": wins,
-        "draws": draws,
-        "losses": losses,
-        "gf": gf,
-        "ga": ga,
-        "avg_gf": round(gf / played, 3) if played else 0.0,
-        "avg_ga": round(ga / played, 3) if played else 0.0,
-    }
+#     stats = {
+#         "played": played,
+#         "wins": wins,
+#         "draws": draws,
+#         "losses": losses,
+#         "gf": gf,
+#         "ga": ga,
+#         "avg_gf": round(gf / played, 3) if played else 0.0,
+#         "avg_ga": round(ga / played, 3) if played else 0.0,
+#     }
 
-    def _row(f: Fixture):
-        return {
-            "fixture_id": int(f.id),
-            "provider_fixture_id": f.provider_fixture_id,
-            "comp": f.comp,
-            "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
-            "home_team": f.home_team,
-            "away_team": f.away_team,
-            "full_time_home": f.full_time_home,
-            "full_time_away": f.full_time_away,
-        }
+#     def _row(f: Fixture):
+#         return {
+#             "fixture_id": int(f.id),
+#             "provider_fixture_id": f.provider_fixture_id,
+#             "comp": f.comp,
+#             "kickoff_utc": f.kickoff_utc.isoformat() if f.kickoff_utc else None,
+#             "home_team": f.home_team,
+#             "away_team": f.away_team,
+#             "full_time_home": f.full_time_home,
+#             "full_time_away": f.full_time_away,
+#         }
 
-    return {
-        "team_id": team_id,
-        "team_name": team_name or str(team_id),
-        "stats": stats,
-        "recent": [_row(x) for x in recent_fx],
-        "upcoming": [_row(x) for x in upcoming_fx],
-    }
+#     return {
+#         "team_id": team_id,
+#         "team_name": team_name or str(team_id),
+#         "stats": stats,
+#         "recent": [_row(x) for x in recent_fx],
+#         "upcoming": [_row(x) for x in upcoming_fx],
+#     }
