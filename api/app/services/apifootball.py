@@ -43,7 +43,7 @@ LEAGUE_MAP = {
     "SCO_PREM": 179, "Scottish Premiership": 179,
     "SCO_CHAMP": 180, "Scottish Championship": 180,
     "SCO1": 183, "SCO2": 184,
-    "SCO_SC": 250, "Scottish Cup": 250,
+    "SCO_SC": 181, "Scottish Cup": 181,
     "SCO_LC": 185, "Scottish League Cup": 185,
     "SCO_CHAL": 182, "Scottish Challenge Cup": 182,
 
