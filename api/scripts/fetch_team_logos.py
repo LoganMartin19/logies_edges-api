@@ -56,7 +56,7 @@ def save_logo(team_name: str, logo_url: str):
 
 if __name__ == "__main__":
     # pick league here
-    league_id = LEAGUE_MAP["WCQ_EUR"]  # you can swap to EPL/UCL/etc
+    league_id = LEAGUE_MAP["LA_LIGA2"]  # you can swap to EPL/UCL/etc
 
     print(f"🔍 Fetching teams for league {league_id}...")
     teams = fetch_teams_for_league(league_id)
