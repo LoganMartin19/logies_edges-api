@@ -50,6 +50,7 @@ from .routes import (
     user_bets as user_bets_router,
     email_admin as email_admin_router,
     preferences as preferences_router,
+    insights as insights_router,
 )
 
 # --- NEW: sport-aware preview dispatch + other sports (NFL/NHL) ---
@@ -144,6 +145,7 @@ app.include_router(player_props_router.router)
 app.include_router(tennis_router.router)
 app.include_router(picks_router.router)
 app.include_router(accas_router.router)
+app.include_router(insights_router.router)
 app.include_router(email_admin_router.router, prefix="/api")
 app.include_router(preferences_router.router, prefix="/api")
 
