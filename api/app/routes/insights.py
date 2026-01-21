@@ -11,12 +11,15 @@ router = APIRouter(prefix="/api", tags=["insights"])
 
 EPS = 1e-6
 
+
 def clamp(p: float) -> float:
     p = float(p)
     return max(EPS, min(1.0 - EPS, p))
 
+
 def fair_odds(p: float) -> float:
     return round(1.0 / clamp(p), 2)
+
 
 def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
     # keep this deliberately short + consistent
@@ -30,18 +33,29 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
         return "Fair price is derived from CSB’s form-based model probabilities."
 
     if market == "BTTS_Y":
-        return f"Both teams have been scoring/conceding recently (GF {hg:.1f}/{ag:.1f}, GA {hga:.1f}/{aga:.1f}). CSB makes BTTS Yes ~{p*100:.0f}%."
+        return (
+            f"Both teams have been scoring/conceding recently "
+            f"(GF {hg:.1f}/{ag:.1f}, GA {hga:.1f}/{aga:.1f}). "
+            f"CSB makes BTTS Yes ~{p*100:.0f}%."
+        )
     if market == "O2.5":
-        return f"Goals profile suggests a higher total (avg GF {hg:.1f}+{ag:.1f}). CSB makes Over 2.5 ~{p*100:.0f}%."
+        return (
+            f"Goals profile suggests a higher total (avg GF {hg:.1f}+{ag:.1f}). "
+            f"CSB makes Over 2.5 ~{p*100:.0f}%."
+        )
     if market == "U2.5":
-        return f"Recent goal rates lean lower (avg GA {hga:.1f}+{aga:.1f}). CSB makes Under 2.5 ~{p*100:.0f}%."
+        return (
+            f"Recent goal rates lean lower (avg GA {hga:.1f}+{aga:.1f}). "
+            f"CSB makes Under 2.5 ~{p*100:.0f}%."
+        )
 
     return f"CSB fair odds are based on model probability of ~{p*100:.0f}%."
+
 
 @router.get("/fixtures/{fixture_id}/insights")
 def fixture_insights(
     fixture_id: int,
-    model: str = "team_form",   # or your default model
+    model: str = "team_form",  # or your default model
     db: Session = Depends(get_db),
 ):
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
@@ -49,7 +63,12 @@ def fixture_insights(
         raise HTTPException(status_code=404, detail="Fixture not found")
 
     # 1) Pull form (you already use this in explain)
-    hybrid = get_hybrid_form_for_fixture(db, fixture_id)
+    # ✅ FIX: pass the Fixture object, not the int id
+    try:
+        hybrid = get_hybrid_form_for_fixture(db, fx)
+    except Exception:
+        hybrid = None
+
     home_form = (hybrid or {}).get("home_form") or {}
     away_form = (hybrid or {}).get("away_form") or {}
 
@@ -67,7 +86,18 @@ def fixture_insights(
             latest.setdefault(r.market, float(r.prob))
 
     # 3) Choose which markets to show
-    wanted = ["BTTS_Y", "BTTS_N", "O2.5", "U2.5", "HOME_WIN", "DRAW", "AWAY_WIN", "1X", "X2", "12"]
+    wanted = [
+        "BTTS_Y",
+        "BTTS_N",
+        "O2.5",
+        "U2.5",
+        "HOME_WIN",
+        "DRAW",
+        "AWAY_WIN",
+        "1X",
+        "X2",
+        "12",
+    ]
 
     insights = []
     for m in wanted:
@@ -75,13 +105,15 @@ def fixture_insights(
         if p is None:
             continue
         p = clamp(p)
-        insights.append({
-            "market": m,
-            "prob": round(p, 4),
-            "fair_odds": fair_odds(p),
-            "confidence": confidence_from_prob(p),
-            "blurb": mk_blurb(m, home_form, away_form, p),
-        })
+        insights.append(
+            {
+                "market": m,
+                "prob": round(p, 4),
+                "fair_odds": fair_odds(p),
+                "confidence": confidence_from_prob(p),
+                "blurb": mk_blurb(m, home_form, away_form, p),
+            }
+        )
 
     return {
         "fixture_id": fixture_id,
