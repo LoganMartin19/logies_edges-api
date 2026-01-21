@@ -22,13 +22,11 @@ def fair_odds(p: float) -> float:
 
 
 def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
-    # keep this deliberately short + consistent
     hg = home_form.get("avg_gf", None)
     ag = away_form.get("avg_gf", None)
     hga = home_form.get("avg_ga", None)
     aga = away_form.get("avg_ga", None)
 
-    # fallback if any missing
     if hg is None or ag is None or hga is None or aga is None:
         return "Fair price is derived from CSB’s form-based model probabilities."
 
@@ -40,12 +38,14 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
         )
     if market == "O2.5":
         return (
-            f"Goals profile suggests a higher total (avg GF {hg:.1f}+{ag:.1f}). "
+            f"Goals profile suggests a higher total "
+            f"(avg GF {hg:.1f}+{ag:.1f}). "
             f"CSB makes Over 2.5 ~{p*100:.0f}%."
         )
     if market == "U2.5":
         return (
-            f"Recent goal rates lean lower (avg GA {hga:.1f}+{aga:.1f}). "
+            f"Recent goal rates lean lower "
+            f"(avg GA {hga:.1f}+{aga:.1f}). "
             f"CSB makes Under 2.5 ~{p*100:.0f}%."
         )
 
@@ -55,15 +55,14 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
 @router.get("/fixtures/{fixture_id}/insights")
 def fixture_insights(
     fixture_id: int,
-    model: str = "team_form",  # or your default model
+    model: str = "team_form",  # maps to ModelProb.source
     db: Session = Depends(get_db),
 ):
     fx = db.query(Fixture).filter(Fixture.id == fixture_id).first()
     if not fx:
         raise HTTPException(status_code=404, detail="Fixture not found")
 
-    # 1) Pull form (you already use this in explain)
-    # ✅ FIX: pass the Fixture object, not the int id
+    # 1) Pull form (PASS FIXTURE OBJECT, not int)
     try:
         hybrid = get_hybrid_form_for_fixture(db, fx)
     except Exception:
@@ -72,31 +71,36 @@ def fixture_insights(
     home_form = (hybrid or {}).get("home_form") or {}
     away_form = (hybrid or {}).get("away_form") or {}
 
-    # 2) Pull latest probs for this model
+    # 2) Pull latest probs for this model source
     rows = (
         db.query(ModelProb)
-        .filter(ModelProb.fixture_id == fixture_id, ModelProb.model == model)
-        .order_by(desc(ModelProb.created_at))
+        .filter(ModelProb.fixture_id == fixture_id, ModelProb.source == model)
+        .order_by(desc(ModelProb.as_of))
         .all()
     )
 
+    # newest-first, so first time we see a market is the latest prob for it
     latest = {}
     for r in rows:
-        if r.market and isinstance(r.prob, (int, float)):
-            latest.setdefault(r.market, float(r.prob))
+        if not r.market:
+            continue
+        if r.market in latest:
+            continue
+        prob = r.prob
+        if isinstance(prob, (int, float)):
+            latest[r.market] = float(prob)
+        else:
+            # Numeric can come back as Decimal -> float() still works
+            try:
+                latest[r.market] = float(prob)
+            except Exception:
+                pass
 
-    # 3) Choose which markets to show
     wanted = [
-        "BTTS_Y",
-        "BTTS_N",
-        "O2.5",
-        "U2.5",
-        "HOME_WIN",
-        "DRAW",
-        "AWAY_WIN",
-        "1X",
-        "X2",
-        "12",
+        "BTTS_Y", "BTTS_N",
+        "O2.5", "U2.5",
+        "HOME_WIN", "DRAW", "AWAY_WIN",
+        "1X", "X2", "12",
     ]
 
     insights = []
