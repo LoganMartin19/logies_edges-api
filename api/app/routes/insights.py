@@ -24,7 +24,6 @@ def fair_odds(p: float) -> float:
 
 
 def _f(x, default=None):
-    """Safe float conversion."""
     if x is None:
         return default
     try:
@@ -34,7 +33,6 @@ def _f(x, default=None):
 
 
 def _i(x, default=None):
-    """Safe int conversion."""
     if x is None:
         return default
     try:
@@ -44,10 +42,6 @@ def _i(x, default=None):
 
 
 def _wdl(form: dict):
-    """
-    Try to extract W/D/L from common keys.
-    Supports multiple naming styles without breaking.
-    """
     w = _i(form.get("wins") or form.get("w") or form.get("form_wins"), 0)
     d = _i(form.get("draws") or form.get("d") or form.get("form_draws"), 0)
     l = _i(form.get("losses") or form.get("l") or form.get("form_losses"), 0)
@@ -58,20 +52,16 @@ def _wdl(form: dict):
 
 def _parse_score_obj(obj):
     """
-    Accepts a 'recent fixture' row from hybrid form (you might have):
+    Accepts a recent fixture row:
       - {"goals_for":2,"goals_against":1}
       - {"gf":2,"ga":1}
       - {"score":"2-1"}
     Returns (gf, ga) or (None,None)
     """
-    if obj is None:
+    if obj is None or not isinstance(obj, dict):
         return None, None
 
-    # score string
-    s = None
-    if isinstance(obj, dict):
-        s = obj.get("score")
-
+    s = obj.get("score")
     if isinstance(s, str) and "-" in s:
         try:
             a, b = s.split("-", 1)
@@ -79,25 +69,20 @@ def _parse_score_obj(obj):
         except Exception:
             return None, None
 
-    if isinstance(obj, dict):
-        for k1, k2 in [("goals_for", "goals_against"), ("gf", "ga")]:
-            if k1 in obj and k2 in obj:
-                try:
-                    return int(obj.get(k1)), int(obj.get(k2))
-                except Exception:
-                    return None, None
+    for k1, k2 in [("goals_for", "goals_against"), ("gf", "ga")]:
+        if k1 in obj and k2 in obj:
+            try:
+                return int(obj.get(k1)), int(obj.get(k2))
+            except Exception:
+                return None, None
 
     return None, None
 
 
 def _compute_stats_from_recent(recent_rows):
     """
-    Computes basic counts from recent fixtures:
-      - btts_count
-      - over25_count
-      - under25_count
-      - n
-    recent_rows: list[dict]
+    Compute counts from a list of recent rows with score fields.
+    Returns dict: {n, btts, o25, u25} or None
     """
     if not isinstance(recent_rows, list) or not recent_rows:
         return None
@@ -108,7 +93,7 @@ def _compute_stats_from_recent(recent_rows):
     n = 0
 
     for r in recent_rows:
-        gf, ga = _parse_score_obj(r if isinstance(r, dict) else None)
+        gf, ga = _parse_score_obj(r)
         if gf is None or ga is None:
             continue
 
@@ -123,77 +108,139 @@ def _compute_stats_from_recent(recent_rows):
     if n == 0:
         return None
 
-    return {
-        "n": n,
-        "btts": btts,
-        "o25": o25,
-        "u25": u25,
-    }
+    return {"n": n, "btts": btts, "o25": o25, "u25": u25}
+
+
+def _parse_csv_ints(v):
+    """
+    Parses '2,0,1,3,2' -> [2,0,1,3,2]
+    Accepts list already -> list[int]
+    """
+    if v is None:
+        return None
+    if isinstance(v, list):
+        out = []
+        for x in v:
+            try:
+                out.append(int(x))
+            except Exception:
+                return None
+        return out
+
+    if not isinstance(v, str):
+        return None
+
+    parts = [p.strip() for p in v.split(",") if p.strip() != ""]
+    if not parts:
+        return None
+
+    out = []
+    for p in parts:
+        try:
+            out.append(int(p))
+        except Exception:
+            return None
+    return out
+
+
+def _compute_stats_from_last5_strings(form: dict):
+    """
+    Uses TeamForm-style fields (very likely present in your hybrid output):
+      - last_5_goals_for:  "2,0,1,3,2"
+      - last_5_goals_against: "1,1,0,1,0"
+
+    Returns dict: {n, btts, o25, u25} or None
+    """
+    gf = _parse_csv_ints(
+        form.get("last_5_goals_for")
+        or form.get("last5_goals_for")
+        or form.get("goals_for_last5")
+    )
+    ga = _parse_csv_ints(
+        form.get("last_5_goals_against")
+        or form.get("last5_goals_against")
+        or form.get("goals_against_last5")
+    )
+
+    if not gf or not ga:
+        return None
+
+    n = min(len(gf), len(ga), 5)
+    if n <= 0:
+        return None
+
+    btts = 0
+    o25 = 0
+    u25 = 0
+
+    for i in range(n):
+        gfi = gf[i]
+        gai = ga[i]
+        if gfi > 0 and gai > 0:
+            btts += 1
+        if (gfi + gai) >= 3:
+            o25 += 1
+        else:
+            u25 += 1
+
+    return {"n": n, "btts": btts, "o25": o25, "u25": u25}
+
+
+def _team_stats(form: dict):
+    """
+    Try multiple ways to get stats:
+      1) recent list with scores
+      2) last_5_goals_for/against strings
+    """
+    # recent list could be stored as:
+    #  form["recent"] / form["home_recent"] / form["away_recent"]
+    recent = form.get("recent") or form.get("home_recent") or form.get("away_recent")
+    s = _compute_stats_from_recent(recent)
+    if s:
+        return s
+
+    s2 = _compute_stats_from_last5_strings(form)
+    if s2:
+        return s2
+
+    return None
 
 
 def _stat_line(market: str, home_form: dict, away_form: dict):
-    """
-    Builds the extra "Stat:" line if we can.
-    Prefers explicit keys if present; otherwise computes from recent lists if available.
-    """
-    # If your hybrid form ever adds explicit counts, we’ll use them:
-    # (safe lookups; won’t break)
-    # Examples (optional future keys):
-    #  home_form["btts_last_n"] = {"hit": 3, "n": 5}
-    #  home_form["o25_last_n"] = {"hit": 4, "n": 5}
-    def _extract_explicit(form, key):
-        v = form.get(key)
-        if isinstance(v, dict):
-            hit = _i(v.get("hit"))
-            n = _i(v.get("n"))
-            if hit is not None and n:
-                return hit, n
-        return None
+    hs = _team_stats(home_form)
+    a_s = _team_stats(away_form)
 
-    # fallback: compute from recent lists if present
-    home_recent = home_form.get("recent") or home_form.get("home_recent") or []
-    away_recent = away_form.get("recent") or away_form.get("away_recent") or []
-
-    hs = _compute_stats_from_recent(home_recent)
-    as_ = _compute_stats_from_recent(away_recent)
-
-    # Nothing to show
-    if hs is None and as_ is None:
+    if hs is None and a_s is None:
         return None
 
     if market in ("BTTS_Y", "BTTS_N"):
-        if hs and as_:
-            return f"Stat: BTTS landed {hs['btts']}/{hs['n']} (home), {as_['btts']}/{as_['n']} (away)."
+        if hs and a_s:
+            return f"Stat: BTTS landed {hs['btts']}/{hs['n']} (home), {a_s['btts']}/{a_s['n']} (away)."
         if hs:
-            return f"Stat: BTTS landed {hs['btts']}/{hs['n']} in home’s recent games."
-        if as_:
-            return f"Stat: BTTS landed {as_['btts']}/{as_['n']} in away’s recent games."
+            return f"Stat: BTTS landed {hs['btts']}/{hs['n']} in home’s last {hs['n']}."
+        if a_s:
+            return f"Stat: BTTS landed {a_s['btts']}/{a_s['n']} in away’s last {a_s['n']}."
 
     if market == "O2.5":
-        if hs and as_:
-            return f"Stat: Over 2.5 hit {hs['o25']}/{hs['n']} (home), {as_['o25']}/{as_['n']} (away)."
+        if hs and a_s:
+            return f"Stat: Over 2.5 hit {hs['o25']}/{hs['n']} (home), {a_s['o25']}/{a_s['n']} (away)."
         if hs:
-            return f"Stat: Over 2.5 hit {hs['o25']}/{hs['n']} in home’s recent games."
-        if as_:
-            return f"Stat: Over 2.5 hit {as_['o25']}/{as_['n']} in away’s recent games."
+            return f"Stat: Over 2.5 hit {hs['o25']}/{hs['n']} in home’s last {hs['n']}."
+        if a_s:
+            return f"Stat: Over 2.5 hit {a_s['o25']}/{a_s['n']} in away’s last {a_s['n']}."
 
     if market == "U2.5":
-        if hs and as_:
-            return f"Stat: Under 2.5 hit {hs['u25']}/{hs['n']} (home), {as_['u25']}/{as_['n']} (away)."
+        if hs and a_s:
+            return f"Stat: Under 2.5 hit {hs['u25']}/{hs['n']} (home), {a_s['u25']}/{a_s['n']} (away)."
         if hs:
-            return f"Stat: Under 2.5 hit {hs['u25']}/{hs['n']} in home’s recent games."
-        if as_:
-            return f"Stat: Under 2.5 hit {as_['u25']}/{as_['n']} in away’s recent games."
+            return f"Stat: Under 2.5 hit {hs['u25']}/{hs['n']} in home’s last {hs['n']}."
+        if a_s:
+            return f"Stat: Under 2.5 hit {a_s['u25']}/{a_s['n']} in away’s last {a_s['n']}."
 
-    # For 1X2/DC we’ll skip the stat (unless you later add explicit results keys).
     return None
 
 
 def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
-    """
-    Rich-but-short blurbs with one concrete stat line where available.
-    Defensive on missing fields.
-    """
     hg = _f(home_form.get("avg_gf"))
     hga = _f(home_form.get("avg_ga"))
     ag = _f(away_form.get("avg_gf"))
@@ -206,36 +253,30 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
     wdl_away = f"{aw[0]}W-{aw[1]}D-{aw[2]}L" if aw else None
 
     stat = _stat_line(market, home_form, away_form)
+    pct = f"{p*100:.0f}%"
 
-    # --- Generic fallback if form lacks key metrics ---
+    # fallback (no avg_gf/avg_ga)
     if hg is None or hga is None or ag is None or aga is None:
-        pct = f"{p*100:.0f}%"
-        base = None
         if market in ("BTTS_Y", "BTTS_N"):
             base = f"Fair price is derived from CSB’s form model. CSB prices this at ~{pct}."
         elif market.startswith("O") or market.startswith("U"):
             base = f"Fair price is derived from CSB’s goals model. CSB prices this at ~{pct}."
         else:
             base = f"Fair price is derived from CSB’s form-based model probabilities (~{pct})."
+        return f"{base} {stat}" if stat else base
 
-        if stat:
-            return f"{base} {stat}"
-        return base
-
-    # Useful derived signals
     total_gf = hg + ag
     total_ga = hga + aga
     home_goal_diff = hg - hga
     away_goal_diff = ag - aga
 
-    # ---------------- BTTS ----------------
     if market == "BTTS_Y":
         bits = [
             f"Both sides are active at both ends: scoring {hg:.1f}/{ag:.1f} gpg and conceding {hga:.1f}/{aga:.1f}.",
         ]
         if wdl_home and wdl_away:
             bits.append(f"Form: {wdl_home} vs {wdl_away}.")
-        bits.append(f"CSB prices BTTS Yes at ~{p*100:.0f}%.")
+        bits.append(f"CSB prices BTTS Yes at ~{pct}.")
         if stat:
             bits.append(stat)
         return " ".join(bits)
@@ -246,17 +287,16 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
         ]
         if wdl_home and wdl_away:
             bits.append(f"Form: {wdl_home} vs {wdl_away}.")
-        bits.append(f"CSB prices BTTS No at ~{p*100:.0f}%.")
+        bits.append(f"CSB prices BTTS No at ~{pct}.")
         if stat:
             bits.append(stat)
         return " ".join(bits)
 
-    # -------------- Totals (O/U 2.5) --------------
     if market == "O2.5":
         bits = [
             f"Goals environment looks high (combined GF {total_gf:.1f}, combined GA {total_ga:.1f}).",
             "That usually correlates with more chances + higher totals.",
-            f"CSB prices Over 2.5 at ~{p*100:.0f}%.",
+            f"CSB prices Over 2.5 at ~{pct}.",
         ]
         if stat:
             bits.append(stat)
@@ -266,20 +306,19 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
         bits = [
             f"Goals environment leans lower (combined GF {total_gf:.1f}, combined GA {total_ga:.1f}).",
             "This often means fewer clear chances and a tighter game state.",
-            f"CSB prices Under 2.5 at ~{p*100:.0f}%.",
+            f"CSB prices Under 2.5 at ~{pct}.",
         ]
         if stat:
             bits.append(stat)
         return " ".join(bits)
 
-    # ---------------- 1X2 ----------------
     if market == "HOME_WIN":
         bits = [
             f"Home goal trend {home_goal_diff:+.1f} (GF {hg:.1f}, GA {hga:.1f}) vs away {away_goal_diff:+.1f} (GF {ag:.1f}, GA {aga:.1f})."
         ]
         if wdl_home and wdl_away:
             bits.append(f"Form: {wdl_home} vs {wdl_away}.")
-        bits.append(f"CSB prices Home Win at ~{p*100:.0f}%.")
+        bits.append(f"CSB prices Home Win at ~{pct}.")
         return " ".join(bits)
 
     if market == "AWAY_WIN":
@@ -288,7 +327,7 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
         ]
         if wdl_home and wdl_away:
             bits.append(f"Form: {wdl_home} vs {wdl_away}.")
-        bits.append(f"CSB prices Away Win at ~{p*100:.0f}%.")
+        bits.append(f"CSB prices Away Win at ~{pct}.")
         return " ".join(bits)
 
     if market == "DRAW":
@@ -298,16 +337,15 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
         ]
         if wdl_home and wdl_away:
             bits.append(f"Form: {wdl_home} vs {wdl_away}.")
-        bits.append(f"CSB prices Draw at ~{p*100:.0f}%.")
+        bits.append(f"CSB prices Draw at ~{pct}.")
         return " ".join(bits)
 
-    # ---------------- Double Chance ----------------
     if market == "1X":
         return (
             f"Double Chance covers Home or Draw. "
             f"Home trend {home_goal_diff:+.1f} vs away {away_goal_diff:+.1f} "
             f"(GF {hg:.1f}/{ag:.1f}, GA {hga:.1f}/{aga:.1f}). "
-            f"CSB prices 1X at ~{p*100:.0f}%."
+            f"CSB prices 1X at ~{pct}."
         )
 
     if market == "X2":
@@ -315,7 +353,7 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
             f"Double Chance covers Away or Draw. "
             f"Away trend {away_goal_diff:+.1f} vs home {home_goal_diff:+.1f} "
             f"(GF {ag:.1f}/{hg:.1f}, GA {aga:.1f}/{hga:.1f}). "
-            f"CSB prices X2 at ~{p*100:.0f}%."
+            f"CSB prices X2 at ~{pct}."
         )
 
     if market == "12":
@@ -323,10 +361,11 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
             f"Double Chance excludes Draw (either team wins). "
             f"Combined scoring/conceding suggests decisive outcomes are plausible "
             f"(GF {total_gf:.1f}, GA {total_ga:.1f}). "
-            f"CSB prices 12 at ~{p*100:.0f}%."
+            f"CSB prices 12 at ~{pct}."
         )
 
-    return f"CSB fair odds are based on model probability of ~{p*100:.0f}%."
+    base = f"CSB fair odds are based on model probability of ~{pct}."
+    return f"{base} {stat}" if stat else base
 
 
 @router.get("/fixtures/{fixture_id}/insights")
@@ -339,17 +378,15 @@ def fixture_insights(
     if not fx:
         raise HTTPException(status_code=404, detail="Fixture not found")
 
-    # Pull hybrid form (pass FIXTURE object)
     try:
         hybrid = get_hybrid_form_for_fixture(db, fx)
     except Exception:
         hybrid = None
 
-    # Some versions of hybrid might return {home_form, away_form, home_recent, away_recent}
     home_form = (hybrid or {}).get("home_form") or {}
     away_form = (hybrid or {}).get("away_form") or {}
 
-    # If recent lists exist at top-level, attach them so mk_blurb can compute stats
+    # If your hybrid returns recent lists at top-level, stash into forms for stat calc
     if isinstance((hybrid or {}).get("home_recent"), list) and "recent" not in home_form:
         home_form = dict(home_form)
         home_form["recent"] = (hybrid or {}).get("home_recent") or []
@@ -358,7 +395,6 @@ def fixture_insights(
         away_form = dict(away_form)
         away_form["recent"] = (hybrid or {}).get("away_recent") or []
 
-    # Pull latest probs for this model source
     rows = (
         db.query(ModelProb)
         .filter(ModelProb.fixture_id == fixture_id, ModelProb.source == model)
@@ -366,12 +402,9 @@ def fixture_insights(
         .all()
     )
 
-    # newest-first, so first time we see a market is the latest prob for it
     latest = {}
     for r in rows:
-        if not r.market:
-            continue
-        if r.market in latest:
+        if not r.market or r.market in latest:
             continue
         try:
             latest[r.market] = float(r.prob)
