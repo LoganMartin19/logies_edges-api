@@ -203,41 +203,50 @@ def _team_stats(form: dict):
     return None
 
 
-def _stat_line(market: str, home_form: dict, away_form: dict):
+def _stat_prefix(comp_label: str | None) -> str:
+    # You asked specifically for: "in this competition"
+    if comp_label:
+        return f"In this competition ({comp_label}):"
+    return "In this competition:"
+
+
+def _stat_line(market: str, home_form: dict, away_form: dict, comp_label: str | None = None):
     hs = _team_stats(home_form)
     a_s = _team_stats(away_form)
 
     if hs is None and a_s is None:
         return None
 
+    prefix = _stat_prefix(comp_label)
+
     if market in ("BTTS_Y", "BTTS_N"):
         if hs and a_s:
-            return f"Stat: BTTS landed {hs['btts']}/{hs['n']} (home), {a_s['btts']}/{a_s['n']} (away)."
+            return f"{prefix} BTTS landed {hs['btts']}/{hs['n']} (home), {a_s['btts']}/{a_s['n']} (away)."
         if hs:
-            return f"Stat: BTTS landed {hs['btts']}/{hs['n']} in home’s last {hs['n']}."
+            return f"{prefix} BTTS landed {hs['btts']}/{hs['n']} in home’s last {hs['n']}."
         if a_s:
-            return f"Stat: BTTS landed {a_s['btts']}/{a_s['n']} in away’s last {a_s['n']}."
+            return f"{prefix} BTTS landed {a_s['btts']}/{a_s['n']} in away’s last {a_s['n']}."
 
     if market == "O2.5":
         if hs and a_s:
-            return f"Stat: Over 2.5 hit {hs['o25']}/{hs['n']} (home), {a_s['o25']}/{a_s['n']} (away)."
+            return f"{prefix} Over 2.5 hit {hs['o25']}/{hs['n']} (home), {a_s['o25']}/{a_s['n']} (away)."
         if hs:
-            return f"Stat: Over 2.5 hit {hs['o25']}/{hs['n']} in home’s last {hs['n']}."
+            return f"{prefix} Over 2.5 hit {hs['o25']}/{hs['n']} in home’s last {hs['n']}."
         if a_s:
-            return f"Stat: Over 2.5 hit {a_s['o25']}/{a_s['n']} in away’s last {a_s['n']}."
+            return f"{prefix} Over 2.5 hit {a_s['o25']}/{a_s['n']} in away’s last {a_s['n']}."
 
     if market == "U2.5":
         if hs and a_s:
-            return f"Stat: Under 2.5 hit {hs['u25']}/{hs['n']} (home), {a_s['u25']}/{a_s['n']} (away)."
+            return f"{prefix} Under 2.5 hit {hs['u25']}/{hs['n']} (home), {a_s['u25']}/{a_s['n']} (away)."
         if hs:
-            return f"Stat: Under 2.5 hit {hs['u25']}/{hs['n']} in home’s last {hs['n']}."
+            return f"{prefix} Under 2.5 hit {hs['u25']}/{hs['n']} in home’s last {hs['n']}."
         if a_s:
-            return f"Stat: Under 2.5 hit {a_s['u25']}/{a_s['n']} in away’s last {a_s['n']}."
+            return f"{prefix} Under 2.5 hit {a_s['u25']}/{a_s['n']} in away’s last {a_s['n']}."
 
     return None
 
 
-def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
+def mk_blurb(market: str, home_form: dict, away_form: dict, p: float, comp_label: str | None = None) -> str:
     hg = _f(home_form.get("avg_gf"))
     hga = _f(home_form.get("avg_ga"))
     ag = _f(away_form.get("avg_gf"))
@@ -249,7 +258,7 @@ def mk_blurb(market: str, home_form: dict, away_form: dict, p: float) -> str:
     wdl_home = f"{hw[0]}W-{hw[1]}D-{hw[2]}L" if hw else None
     wdl_away = f"{aw[0]}W-{aw[1]}D-{aw[2]}L" if aw else None
 
-    stat = _stat_line(market, home_form, away_form)
+    stat = _stat_line(market, home_form, away_form, comp_label=comp_label)
     pct = f"{p*100:.0f}%"
 
     # fallback (no avg_gf/avg_ga)
@@ -377,13 +386,17 @@ def fixture_insights(
     if not fx:
         raise HTTPException(status_code=404, detail="Fixture not found")
 
+    # ✅ label used in blurbs
+    comp_label = ((fx.comp or "").strip() or None)
+    comp_label = comp_label.upper() if comp_label else None
+
     try:
-        hybrid = get_hybrid_form_for_fixture(db, fx, n=n)
+        # ✅ make it explicit: stats are for this comp only
+        hybrid = get_hybrid_form_for_fixture(db, fx, n=n, comp_scope=True)
     except Exception:
         hybrid = None
 
     # ✅ CORRECT KEYS from get_hybrid_form_for_fixture:
-    # hybrid["home"]["summary"], hybrid["home"]["recent"]
     home_block = (hybrid or {}).get("home") or {}
     away_block = (hybrid or {}).get("away") or {}
 
@@ -433,19 +446,20 @@ def fixture_insights(
             "prob": round(p, 4),
             "fair_odds": fair_odds(p),
             "confidence": confidence_from_prob(p),
-            "blurb": mk_blurb(m, home_form, away_form, p),
+            "blurb": mk_blurb(m, home_form, away_form, p, comp_label=comp_label),
         })
 
-    # Helpful explicit stats object (so you can see instantly if recent is empty)
     stats = {
         "home": _team_stats(home_form),
         "away": _team_stats(away_form),
+        "comp": comp_label,
     }
 
     out = {
         "fixture_id": fixture_id,
         "model": model,
         "n": n,
+        "comp": comp_label,
         "insights": insights,
         "form": {"home": home_summary, "away": away_summary},
         "stats": stats,
