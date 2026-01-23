@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, BigInteger, Integer, String, Numeric, DateTime, ForeignKey,
-    UniqueConstraint, Index, Boolean, Float, Date, func, JSON, Text
+    UniqueConstraint, Index, Boolean, Float, Date, func, JSON, text, Text
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -279,13 +279,25 @@ class PlayerOdds(Base):
     __tablename__ = "player_odds"
 
     id = Column(Integer, primary_key=True)
-    fixture_id = Column(BigInteger, ForeignKey("fixtures.id", ondelete="CASCADE"), index=True)
 
-    player_id = Column(Integer, index=True, nullable=True)   # provider player id if available
+    fixture_id = Column(
+        BigInteger,
+        ForeignKey("fixtures.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+
+    # provider player id if available
+    player_id = Column(Integer, index=True, nullable=True)
+
+    # raw string from odds provider (e.g. "Alessandro Bastoni")
     player_name = Column(String, index=True, nullable=False)
 
-    market = Column(String, index=True, nullable=False)      # e.g. "shots","sot","yellow"
-    line = Column(Float, nullable=True)                      # e.g. 0.5, 1.5, 2.5
+    # canonical name for dedupe (e.g. "A. Bastoni" or normalized "a bastoni")
+    player_name_canon = Column(String, index=True, nullable=True)
+
+    market = Column(String, index=True, nullable=False)
+    line = Column(Float, nullable=True)
 
     bookmaker = Column(String, index=True, nullable=False)
     price = Column(Float, nullable=False)
@@ -295,10 +307,23 @@ class PlayerOdds(Base):
     fixture = relationship("Fixture", back_populates="player_odds")
 
     __table_args__ = (
-        UniqueConstraint("fixture_id", "player_id", "player_name", "market", "line", "bookmaker",
-                         name="uq_player_odds_row"),
+        # keep the useful query indexes
         Index("ix_player_odds_fx_market", "fixture_id", "market"),
         Index("ix_player_odds_player_market", "player_id", "market"),
+
+        # ✅ Postgres partial unique indexes (recommended)
+        Index(
+            "uq_player_odds_when_player_id",
+            "fixture_id", "player_id", "market", "line", "bookmaker",
+            unique=True,
+            postgresql_where=text("player_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_player_odds_when_no_player_id",
+            "fixture_id", "player_name_canon", "market", "line", "bookmaker",
+            unique=True,
+            postgresql_where=text("player_id IS NULL"),
+        ),
     )
 
 
