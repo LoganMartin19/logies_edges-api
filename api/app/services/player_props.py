@@ -698,46 +698,113 @@ def ingest_player_odds_for_fixture(db: Session, fixture_id: int) -> int:
     now = datetime.utcnow()
     upserts = 0
 
-    for r in rows:
-        existing = (
-            db.query(PlayerOdds)
-            .filter(
-                PlayerOdds.fixture_id == fixture_id,
-                PlayerOdds.player_name == r["player_name"],
-                PlayerOdds.market == r["market"],
-                PlayerOdds.line == r["line"],
-                PlayerOdds.bookmaker == r["bookmaker"],
-            )
-            .one_or_none()
+    def _base_q():
+        q = db.query(PlayerOdds).filter(
+            PlayerOdds.fixture_id == fixture_id,
+            PlayerOdds.market == r["market"],
+            PlayerOdds.bookmaker == r["bookmaker"],
         )
-
-        # If we previously inserted null player_id rows, we want to "upgrade" them now
-        if existing:
-            changed = False
-            if r.get("player_id") and not existing.player_id:
-                existing.player_id = int(r["player_id"])
-                changed = True
-            if float(existing.price) != float(r["price"]):
-                existing.price = float(r["price"])
-                changed = True
-            existing.last_seen = now
-            if changed:
-                db.add(existing)
-            upserts += 1
+        # line nullable-safe (explicit, avoids any weird float/NULL behaviour)
+        if r["line"] is None:
+            q = q.filter(PlayerOdds.line.is_(None))
         else:
-            db.add(
-                PlayerOdds(
-                    fixture_id=fixture_id,
-                    player_id=r.get("player_id"),
-                    player_name=r["player_name"],
-                    market=r["market"],
-                    line=r["line"],
-                    bookmaker=r["bookmaker"],
-                    price=r["price"],
-                    last_seen=now,
-                )
-            )
+            q = q.filter(PlayerOdds.line == float(r["line"]))
+        return q
+
+    for r in rows:
+        pid = r.get("player_id")
+        pname = r["player_name"]
+
+        existing_pid = None
+        existing_name = None
+
+        # 1) Prefer PID-key match when we have a resolved player_id
+        if pid:
+            existing_pid = _base_q().filter(PlayerOdds.player_id == int(pid)).one_or_none()
+
+        # 2) Fallback to name-key match
+        existing_name = _base_q().filter(PlayerOdds.player_name == pname).one_or_none()
+
+        # 3) If both exist and are different rows, keep PID row, delete legacy name row
+        if existing_pid and existing_name and existing_pid.id != existing_name.id:
+            # update pid row with latest info
+            changed = False
+            if float(existing_pid.price) != float(r["price"]):
+                existing_pid.price = float(r["price"])
+                changed = True
+
+            existing_pid.last_seen = now
+
+            # optional: unify the displayed name to latest provider name
+            # (or keep existing_pid.player_name if you want it stable)
+            if pname and existing_pid.player_name != pname:
+                existing_pid.player_name = pname
+                changed = True
+
+            if changed:
+                db.add(existing_pid)
+
+            # delete the legacy row (often the NULL player_id row)
+            db.delete(existing_name)
+
             upserts += 1
+            continue
+
+        # 4) If we have a PID match, update it
+        if existing_pid:
+            changed = False
+
+            # keep the name fresh
+            if pname and existing_pid.player_name != pname:
+                existing_pid.player_name = pname
+                changed = True
+
+            if float(existing_pid.price) != float(r["price"]):
+                existing_pid.price = float(r["price"])
+                changed = True
+
+            existing_pid.last_seen = now
+
+            if changed:
+                db.add(existing_pid)
+
+            upserts += 1
+            continue
+
+        # 5) Else if name row exists, update it and upgrade player_id if we can
+        if existing_name:
+            changed = False
+
+            if pid and not existing_name.player_id:
+                existing_name.player_id = int(pid)
+                changed = True
+
+            if float(existing_name.price) != float(r["price"]):
+                existing_name.price = float(r["price"])
+                changed = True
+
+            existing_name.last_seen = now
+
+            if changed:
+                db.add(existing_name)
+
+            upserts += 1
+            continue
+
+        # 6) Else insert new row
+        db.add(
+            PlayerOdds(
+                fixture_id=fixture_id,
+                player_id=int(pid) if pid else None,
+                player_name=pname,
+                market=r["market"],
+                line=(float(r["line"]) if r["line"] is not None else None),
+                bookmaker=r["bookmaker"],
+                price=float(r["price"]),
+                last_seen=now,
+            )
+        )
+        upserts += 1
 
     db.commit()
     print(

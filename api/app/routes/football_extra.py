@@ -29,7 +29,7 @@ from ..services.apifootball import (
     get_fixture_players,
     BASE_URL, _get_all_pages,  # ✅ keep these here
 )
-from ..services.player_odds import ingest_player_odds_for_fixture
+from ..services.player_props import ingest_player_odds_for_fixture
 from ..services.player_model import (
     poisson_pmf,
     poisson_cdf,
