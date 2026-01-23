@@ -8,7 +8,7 @@ import math
 
 from sqlalchemy.orm import Session
 
-from ..models import PlayerOdds, Fixture
+from ..models import PlayerOdds, Fixture, PlayerSeasonStats  # PlayerSeasonStats kept (not required for inference now)
 from .apifootball import _get, BASE_URL, _get_meta, get_fixture
 from .player_cache import get_team_season_players_cached
 from .player_model import prob_over_xpoint5
@@ -184,6 +184,26 @@ def _fixture_season_from_provider(fixture: Fixture) -> Optional[int]:
         return None
 
 
+def _norm_pos_tag(raw: Optional[str]) -> Optional[str]:
+    """
+    Canonical backend position buckets:
+      goalkeeper / defender / midfielder / attacker
+    """
+    if not raw:
+        return None
+    r = str(raw).strip().lower()
+
+    if "goal" in r or r == "gk":
+        return "goalkeeper"
+    if "def" in r or r in {"d", "df"} or "back" in r:
+        return "defender"
+    if "mid" in r or r in {"m", "mf"}:
+        return "midfielder"
+    if "att" in r or "forw" in r or "wing" in r or "strik" in r or r in {"f", "fw"}:
+        return "attacker"
+    return r
+
+
 # ---------------------------------------------------------------------
 # API call (odds)
 # ---------------------------------------------------------------------
@@ -203,6 +223,158 @@ def fetch_player_odds_for_fixture(provider_fixture_id: int) -> List[Dict[str, An
     url = f"{BASE_URL}/odds"
     payload = _get(url, {"fixture": provider_fixture_id}) or []
     return payload if isinstance(payload, list) else []
+
+
+# ---------------------------------------------------------------------
+# Season-cache row getter (shared by position/per90/inference)
+# ---------------------------------------------------------------------
+
+def _get_player_row_from_season_cache(
+    db: Session,
+    fixture: Fixture,
+    player_id: int,
+    season: Optional[int],
+) -> Optional[dict]:
+    """
+    Returns the season-cache row (from get_team_season_players_cached) for this player
+    across BOTH teams in the fixture. This is the same source your /player/summary uses.
+    """
+    if not fixture.provider_fixture_id:
+        return None
+
+    season_use = season or _fixture_season_from_provider(fixture)
+    if not season_use:
+        return None
+
+    # Need provider team ids for fixture
+    try:
+        pfx = int(fixture.provider_fixture_id)
+        fjson = get_fixture(pfx) or {}
+        core = (fjson.get("response") or [None])[0] or {}
+        teams = core.get("teams") or {}
+        home_id = int(((teams.get("home") or {}).get("id")) or 0)
+        away_id = int(((teams.get("away") or {}).get("id")) or 0)
+    except Exception:
+        return None
+
+    if not (home_id and away_id):
+        return None
+
+    home_rows = get_team_season_players_cached(db, home_id, season_use) or []
+    away_rows = get_team_season_players_cached(db, away_id, season_use) or []
+    for r in (home_rows + away_rows):
+        pid = int(((r.get("player") or {}).get("id")) or 0)
+        if pid == int(player_id):
+            return r
+    return None
+
+
+def _player_position_from_season_cache(
+    db: Session,
+    fixture: Fixture,
+    player_id: int,
+    season: Optional[int],
+) -> Optional[str]:
+    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
+    if not row:
+        return None
+
+    for s in (row.get("statistics") or []):
+        games = s.get("games") or {}
+        pos = (games.get("position") or "").strip()
+        if pos:
+            return _norm_pos_tag(pos)
+
+    pos = ((row.get("player") or {}) or {}).get("position") or ""
+    pos = str(pos).strip() if pos else ""
+    return _norm_pos_tag(pos) if pos else None
+
+
+def _per90_from_season_cache(
+    db: Session,
+    fixture: Fixture,
+    player_id: int,
+    season: Optional[int],
+    stat_key: str,
+) -> Optional[float]:
+    """
+    Compute per90 using the SAME season-cache structure used in /player/summary.
+    This avoids relying on PlayerSeasonStats (which may be empty).
+    """
+    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
+    if not row:
+        return None
+
+    mins = 0.0
+    tot = 0.0
+
+    for s in (row.get("statistics") or []):
+        lg = (s.get("league") or {})
+        if season and int(lg.get("season") or 0) != int(season):
+            continue
+
+        games = s.get("games") or {}
+        minutes = float(games.get("minutes") or 0.0)
+        if minutes <= 0:
+            continue
+
+        if stat_key == "shots":
+            v = ((s.get("shots") or {}).get("total")) or 0
+        elif stat_key == "sot":
+            v = ((s.get("shots") or {}).get("on")) or 0
+        elif stat_key == "fouls":
+            v = ((s.get("fouls") or {}).get("committed")) or 0
+        elif stat_key == "tackles":
+            v = ((s.get("tackles") or {}).get("total")) or 0
+        elif stat_key == "interceptions":
+            v = ((s.get("tackles") or {}).get("interceptions")) or 0
+        elif stat_key == "passes":
+            v = ((s.get("passes") or {}).get("total")) or 0
+        elif stat_key == "key_passes":
+            v = ((s.get("passes") or {}).get("key")) or 0
+        else:
+            continue
+
+        mins += minutes
+        tot += float(v or 0.0)
+
+    if mins <= 0:
+        return None
+
+    return float((tot / mins) * 90.0)
+
+
+def _expected_minutes_from_season_cache(
+    db: Session,
+    fixture: Fixture,
+    player_id: int,
+    season: Optional[int],
+) -> int:
+    """
+    Expected minutes from season cache: average minutes per appearance.
+    Falls back to 80.
+    """
+    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
+    if not row:
+        return 80
+
+    mins_total = 0.0
+    apps_total = 0.0
+
+    for s in (row.get("statistics") or []):
+        lg = (s.get("league") or {})
+        if season and int(lg.get("season") or 0) != int(season):
+            continue
+
+        games = s.get("games") or {}
+        mins_total += float(games.get("minutes") or 0.0)
+        apps_total += float(games.get("appearences") or games.get("appearances") or 0.0)
+
+    if apps_total > 0 and mins_total > 0:
+        avg = mins_total / apps_total
+        return int(max(45, min(avg, 95)))
+
+    return 80
 
 
 # ---------------------------------------------------------------------
@@ -337,138 +509,7 @@ def _resolve_player_id_from_alias(
 
 
 # ---------------------------------------------------------------------
-# ✅ Season-cache stats for inference (REPLACES PlayerSeasonStats dependency)
-# ---------------------------------------------------------------------
-
-def _get_player_row_from_season_cache(
-    db: Session,
-    fixture: Fixture,
-    player_id: int,
-    season: Optional[int],
-) -> Optional[dict]:
-    """
-    Find this player in cached season roster/stats (get_team_season_players_cached).
-    Returns the first matching player row (includes 'statistics' blocks).
-    """
-    if not (fixture.provider_fixture_id and season and player_id):
-        return None
-
-    try:
-        pfx = int(fixture.provider_fixture_id)
-        fjson = get_fixture(pfx) or {}
-        core = (fjson.get("response") or [None])[0] or {}
-        teams = core.get("teams") or {}
-        home_id = int(((teams.get("home") or {}).get("id")) or 0)
-        away_id = int(((teams.get("away") or {}).get("id")) or 0)
-        if not (home_id and away_id):
-            return None
-
-        rows = (get_team_season_players_cached(db, home_id, season) or []) + (
-            get_team_season_players_cached(db, away_id, season) or []
-        )
-
-        for r in rows:
-            pl = (r.get("player") or {}) or {}
-            if int(pl.get("id") or 0) == int(player_id):
-                return r
-    except Exception:
-        return None
-
-    return None
-
-
-def _per90_from_season_cache(
-    db: Session,
-    fixture: Fixture,
-    player_id: int,
-    season: Optional[int],
-    stat_key: str,
-) -> Optional[float]:
-    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
-    if not row:
-        return None
-
-    minutes = 0.0
-    total = 0.0
-
-    for s in (row.get("statistics") or []):
-        games = s.get("games") or {}
-        mins = float(games.get("minutes") or 0.0)
-        if mins <= 0:
-            continue
-        minutes += mins
-
-        if stat_key == "shots":
-            total += float(((s.get("shots") or {}).get("total")) or 0.0)
-        elif stat_key == "sot":
-            total += float(((s.get("shots") or {}).get("on")) or 0.0)
-        elif stat_key == "fouls":
-            total += float(((s.get("fouls") or {}).get("committed")) or 0.0)
-        elif stat_key == "tackles":
-            total += float(((s.get("tackles") or {}).get("total")) or 0.0)
-        elif stat_key == "passes":
-            total += float(((s.get("passes") or {}).get("total")) or 0.0)
-        elif stat_key == "interceptions":
-            total += float(((s.get("tackles") or {}).get("interceptions")) or 0.0)
-        elif stat_key == "key_passes":
-            total += float(((s.get("passes") or {}).get("key")) or 0.0)
-        else:
-            return None
-
-    if minutes <= 0:
-        return None
-
-    return float((total / minutes) * 90.0)
-
-
-def _expected_minutes_from_season_cache(
-    db: Session,
-    fixture: Fixture,
-    player_id: int,
-    season: Optional[int],
-) -> int:
-    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
-    if not row:
-        return 80
-
-    mins_total = 0.0
-    apps_total = 0.0
-
-    for s in (row.get("statistics") or []):
-        games = s.get("games") or {}
-        mins_total += float(games.get("minutes") or 0.0)
-        apps_total += float(games.get("appearences") or games.get("appearances") or 0.0)
-
-    if apps_total > 0 and mins_total > 0:
-        avg = mins_total / apps_total
-        return int(max(45, min(avg, 95)))
-
-    return 80
-
-
-def _player_position_from_season_cache(
-    db: Session,
-    fixture: Fixture,
-    player_id: int,
-    season: Optional[int],
-) -> Optional[str]:
-    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
-    if not row:
-        return None
-
-    for s in (row.get("statistics") or []):
-        games = s.get("games") or {}
-        pos = (games.get("position") or "").strip().lower()
-        if pos:
-            return pos
-
-    pos = ((row.get("player") or {}) or {}).get("position") or ""
-    pos = str(pos).strip().lower() if pos else ""
-    return pos or None
-
-
-# ---------------------------------------------------------------------
-# Bucket inference (same logic, just uses season-cache data now)
+# Bucket inference (UPDATED: uses season cache, not PlayerSeasonStats)
 # ---------------------------------------------------------------------
 
 def _bucket_priors(position: Optional[str], line: float) -> Dict[str, float]:
@@ -548,7 +589,7 @@ def _infer_bucket_stat(
     if not player_id:
         return None
 
-    expected_minutes = _expected_minutes_from_season_cache(db, fixture, player_id, season)
+    expected_minutes = _expected_minutes_from_season_cache(db, fixture, player_id, season=season)
 
     implied = 1.0 / float(price) if price and price > 0 else None
     if implied is None:
@@ -560,14 +601,18 @@ def _infer_bucket_stat(
 
     candidates = ["shots", "sot", "fouls", "tackles", "passes", "interceptions", "key_passes"]
 
-    pos = _player_position_from_season_cache(db, fixture, player_id, season)
+    pos = _player_position_from_season_cache(db, fixture, player_id, season=season)
     pri = _bucket_priors(pos, x_half)
+
+    # small guardrail: attackers at high ladder shouldn't become tackles/passes unless truly fits
+    if pos == "attacker" and x_half >= 3.5:
+        candidates = ["shots", "sot", "fouls"]
 
     best_key = None
     best_score = 1e9
 
     for stat_key in candidates:
-        per90 = _per90_from_season_cache(db, fixture, player_id, season, stat_key)
+        per90 = _per90_from_season_cache(db, fixture, player_id, season=season, stat_key=stat_key)
         if per90 is None:
             continue
 
@@ -587,10 +632,11 @@ def _infer_bucket_stat(
     if best_key is None:
         return None
 
+    # sanity: if price is short and fit is terrible, drop it
     if price < 10:
         best_fit = 1e9
         for stat_key in candidates:
-            per90 = _per90_from_season_cache(db, fixture, player_id, season, stat_key)
+            per90 = _per90_from_season_cache(db, fixture, player_id, season=season, stat_key=stat_key)
             if per90 is None:
                 continue
             p_model = prob_over_xpoint5(per90=per90, expected_minutes=expected_minutes, x_half=x_half)
@@ -613,7 +659,7 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
 
     alias_map: Dict[str, int] = _build_fixture_player_index(db, fixture.id)
 
-    # ✅ Use actual league season (not kickoff year)
+    # Use actual league season (not kickoff year)
     season = _fixture_season_from_provider(fixture)
 
     for fx_block in api_response:
@@ -681,6 +727,7 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
 
                     inferred_from_bucket = None
 
+                    # If it’s a bucket market, infer the real stat (shots/sot/etc)
                     if canonical_market in BUCKET_MARKETS and line is not None:
                         inferred = _infer_bucket_stat(
                             db=db,
