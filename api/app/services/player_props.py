@@ -172,6 +172,19 @@ def _split_first_last(full: str) -> Tuple[Optional[str], Optional[str]]:
     return first or None, last or None
 
 
+def _fixture_season_from_provider(db: Session, fixture: Fixture) -> Optional[int]:
+    if not fixture.provider_fixture_id:
+        return None
+    try:
+        pfx = int(fixture.provider_fixture_id)
+        fjson = get_fixture(pfx) or {}
+        core = (fjson.get("response") or [None])[0] or {}
+        lg = core.get("league") or {}
+        season = lg.get("season")
+        return int(season) if season else None
+    except Exception:
+        return None
+
 # ---------------------------------------------------------------------
 # API call (odds)
 # ---------------------------------------------------------------------
@@ -552,11 +565,11 @@ def _infer_bucket_stat(
     player_name: str,
     line: float,
     price: float,
+    season: Optional[int],   # ✅ NEW
 ) -> Optional[str]:
     if not player_id:
         return None
 
-    season = fixture.kickoff_utc.year if fixture.kickoff_utc else None
     expected_minutes = _expected_minutes_from_cached(db, player_id, season=season)
 
     implied = 1.0 / float(price) if price and price > 0 else None
@@ -620,8 +633,10 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
     if not isinstance(api_response, list):
         return rows
 
-    # ✅ stable alias map for this fixture (season players cache)
     alias_map: Dict[str, int] = _build_fixture_player_index(db, fixture.id)
+
+    # ✅ Use actual league season (not kickoff year)
+    season = _fixture_season_from_provider(db, fixture)
 
     for fx_block in api_response:
         bookmakers = fx_block.get("bookmakers") or fx_block.get("bookmaker") or []
@@ -696,6 +711,7 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
                             player_name=player_name,
                             line=float(line),
                             price=float(price),
+                            season=season,
                         )
                         if inferred:
                             inferred_from_bucket = canonical_market
