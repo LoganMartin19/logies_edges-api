@@ -9,7 +9,8 @@ import math
 from sqlalchemy.orm import Session
 
 from ..models import PlayerOdds, Fixture, PlayerSeasonStats
-from .apifootball import _get, BASE_URL, _get_meta, get_fixture_players
+from .apifootball import _get, BASE_URL, _get_meta, get_fixture_players, get_fixture
+from .player_cache import get_team_season_players_cached
 from .player_model import prob_over_xpoint5
 
 # ---------------------------------------------------------------------
@@ -69,6 +70,8 @@ BET_ID_MAP: Dict[int, Dict[str, Any]] = {
 # ---------------------------------------------------------------------
 
 _LINE_RE = re.compile(r"(-?\d+(?:\.\d+)?)")  # finds 4.5 or -0.5 anywhere
+_SPACE_RE = re.compile(r"\s+")
+_DASH_LINE_RE = re.compile(r"\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*$")
 
 NO_LINE_MARKETS = {
     "anytime_goalscorer",
@@ -124,6 +127,7 @@ def _norm_name(s: str) -> str:
       and ignores dashes and extra spaces.
     """
     s = (s or "").strip().lower()
+    s = s.replace("–", "-").replace("—", "-")
     s = s.replace(".", " ")
     s = re.sub(r"[-–—]", " ", s)
     s = re.sub(r"\s{2,}", " ", s).strip()
@@ -150,6 +154,24 @@ def _split_player_and_line(value_str: str) -> Tuple[str, Optional[float]]:
     return player, line
 
 
+def _split_first_last(full: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    "A. Bastoni" => ("a", "bastoni")
+    "Alessandro Bastoni" => ("alessandro", "bastoni")
+    "Luis Henrique de Lima" => ("luis", "lima")  (best-effort: last token)
+    """
+    s = _norm_name(full)
+    if not s:
+        return None, None
+    s = s.strip("-").strip()
+    parts = [p for p in s.split(" ") if p]
+    if len(parts) < 2:
+        return (parts[0], None) if parts else (None, None)
+    first = parts[0].replace(".", "")
+    last = parts[-1].replace(".", "")
+    return first or None, last or None
+
+
 # ---------------------------------------------------------------------
 # API call (odds)
 # ---------------------------------------------------------------------
@@ -172,111 +194,132 @@ def fetch_player_odds_for_fixture(provider_fixture_id: int) -> List[Dict[str, An
 
 
 # ---------------------------------------------------------------------
-# Fixture roster mapping: name -> player_id (with variants)
+# Fixture roster mapping (stable): name -> player_id using season-players cache
 # ---------------------------------------------------------------------
 
-def _name_variants(full_name: str) -> List[str]:
+def _build_fixture_player_index(db: Session, fixture_id: int) -> Dict[str, int]:
     """
-    Produce reasonable match keys for a roster name.
-    Example: "Alessandro Bastoni" ->
-      ["alessandro bastoni", "a bastoni", "a. bastoni", "bastoni"]
+    Uses cached season players (team-season roster) to build aliases for name->player_id.
+
+    Builds:
+      - raw provider display name: "A. Bastoni"
+      - full: "Alessandro Bastoni"
+      - initial variants: "A Bastoni" / "A. Bastoni"
+      - last name only: "Bastoni" (only if unique in this fixture)
     """
-    nm = _norm_name(_clean_player_name(full_name))
-    if not nm:
-        return []
-
-    parts = [p for p in nm.split(" ") if p]
-    if not parts:
-        return [nm]
-
-    first = parts[0]
-    last = parts[-1]
-
-    out = {nm, last}
-
-    # first initial + last
-    if first:
-        out.add(f"{first[0]} {last}")
-        out.add(f"{first[0]}. {last}")
-
-    # first + last (even if middle names exist)
-    if len(parts) >= 2:
-        out.add(f"{parts[0]} {parts[-1]}")
-
-    return list(out)
-
-
-def _fixture_player_name_map(provider_fixture_id: int) -> Dict[str, int]:
-    """
-    Call API-Football /fixtures/players and build a map {normalized_name_variant: player_id}.
-    This solves cases where odds payload doesn't include player.id and only provides a name.
-    """
-    try:
-        j = get_fixture_players(int(provider_fixture_id)) or {}
-        resp = j.get("response") or []
-        if not isinstance(resp, list):
-            return {}
-    except Exception as e:
-        print(f"[player_props] get_fixture_players error: {e}")
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
+    if not fx or not fx.provider_fixture_id:
         return {}
 
-    out: Dict[str, int] = {}
-    for team_block in resp:
-        players = (team_block or {}).get("players") or []
-        if not isinstance(players, list):
-            continue
-        for p in players:
-            pinfo = (p or {}).get("player") or {}
-            pid = _safe_int(pinfo.get("id"))
-            name = _clean_player_name((pinfo.get("name") or "").strip())
-            if not pid or not name:
+    pfx = int(fx.provider_fixture_id)
+    fjson = get_fixture(pfx) or {}
+    core = (fjson.get("response") or [None])[0] or {}
+    lg = core.get("league") or {}
+    season = int(lg.get("season") or 0)
+
+    teams = core.get("teams") or {}
+    home_id = int(((teams.get("home") or {}).get("id")) or 0)
+    away_id = int(((teams.get("away") or {}).get("id")) or 0)
+
+    if not (season and home_id and away_id):
+        return {}
+
+    home_rows = get_team_season_players_cached(db, home_id, season) or []
+    away_rows = get_team_season_players_cached(db, away_id, season) or []
+
+    alias_to_id: Dict[str, int] = {}
+
+    def _add_alias(key: str, pid: int):
+        k = _norm_name(key)
+        if not k:
+            return
+        alias_to_id.setdefault(k, pid)
+
+    def _process(rows: List[dict]):
+        for row in rows:
+            pl = (row.get("player") or {}) or {}
+            pid = int(pl.get("id") or 0)
+            if not pid:
                 continue
 
-            for v in _name_variants(name):
-                out[v] = int(pid)
+            raw_name = (pl.get("name") or "").strip()  # often "A. Bastoni"
+            first = (pl.get("firstname") or "").strip()
+            last = (pl.get("lastname") or "").strip()
 
-    return out
+            # 1) always alias provider display name
+            if raw_name:
+                _add_alias(raw_name, pid)
+
+            # 2) firstname/lastname → full + initial aliases
+            if first and last:
+                _add_alias(f"{first} {last}", pid)
+                fi = first[:1]
+                if fi:
+                    _add_alias(f"{fi} {last}", pid)
+                    _add_alias(f"{fi}. {last}", pid)
+                _add_alias(f"__LAST__:{last}", pid)
+
+            # 3) fallback: split raw_name if firstname/lastname missing
+            if (not first or not last) and raw_name:
+                f, l = _split_first_last(raw_name)
+                if f and l:
+                    _add_alias(f"{f} {l}", pid)
+                    _add_alias(f"{f}. {l}", pid)
+                    _add_alias(f"__LAST__:{l}", pid)
+
+    _process(home_rows)
+    _process(away_rows)
+
+    # last-name-only aliases only if unique in this fixture
+    last_name_to_ids: Dict[str, set] = {}
+    for k, pid in list(alias_to_id.items()):
+        if k.startswith("__last__:"):
+            ln = _norm_name(k.split(":", 1)[1])
+            if ln:
+                last_name_to_ids.setdefault(ln, set()).add(pid)
+
+    for ln, ids in last_name_to_ids.items():
+        if len(ids) == 1:
+            alias_to_id[ln] = list(ids)[0]
+
+    # Remove internal markers
+    for k in [k for k in list(alias_to_id.keys()) if k.startswith("__last__:")]:
+        alias_to_id.pop(k, None)
+
+    return alias_to_id
 
 
-def _first_initial_and_last(nm: str) -> Tuple[str, str]:
-    parts = [p for p in _norm_name(nm).split(" ") if p]
-    if not parts:
-        return "", ""
-    first = parts[0]
-    last = parts[-1]
-    return (first[0] if first else ""), last
-
-
-def _resolve_player_id(player_id: Optional[int], player_name: str, name_map: Dict[str, int]) -> Optional[int]:
+def _resolve_player_id_from_alias(
+    pid0: Optional[int],
+    player_name: str,
+    alias_map: Dict[str, int],
+) -> Optional[int]:
     """
-    Resolution strategy:
-      1) keep provided id
-      2) exact match on normalized name
-      3) try variants implicitly (since name_map already contains variants)
-      4) fallback: surname + first initial match
+    Resolver for odds names using alias_map from season players cache.
     """
-    if player_id:
-        return player_id
+    if pid0:
+        return int(pid0)
     if not player_name:
         return None
 
     nm = _norm_name(_clean_player_name(player_name))
-    if nm in name_map:
-        return name_map[nm]
+    if nm in alias_map:
+        return alias_map[nm]
 
-    # fallback: initial + last
-    ini, last = _first_initial_and_last(player_name)
-    if ini and last:
-        k1 = f"{ini} {last}"
-        k2 = f"{ini}. {last}"
-        if k1 in name_map:
-            return name_map[k1]
-        if k2 in name_map:
-            return name_map[k2]
+    f, l = _split_first_last(player_name)
+    if l:
+        # try "A Bastoni" / "A. Bastoni"
+        if f:
+            fi = f[:1].lower()
+            for cand in (f"{fi} {l}", f"{fi}. {l}"):
+                pid = alias_map.get(_norm_name(cand))
+                if pid:
+                    return int(pid)
 
-    # fallback: surname only
-    if last and last in name_map:
-        return name_map[last]
+        # try unique last name
+        pid = alias_map.get(_norm_name(l))
+        if pid:
+            return int(pid)
 
     return None
 
@@ -577,12 +620,8 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
     if not isinstance(api_response, list):
         return rows
 
-    provider_fixture_id = int(fixture.provider_fixture_id) if fixture.provider_fixture_id else None
-    name_map: Dict[str, int] = _fixture_player_name_map(provider_fixture_id) if provider_fixture_id else {}
-
-    # Optional debug: prove roster has Bastoni
-    # print("[player_props] roster size:", len(name_map))
-    # print("[player_props] roster keys w/ bastoni:", [k for k in name_map.keys() if "bastoni" in k][:10])
+    # ✅ stable alias map for this fixture (season players cache)
+    alias_map: Dict[str, int] = _build_fixture_player_index(db, fixture.id)
 
     for fx_block in api_response:
         bookmakers = fx_block.get("bookmakers") or fx_block.get("bookmaker") or []
@@ -633,7 +672,7 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
                         continue
 
                     pid0 = _safe_int(pinfo.get("id") or v.get("id") or v.get("player_id"))
-                    player_id = _resolve_player_id(pid0, player_name, name_map)
+                    player_id = _resolve_player_id_from_alias(pid0, player_name, alias_map)
 
                     cfg_line = cfg.get("line")
 
@@ -698,113 +737,51 @@ def ingest_player_odds_for_fixture(db: Session, fixture_id: int) -> int:
     now = datetime.utcnow()
     upserts = 0
 
-    def _base_q():
-        q = db.query(PlayerOdds).filter(
-            PlayerOdds.fixture_id == fixture_id,
-            PlayerOdds.market == r["market"],
-            PlayerOdds.bookmaker == r["bookmaker"],
-        )
-        # line nullable-safe (explicit, avoids any weird float/NULL behaviour)
-        if r["line"] is None:
-            q = q.filter(PlayerOdds.line.is_(None))
-        else:
-            q = q.filter(PlayerOdds.line == float(r["line"]))
-        return q
-
     for r in rows:
-        pid = r.get("player_id")
-        pname = r["player_name"]
-
-        existing_pid = None
-        existing_name = None
-
-        # 1) Prefer PID-key match when we have a resolved player_id
-        if pid:
-            existing_pid = _base_q().filter(PlayerOdds.player_id == int(pid)).one_or_none()
-
-        # 2) Fallback to name-key match
-        existing_name = _base_q().filter(PlayerOdds.player_name == pname).one_or_none()
-
-        # 3) If both exist and are different rows, keep PID row, delete legacy name row
-        if existing_pid and existing_name and existing_pid.id != existing_name.id:
-            # update pid row with latest info
-            changed = False
-            if float(existing_pid.price) != float(r["price"]):
-                existing_pid.price = float(r["price"])
-                changed = True
-
-            existing_pid.last_seen = now
-
-            # optional: unify the displayed name to latest provider name
-            # (or keep existing_pid.player_name if you want it stable)
-            if pname and existing_pid.player_name != pname:
-                existing_pid.player_name = pname
-                changed = True
-
-            if changed:
-                db.add(existing_pid)
-
-            # delete the legacy row (often the NULL player_id row)
-            db.delete(existing_name)
-
-            upserts += 1
-            continue
-
-        # 4) If we have a PID match, update it
-        if existing_pid:
-            changed = False
-
-            # keep the name fresh
-            if pname and existing_pid.player_name != pname:
-                existing_pid.player_name = pname
-                changed = True
-
-            if float(existing_pid.price) != float(r["price"]):
-                existing_pid.price = float(r["price"])
-                changed = True
-
-            existing_pid.last_seen = now
-
-            if changed:
-                db.add(existing_pid)
-
-            upserts += 1
-            continue
-
-        # 5) Else if name row exists, update it and upgrade player_id if we can
-        if existing_name:
-            changed = False
-
-            if pid and not existing_name.player_id:
-                existing_name.player_id = int(pid)
-                changed = True
-
-            if float(existing_name.price) != float(r["price"]):
-                existing_name.price = float(r["price"])
-                changed = True
-
-            existing_name.last_seen = now
-
-            if changed:
-                db.add(existing_name)
-
-            upserts += 1
-            continue
-
-        # 6) Else insert new row
-        db.add(
-            PlayerOdds(
-                fixture_id=fixture_id,
-                player_id=int(pid) if pid else None,
-                player_name=pname,
-                market=r["market"],
-                line=(float(r["line"]) if r["line"] is not None else None),
-                bookmaker=r["bookmaker"],
-                price=float(r["price"]),
-                last_seen=now,
+        existing = (
+            db.query(PlayerOdds)
+            .filter(
+                PlayerOdds.fixture_id == fixture_id,
+                PlayerOdds.player_name == r["player_name"],
+                PlayerOdds.market == r["market"],
+                PlayerOdds.bookmaker == r["bookmaker"],
             )
         )
-        upserts += 1
+
+        if r["line"] is None:
+            existing = existing.filter(PlayerOdds.line.is_(None))
+        else:
+            existing = existing.filter(PlayerOdds.line == float(r["line"]))
+
+        existing = existing.one_or_none()
+
+        # Upgrade NULL player_id rows when we can resolve it
+        if existing:
+            changed = False
+            if r.get("player_id") and not existing.player_id:
+                existing.player_id = int(r["player_id"])
+                changed = True
+            if float(existing.price) != float(r["price"]):
+                existing.price = float(r["price"])
+                changed = True
+            existing.last_seen = now
+            if changed:
+                db.add(existing)
+            upserts += 1
+        else:
+            db.add(
+                PlayerOdds(
+                    fixture_id=fixture_id,
+                    player_id=int(r["player_id"]) if r.get("player_id") else None,
+                    player_name=r["player_name"],
+                    market=r["market"],
+                    line=r["line"],
+                    bookmaker=r["bookmaker"],
+                    price=r["price"],
+                    last_seen=now,
+                )
+            )
+            upserts += 1
 
     db.commit()
     print(
