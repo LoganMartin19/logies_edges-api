@@ -9,7 +9,7 @@ import math
 from sqlalchemy.orm import Session
 
 from ..models import PlayerOdds, Fixture, PlayerSeasonStats
-from .apifootball import _get, BASE_URL
+from .apifootball import _get, BASE_URL, _get_meta
 from .player_model import prob_over_xpoint5, fair_odds as _fair_odds
 
 
@@ -159,18 +159,14 @@ def _split_player_and_line(value_str: str) -> Tuple[str, Optional[float]]:
 # API call (player odds)
 # ---------------------------------------------------------------------
 def fetch_player_odds_raw_for_fixture(db: Session, fixture_id: int) -> dict:
-    """
-    Debug helper: returns the *raw* API-Football payload for this fixture's player odds.
-    """
-    fx: Fixture | None = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
     if not fx or not fx.provider_fixture_id:
         return {"error": "fixture missing provider_fixture_id"}
 
     provider_fixture_id = int(fx.provider_fixture_id)
     url = f"{BASE_URL}/odds"
     params = {"fixture": provider_fixture_id, "type": "player"}
-    payload = _get(url, params) or {}
-    return payload
+    return _get_meta(url, params)
     
 def fetch_player_odds_for_fixture(provider_fixture_id: int) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/odds"
