@@ -345,38 +345,17 @@ def _get(url: str, params: dict, retries: int = 4, backoff: float = 0.75) -> Lis
     return []
 
 def _get_meta(url: str, params: dict | None = None) -> dict:
-    """
-    Like _get(), but returns status + error payload so we can debug.
-    """
-    headers = {}
-
-    # Support both auth styles (use whichever you actually use elsewhere)
-    apisports_key = os.getenv("APISPORTS_KEY") or os.getenv("API_FOOTBALL_KEY")
-    rapid_key = os.getenv("RAPIDAPI_KEY")
-    rapid_host = os.getenv("RAPIDAPI_HOST")  # e.g. "v3.football.api-sports.io"
-
-    if apisports_key:
-        headers["x-apisports-key"] = apisports_key
-
-    if rapid_key and rapid_host:
-        headers["x-rapidapi-key"] = rapid_key
-        headers["x-rapidapi-host"] = rapid_host
-
     try:
-        r = requests.get(url, params=params or {}, headers=headers, timeout=20)
+        r = requests.get(url, params=params or {}, headers=HEADERS, timeout=20)
         ct = r.headers.get("content-type", "")
-        data = None
-        if "application/json" in ct:
-            data = r.json()
-        else:
-            data = {"text": r.text[:2000]}
+        data = r.json() if "application/json" in ct else {"text": r.text[:2000]}
 
         return {
             "ok": r.ok,
             "status": r.status_code,
             "url": url,
             "params": params or {},
-            "headers_used": list(headers.keys()),
+            "headers_used": list(HEADERS.keys()),
             "data": data,
         }
     except Exception as e:
@@ -385,7 +364,7 @@ def _get_meta(url: str, params: dict | None = None) -> dict:
             "status": None,
             "url": url,
             "params": params or {},
-            "headers_used": list(headers.keys()),
+            "headers_used": list(HEADERS.keys()),
             "error": str(e),
         }
 
