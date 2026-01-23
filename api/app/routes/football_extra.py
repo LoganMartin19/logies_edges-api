@@ -384,6 +384,29 @@ _SEVERITY_RANK = {
     "minor": 1,
 }
 
+def _norm_player_name(s: str) -> str:
+    s = (s or "").lower().strip()
+    s = s.replace("–", "-").replace("—", "-")
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def _line_key(x):
+    if x is None:
+        return None
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+# DB PlayerOdds.market -> endpoint market names
+DB_TO_ENDPOINT_MARKET = {
+    "shots": "shots_over_1.5",
+    "sot": "sot_over_0.5",
+    "fouls": "fouls_over_0.5",
+    "yellow": "to_be_booked",
+    # keep for later if/when you store it:
+    # "fouls_drawn": "fouls_drawn_over_0.5",
+}
 
 def _rank_row(row: dict) -> tuple:
     p = (row or {}).get("player") or {}
@@ -1560,16 +1583,39 @@ def player_props_fair(
 
     stats_data = _get_player_props_data(fixture_id, db)
 
-    # Best available odds (by player, market, line)
-    stored_odds = (
-        db.query(PlayerOdds).filter(PlayerOdds.fixture_id == fixture_id).all()
-    )
-    odds_map: dict[tuple[int, str, float], dict] = {}
+    # Best available odds (by player_id OR by player_name fallback), market, line
+    stored_odds = db.query(PlayerOdds).filter(PlayerOdds.fixture_id == fixture_id).all()
+
+    odds_by_pid: dict[tuple[int, str, float | None], dict] = {}
+    odds_by_name: dict[tuple[str, str, float | None], dict] = {}
+
     for o in stored_odds:
-        key = (int(o.player_id), (o.market or "").lower(), float(o.line or 0.0))
-        best = odds_map.get(key)
-        if not best or float(o.price) > best["price"]:
-            odds_map[key] = {"bookmaker": o.bookmaker, "price": float(o.price)}
+        db_mkt = (o.market or "").lower().strip()
+        endpoint_mkt = DB_TO_ENDPOINT_MARKET.get(db_mkt)
+        if not endpoint_mkt:
+            continue
+
+        lk = _line_key(o.line)  # None or float
+        price = float(o.price or 0.0)
+        if price <= 1.0:
+            continue
+
+        bm = o.bookmaker or "Unknown"
+
+        # index by pid (if present)
+        if o.player_id:
+            kpid = (int(o.player_id), endpoint_mkt, lk)
+            best = odds_by_pid.get(kpid)
+            if not best or price > best["price"]:
+                odds_by_pid[kpid] = {"bookmaker": bm, "price": price}
+
+        # always index by name (fallback)
+        nm = _norm_player_name(o.player_name)
+        if nm:
+            knm = (nm, endpoint_mkt, lk)
+            best = odds_by_name.get(knm)
+            if not best or price > best["price"]:
+                odds_by_name[knm] = {"bookmaker": bm, "price": price}
 
     team_norm = (team or "").strip().lower()
     want_team = team_norm in {"home", "away"}
@@ -1686,8 +1732,12 @@ def player_props_fair(
                 if market_set and market not in market_set:
                     continue
 
-                key = (int(pl["id"]), market, float(line))
-                bm = odds_map.get(key)
+                lk = float(line) if line is not None else None
+
+                bm = odds_by_pid.get((int(pl["id"]), market, lk))
+                if not bm:
+                    nm = _norm_player_name(pl.get("name") or "")
+                    bm = odds_by_name.get((nm, market, lk))
 
                 out["props"].append(
                     {
