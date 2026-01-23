@@ -1,176 +1,451 @@
-# api/app/services/player_odds.py
+# api/app/routes/player_odds.py
 from __future__ import annotations
 
-from datetime import datetime
 import re
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
 
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..models import PlayerOdds, Fixture
-from ..services.apifootball import _get, BASE_URL
+from ..db import get_db
+from ..models import Fixture, PlayerOdds  # <-- ensure you have PlayerOdds model
+from ..services.apifootball import get_fixture  # fixture details cache
+from ..services.player_cache import get_team_season_players_cached  # <-- your cached season players
+
+router = APIRouter(prefix="/api/player-odds", tags=["player-odds"])
 
 
-_LINE_RE = re.compile(r"(-?\d+(?:\.\d+)?)")  # 4.5 in "Over 4.5" or "-0.5" etc
+# -----------------------------
+# Normalization / parsing utils
+# -----------------------------
 
-def _safe_float(x, default: Optional[float] = None) -> Optional[float]:
-    if x is None:
-        return default
-    try:
-        return float(x)
-    except Exception:
-        return default
+_space_re = re.compile(r"\s+")
+_dash_line_re = re.compile(r"\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*$")
 
-def _safe_int(x, default: Optional[int] = None) -> Optional[int]:
-    if x is None:
-        return default
-    try:
-        return int(x)
-    except Exception:
-        return default
+def _norm_name(s: str) -> str:
+    """
+    Normalize names to match reliably across:
+      - "A. Bastoni"
+      - "Alessandro Bastoni"
+      - "Alessandro Bastoni - 1.5"
+      - weird unicode dashes
+    """
+    if not s:
+        return ""
+    s = str(s)
+    # unify dashes
+    s = s.replace("–", "-").replace("—", "-")
+    # remove punctuation except spaces/dots (dots matter for initials)
+    s = re.sub(r"[^\w\s\.\-']", " ", s, flags=re.UNICODE)
+    s = s.lower().strip()
+    s = _space_re.sub(" ", s)
+    return s
 
-def _extract_line_from_value(value_str: str) -> Optional[float]:
+def _strip_line_suffix(value_str: str) -> Tuple[str, Optional[float]]:
+    """
+    Given "Alessandro Bastoni - 1.5" -> ("Alessandro Bastoni", 1.5)
+    If no suffix -> (value_str, None)
+    """
     if not value_str:
-        return None
-    m = _LINE_RE.search(value_str)
+        return "", None
+    s = str(value_str).replace("–", "-").replace("—", "-").strip()
+    m = _dash_line_re.search(s)
     if not m:
-        return None
+        return s, None
+    line = None
     try:
-        return float(m.group(1))
+        line = float(m.group(1))
     except Exception:
-        return None
+        line = None
+    name_part = s[: m.start()].strip()
+    return name_part, line
 
-def _normalize_market_label(label: str) -> str:
-    s = (label or "").strip().lower()
+def _split_first_last(full: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    "A. Bastoni" => ("a", "bastoni")
+    "Alessandro Bastoni" => ("alessandro", "bastoni")
+    "Luis Henrique de Lima" => ("luis", "lima")  (best-effort: last token)
+    """
+    s = _norm_name(full)
+    if not s:
+        return None, None
 
-    # IMPORTANT: check "shots on target" before "shot"
-    if "shot on target" in s or "sot" in s:
-        return "shots_on_target"
-    if "shot" in s:
-        return "shots"
-    if "foul" in s:
-        return "fouls"
-    if "pass" in s:
-        return "passes"
-    if "tackle" in s:
-        return "tackles"
-    if "assist" in s:
-        return "assists"
-    if "anytime goal" in s:
-        return "anytime_goalscorer"
-    if "first goal" in s:
-        return "first_goalscorer"
-    if "last goal" in s:
-        return "last_goalscorer"
+    # remove common suffix artifacts
+    s = s.strip("-").strip()
+    parts = [p for p in s.split(" ") if p]
+    if len(parts) < 2:
+        return (parts[0], None) if parts else (None, None)
 
-    if "player singles" in s:
-        return "player_singles"
-    if "player doubles" in s:
-        return "player_doubles"
-    if "player triples" in s:
-        return "player_triples"
+    first = parts[0].replace(".", "")
+    last = parts[-1].replace(".", "")
+    return first or None, last or None
 
-    return s.replace(" ", "_")
 
-def fetch_player_odds_from_api(fixture_provider_id: int) -> List[Dict[str, Any]]:
-    url = f"{BASE_URL}/odds"
-    params = {"fixture": fixture_provider_id, "type": "player"}
-    payload = _get(url, params) or {}
+# -----------------------------------------
+# Build fixture-scoped season player index
+# -----------------------------------------
 
-    if isinstance(payload, list):
-        return payload
+def _build_fixture_player_index(db: Session, fixture_id: int) -> Dict[str, int]:
+    """
+    Uses the SAME backend cache your UI relies on (season-players)
+    to build aliases for name->player_id.
 
-    resp = payload.get("response") or []
-    return resp if isinstance(resp, list) else []
+    Keys created per player:
+      - "a bastoni"              (from "A. Bastoni")
+      - "alessandro bastoni"     (from "A. Bastoni" via first-initial mapping)
+      - full normalized forms too
+    """
+    fx = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
+    if not fx or not fx.provider_fixture_id:
+        raise HTTPException(status_code=404, detail="Fixture not found")
 
-def ingest_player_odds(db: Session, fixture: Fixture) -> int:
-    if not fixture.provider_fixture_id:
-        return 0
+    pfx = int(fx.provider_fixture_id)
+    fjson = get_fixture(pfx) or {}
+    core = (fjson.get("response") or [None])[0] or {}
+    lg = core.get("league") or {}
+    season = int(lg.get("season") or 0)
 
-    provider_id = int(fixture.provider_fixture_id)
-    response_rows = fetch_player_odds_from_api(provider_id)
+    teams = core.get("teams") or {}
+    home_id = int(((teams.get("home") or {}).get("id")) or 0)
+    away_id = int(((teams.get("away") or {}).get("id")) or 0)
 
-    upserts = 0
-    now = datetime.utcnow()
+    if not (season and home_id and away_id):
+        raise HTTPException(status_code=400, detail="Fixture missing season/team ids")
 
-    for fx_block in response_rows:
-        bookmakers = fx_block.get("bookmakers") or []
-        if not isinstance(bookmakers, list):
-            continue
+    # cached pulls (raw API-Football team-season players)
+    home_rows = get_team_season_players_cached(db, home_id, season) or []
+    away_rows = get_team_season_players_cached(db, away_id, season) or []
 
-        for bm in bookmakers:
-            bookmaker = bm.get("name") or bm.get("bookmaker") or "unknown"
-            bets = bm.get("bets") or []
-            if not isinstance(bets, list):
+    # Build mapping of:
+    #   last_name -> set(first_tokens) to allow inference of full first names from roster
+    # We will use this to map "Alessandro Bastoni" -> "A. Bastoni" when A matches.
+    last_to_firsts: Dict[str, set] = {}
+
+    def _collect_first_last(rows: List[dict]):
+        for row in rows:
+            pl = (row.get("player") or {}) or {}
+            name = pl.get("name") or ""
+            f, l = _split_first_last(name)
+            if not l:
+                continue
+            last_to_firsts.setdefault(l, set()).add(f or "")
+
+    _collect_first_last(home_rows)
+    _collect_first_last(away_rows)
+
+    # Now build alias map
+    alias_to_id: Dict[str, int] = {}
+
+    def _add_alias(key: str, pid: int):
+        k = _norm_name(key)
+        if not k:
+            return
+        # keep first seen; don't overwrite unless exact same
+        alias_to_id.setdefault(k, pid)
+
+    def _process(rows: List[dict]):
+        for row in rows:
+            pl = (row.get("player") or {}) or {}
+            pid = int(pl.get("id") or 0)
+            if not pid:
                 continue
 
-            for bet in bets:
-                bet_name = (bet.get("name") or "").strip()
-                bet_id = bet.get("id")
-                values = bet.get("values") or []
-                if not isinstance(values, list):
+            raw_name = pl.get("name") or ""
+            if not raw_name:
+                continue
+
+            # 1) direct normalized name
+            _add_alias(raw_name, pid)
+
+            # 2) if it's initial format, also add "full first last" candidates
+            # Example: "A. Bastoni" -> map "alessandro bastoni" if roster contains Alessandro for bastoni
+            f, l = _split_first_last(raw_name)
+            if not l:
+                continue
+
+            # If the stored name is "a bastoni" (initial), expand it using known first tokens in roster
+            if f and len(f) == 1:
+                # find first names in roster for this last name
+                candidates = [x for x in last_to_firsts.get(l, set()) if x]
+                for cand_first in candidates:
+                    if cand_first[:1].lower() == f.lower():
+                        _add_alias(f"{cand_first} {l}", pid)
+
+            # 3) add "last name" alias ONLY if unique in this fixture
+            # (prevents collisions like "martinez")
+            # We'll handle uniqueness after we collect all; just record candidates.
+            # (We'll do the uniqueness check at end)
+            # For now, store special marker
+            _add_alias(f"__LAST__:{l}", pid)
+
+    _process(home_rows)
+    _process(away_rows)
+
+    # Make last-name-only aliases only if they map to one unique id
+    last_name_to_ids: Dict[str, set] = {}
+    for k, pid in list(alias_to_id.items()):
+        if k.startswith("__last__:"):
+            ln = k.split(":", 1)[1]
+            last_name_to_ids.setdefault(ln, set()).add(pid)
+
+    for ln, ids in last_name_to_ids.items():
+        if len(ids) == 1:
+            alias_to_id[ln] = list(ids)[0]
+
+    # Remove internal markers
+    for k in [k for k in alias_to_id.keys() if k.startswith("__last__:")]:
+        alias_to_id.pop(k, None)
+
+    return alias_to_id
+
+
+# -----------------------------
+# DB upsert helper
+# -----------------------------
+
+def _upsert_player_odds(
+    db: Session,
+    *,
+    fixture_id: int,
+    player_id: Optional[int],
+    player_name: str,
+    market: str,
+    line: Optional[float],
+    bookmaker: str,
+    price: float,
+    last_seen: datetime,
+):
+    """
+    Important behaviour:
+      - if the existing row has player_id NULL and we now have a resolved id -> upgrade it.
+    """
+    q = (
+        db.query(PlayerOdds)
+        .filter(PlayerOdds.fixture_id == fixture_id)
+        .filter(PlayerOdds.player_name == player_name)
+        .filter(PlayerOdds.market == market)
+        .filter(PlayerOdds.bookmaker == bookmaker)
+    )
+
+    # line may be nullable
+    if line is None:
+        q = q.filter(PlayerOdds.line.is_(None))
+    else:
+        q = q.filter(PlayerOdds.line == float(line))
+
+    row = q.one_or_none()
+
+    if row:
+        row.price = float(price)
+        row.last_seen = last_seen
+
+        # ✅ upgrade NULL -> actual id
+        if (row.player_id is None or int(row.player_id or 0) == 0) and player_id:
+            row.player_id = int(player_id)
+
+        # also upgrade name artifacts (optional)
+        # (you may choose to keep provider string)
+        db.add(row)
+        return row
+
+    row = PlayerOdds(
+        fixture_id=fixture_id,
+        player_id=int(player_id) if player_id else None,
+        player_name=player_name,
+        market=market,
+        line=float(line) if line is not None else None,
+        bookmaker=bookmaker,
+        price=float(price),
+        last_seen=last_seen,
+    )
+    db.add(row)
+    return row
+
+
+# -----------------------------
+# Main endpoint (your existing)
+# -----------------------------
+
+@router.get("/")
+def get_player_odds(
+    fixture_id: int,
+    player: Optional[str] = None,
+    include_meta: bool = False,
+    db: Session = Depends(get_db),
+):
+    """
+    Returns stored player odds for this fixture, optionally filtered by player name.
+    """
+    q = db.query(PlayerOdds).filter(PlayerOdds.fixture_id == fixture_id)
+    if player:
+        q = q.filter(PlayerOdds.player_name.ilike(f"%{player}%"))
+
+    rows = q.order_by(PlayerOdds.market.asc(), PlayerOdds.line.asc().nullsfirst()).all()
+
+    out = []
+    for r in rows:
+        out.append(
+            {
+                "player_id": r.player_id,
+                "player_name": r.player_name,
+                "market": r.market,
+                "line": r.line,
+                "bookmaker": r.bookmaker,
+                "price": r.price,
+                "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+            }
+        )
+
+    payload = {
+        "fixture_id": fixture_id,
+        "count": len(out),
+        "rows": out,
+        "markets": sorted(list({r["market"] for r in out})),
+        "bookmakers": sorted(list({r["bookmaker"] for r in out})),
+    }
+
+    if include_meta:
+        payload["meta"] = {
+            "filter_player": player,
+        }
+
+    return payload
+
+
+# ---------------------------------------------------------
+# If you have an ingest/refresh route, update it like this:
+# ---------------------------------------------------------
+
+@router.post("/ingest")
+def ingest_player_odds_for_fixture(
+    fixture_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Example ingest route: you likely already have one.
+    The key changes are:
+      - build alias map from season players
+      - resolve player_id from odds string
+      - upsert with NULL->id upgrade
+    """
+    # you probably already pull raw odds JSON somewhere; keep your existing provider call
+    from ..services.player_odds_provider import fetch_raw_player_odds_for_fixture  # <-- your service
+
+    alias_map = _build_fixture_player_index(db, fixture_id)
+    raw = fetch_raw_player_odds_for_fixture(fixture_id) or {}
+    # Expecting provider-ish shape: raw.data.response[].bookmakers[].bets[].values[]
+    resp = (((raw.get("data") or {}).get("response")) or [])
+    if not isinstance(resp, list):
+        resp = []
+
+    now = datetime.now(timezone.utc)
+
+    inserted = 0
+    for block in resp:
+        for bm in (block.get("bookmakers") or []):
+            bookmaker = bm.get("name") or bm.get("bookmaker") or "Unknown"
+            for bet in (bm.get("bets") or []):
+                bet_id = int(bet.get("id") or 0)
+                bet_name = bet.get("name") or ""
+
+                # map provider bet id/name -> your internal market
+                market = _map_bet_to_market(bet_id, bet_name)
+                if not market:
                     continue
 
-                market_norm = _normalize_market_label(bet_name)
-                # ✅ keep bet_id so "Player Singles" can be decoded later
-                market_key = f"{market_norm}:{bet_id}" if bet_id is not None else market_norm
-
-                for outcome in values:
-                    raw_value = (outcome.get("value") or outcome.get("player_name") or "").strip()
-                    price = _safe_float(outcome.get("odd"), 0.0) or 0.0
-                    player_id = _safe_int(outcome.get("id") or outcome.get("player_id"))
-
-                    if not raw_value or price <= 0:
+                for v in (bet.get("values") or []):
+                    value_str = v.get("value") or ""
+                    odd_str = v.get("odd") or v.get("price") or None
+                    if not value_str or not odd_str:
                         continue
 
-                    # line:
-                    # - sometimes in bet["line"]
-                    # - otherwise often embedded in outcome["value"]
-                    raw_line = bet.get("line")
-                    line = _safe_float(raw_line)
-                    if line is None:
-                        line = _extract_line_from_value(raw_value)  # may remain None
+                    # parse line + player from "Name - 1.5"
+                    name_part, line = _strip_line_suffix(value_str)
+                    price = None
+                    try:
+                        price = float(odd_str)
+                    except Exception:
+                        continue
 
-                    # clean player name only when we *derived* line from the value string
-                    player_name = raw_value
-                    if raw_line is None and line is not None:
-                        player_name_clean = _LINE_RE.sub("", raw_value, count=1).strip()
-                        player_name_clean = re.sub(r"\s{2,}", " ", player_name_clean).strip()
-                        if len(player_name_clean) >= 3:
-                            player_name = player_name_clean
-
-                    existing = (
-                        db.query(PlayerOdds)
-                        .filter(
-                            PlayerOdds.fixture_id == fixture.id,
-                            PlayerOdds.player_id == player_id,
-                            PlayerOdds.player_name == player_name,
-                            PlayerOdds.market == market_key,
-                            PlayerOdds.line == line,
-                            PlayerOdds.bookmaker == bookmaker,
-                        )
-                        .first()
-                    )
-
-                    if existing:
-                        if float(existing.price) != float(price):
-                            existing.price = float(price)
-                        existing.last_seen = now
-                        db.add(existing)
-                        upserts += 1
+                    # resolve player id by alias
+                    pid = None
+                    key = _norm_name(name_part)
+                    if key in alias_map:
+                        pid = alias_map[key]
                     else:
-                        db.add(PlayerOdds(
-                            fixture_id=fixture.id,
-                            player_id=player_id,        # can be None
-                            player_name=player_name,
-                            market=market_key,
-                            line=line,                  # keep None if unknown/not applicable
-                            bookmaker=bookmaker,
-                            price=float(price),
-                            last_seen=now,
-                        ))
-                        upserts += 1
+                        # try: if provider includes full name and we have "a bastoni" only,
+                        # use last name uniqueness if possible
+                        f, l = _split_first_last(name_part)
+                        if l and _norm_name(l) in alias_map:
+                            pid = alias_map[_norm_name(l)]
+
+                    # store with the *provider* string for player_name (or store normalized)
+                    _upsert_player_odds(
+                        db,
+                        fixture_id=fixture_id,
+                        player_id=pid,
+                        player_name=name_part.strip(),
+                        market=market,
+                        line=line,
+                        bookmaker=bookmaker,
+                        price=price,
+                        last_seen=now,
+                    )
+                    inserted += 1
 
     db.commit()
-    print(f"[player_odds] upserted={upserts} fixture_id={fixture.id} provider={fixture.provider_fixture_id}")
-    return upserts
+
+    return {
+        "fixture_id": fixture_id,
+        "rows_processed": inserted,
+        "alias_map_size": len(alias_map),
+    }
+
+
+# -----------------------------
+# Market mapping (adjust!)
+# -----------------------------
+
+def _map_bet_to_market(bet_id: int, bet_name: str) -> Optional[str]:
+    """
+    Map provider bet identifiers to your internal market slugs.
+    Adjust this to match what you already use.
+
+    Your earlier output shows ids:
+      92 Anytime Goal Scorer
+      93 First Goal Scorer
+      94 Last Goal Scorer
+      212 Player Assists
+      213 Player Triples
+      215 Player Singles
+    """
+    if bet_id == 92:
+        return "anytime_goalscorer"
+    if bet_id == 93:
+        return "first_goalscorer"
+    if bet_id == 94:
+        return "last_goalscorer"
+    if bet_id == 212:
+        return "assists"
+    if bet_id == 213:
+        return "player_triples"
+    if bet_id == 215:
+        return "player_singles"
+
+    # fallback by name (optional)
+    n = (bet_name or "").lower()
+    if "anytime" in n and "scorer" in n:
+        return "anytime_goalscorer"
+    if "first goal" in n:
+        return "first_goalscorer"
+    if "last goal" in n:
+        return "last_goalscorer"
+    if "assist" in n:
+        return "assists"
+    if "player triples" in n:
+        return "player_triples"
+    if "player singles" in n:
+        return "player_singles"
+
+    return None
