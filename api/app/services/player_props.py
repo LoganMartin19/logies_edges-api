@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 import re
 import math
+import unicodedata
 
 from sqlalchemy.orm import Session
 
@@ -12,13 +13,16 @@ from ..models import PlayerOdds, Fixture, PlayerSeasonStats
 from .apifootball import _get, BASE_URL, _get_meta, get_fixture_players
 from .player_model import prob_over_xpoint5
 
+
 # ---------------------------------------------------------------------
 # Bet ID allowlist (API-Football odds -> bets[].id)
 # We ingest ONLY these IDs for player markets.
 #
-# NOTE: As you said, the vast majority of player shots / SOT etc are coming
-# from Player Singles (215) and Player Triples (213) buckets — so those must
-# be included and handled carefully.
+# NOTE: Vast majority of player shots/SOT/fouls/tackles lines often come via:
+#   - Player Singles (215)
+#   - Player Triples (213)
+# These “bucket” markets don’t tell you the stat explicitly, so we infer it
+# using stats + implied prob + position/line priors.
 # ---------------------------------------------------------------------
 
 BET_ID_MAP: Dict[int, Dict[str, Any]] = {
@@ -36,17 +40,17 @@ BET_ID_MAP: Dict[int, Dict[str, Any]] = {
     103: {"market": "red",    "line": 0.5},  # player to be sent off
 
     # assists / score or assist
-    212: {"market": "assists",          "line": None},
-    255: {"market": "assists",          "line": None},  # home variant
-    256: {"market": "assists",          "line": None},  # away variant
-    257: {"market": "score_or_assist",  "line": None},
-    258: {"market": "score_or_assist",  "line": None},  # home variant
-    259: {"market": "score_or_assist",  "line": None},  # away variant
+    212: {"market": "assists",         "line": None},
+    255: {"market": "assists",         "line": None},  # home variant
+    256: {"market": "assists",         "line": None},  # away variant
+    257: {"market": "score_or_assist", "line": None},
+    258: {"market": "score_or_assist", "line": None},  # home variant
+    259: {"market": "score_or_assist", "line": None},  # away variant
 
     # buckets (critical)
     215: {"market": "player_singles", "line": "from_value"},
     213: {"market": "player_triples", "line": "from_value"},
-    # optional if you want
+    # optional if you want coverage:
     # 214: {"market": "player_doubles", "line": "from_value"},
 
     # shots / SOT totals (some books provide direct, some via buckets)
@@ -137,16 +141,32 @@ def _split_player_and_line(value_str: str) -> Tuple[str, Optional[float]]:
     return player, line
 
 
+def _clean_player_display_name(name: str) -> str:
+    """
+    Fix provider quirks like trailing '-' (you saw "Alessandro Bastoni -")
+    and weird whitespace.
+    """
+    s = (name or "").strip()
+    s = re.sub(r"\s*-\s*$", "", s)  # remove trailing hyphen like "Bastoni -"
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip()
+
+
 def _norm_name(s: str) -> str:
     """
-    Normalize names so odds strings match fixture roster strings:
+    Strong normalizer so odds strings match roster strings:
+    - remove trailing '-' artifacts
+    - unicode normalize + strip accents
     - lowercase
+    - remove punctuation
     - collapse spaces
-    - remove periods
     """
-    s = (s or "").strip().lower()
-    s = s.replace(".", " ")
-    s = re.sub(r"\s{2,}", " ", s)
+    s = _clean_player_display_name(s)
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\s{2,}", " ", s).strip()
     return s
 
 
@@ -165,7 +185,7 @@ def fetch_player_odds_raw_for_fixture(db: Session, fixture_id: int) -> dict:
 
     provider_fixture_id = int(fx.provider_fixture_id)
     url = f"{BASE_URL}/odds"
-    params = {"fixture": provider_fixture_id}  # ✅ no type=player
+    params = {"fixture": provider_fixture_id}  # ✅ v3 odds does NOT accept type=player
     return _get_meta(url, params)
 
 
@@ -203,15 +223,19 @@ def _fixture_player_name_map(provider_fixture_id: int) -> Dict[str, int]:
         for p in players:
             pinfo = p.get("player") or {}
             pid = _safe_int(pinfo.get("id"))
-            name = (pinfo.get("name") or "").strip()
+            name = _clean_player_display_name((pinfo.get("name") or "").strip())
             if pid and name:
                 out[_norm_name(name)] = int(pid)
     return out
 
 
-def _resolve_player_id(player_id: Optional[int], player_name: str, name_map: Dict[str, int]) -> Optional[int]:
+def _resolve_player_id(
+    player_id: Optional[int],
+    player_name: str,
+    name_map: Dict[str, int],
+) -> Optional[int]:
     if player_id:
-        return player_id
+        return int(player_id)
     if not player_name:
         return None
     return name_map.get(_norm_name(player_name))
@@ -377,7 +401,7 @@ def _player_position_from_cached(db: Session, player_id: int, season: Optional[i
 def _bucket_priors(position: Optional[str], line: float) -> Dict[str, float]:
     """
     Priors for bucket meaning, based on position + line magnitude.
-    These are "soft" weights used to prevent silly inferences.
+    Soft weights to prevent silly inferences (e.g. defender shots at huge lines).
     """
     pos = (position or "").strip().lower()
 
@@ -414,17 +438,13 @@ def _bucket_priors(position: Optional[str], line: float) -> Dict[str, float]:
         w["passes"] -= 0.06
         w["interceptions"] -= 0.06
     elif pos == "goalkeeper":
-        # buckets for keepers are basically never meaningful for these props
         w["shots"] -= 0.20
         w["sot"] -= 0.10
-        w["passes"] += 0.10  # some keeper pass markets exist, but rare here
+        w["passes"] += 0.10
         w["tackles"] -= 0.10
         w["fouls"] -= 0.10
 
-    # line magnitude nudges (very rough):
-    # - high lines are more plausible for passes
-    # - medium for tackles/fouls
-    # - low for shots/sot
+    # line magnitude nudges
     if line >= 35:
         w["passes"] += 0.35
         w["shots"] -= 0.10
@@ -446,11 +466,9 @@ def _bucket_priors(position: Optional[str], line: float) -> Dict[str, float]:
         w["shots"] += 0.10
         w["sot"] += 0.06
 
-    # clamp to positive
     for k in list(w.keys()):
         w[k] = max(0.001, float(w[k]))
 
-    # normalize to sum=1
     s = sum(w.values())
     return {k: v / s for k, v in w.items()}
 
@@ -464,8 +482,8 @@ def _infer_bucket_stat(
     price: float,
 ) -> Optional[str]:
     """
-    Infer which stat a bucket market corresponds to by matching model probability
-    to bookmaker implied probability, plus position/line priors.
+    Infer which stat a bucket market corresponds to by matching model prob
+    to bookmaker implied prob + position/line priors.
     """
     if not player_id:
         return None
@@ -497,32 +515,23 @@ def _infer_bucket_stat(
         p_model = prob_over_xpoint5(per90=per90, expected_minutes=expected_minutes, x_half=x_half)
         p_model = max(1e-6, min(1 - 1e-6, float(p_model)))
 
-        # primary fit term: absolute probability error
         fit_err = abs(p_model - float(implied))
 
-        # prior penalty: lower is better
-        # (if prior is tiny, penalty is bigger)
         prior = float(pri.get(stat_key, 1e-6))
-        prior_penalty = -math.log(max(prior, 1e-9))  # 0..large
+        prior_penalty = -math.log(max(prior, 1e-9))
 
-        # combine: fit dominates, prior gently nudges
-        # tuneable weights
+        # fit dominates; prior gently nudges
         score = (fit_err * 1.0) + (prior_penalty * 0.12)
 
         if score < best_score:
             best_score = score
             best_key = stat_key
 
-    # sanity gate:
     if best_key is None:
         return None
 
-    # also block if fit is miles off (don’t force priors to guess)
-    # approximate “fit” by removing priors influence:
-    # if we have a good best_score but fit itself likely huge, avoid
-    # (simple version: implied price not too long, but still far)
+    # guardrail: if fit is miles off, don't guess
     if price < 10:
-        # find best candidate fit only
         best_fit = 1e9
         for stat_key in candidates:
             per90 = _per90_from_cached(db, player_id, season=season, stat_key=stat_key)
@@ -546,7 +555,7 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
     if not isinstance(api_response, list):
         return rows
 
-    # build fixture roster map once (used only if odds values lack player.id)
+    # build fixture roster map once (used if odds values lack player.id)
     provider_fixture_id = int(fixture.provider_fixture_id) if fixture.provider_fixture_id else None
     name_map: Dict[str, int] = _fixture_player_name_map(provider_fixture_id) if provider_fixture_id else {}
 
@@ -595,10 +604,11 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
                     else:
                         player_name, line = _split_player_and_line(embedded)
 
+                    player_name = _clean_player_display_name(player_name)
                     if not player_name:
                         continue
 
-                    # resolve player_id:
+                    # resolve player_id (odds often missing player.id, so we map via /fixtures/players)
                     pid0 = _safe_int(pinfo.get("id") or v.get("id") or v.get("player_id"))
                     player_id = _resolve_player_id(pid0, player_name, name_map)
 
