@@ -201,13 +201,13 @@ def admin_run_dates(
         # Italy + Cup
         "SERIE_A,SERIE_B,ITA_COPPA,"
         # France + Cup
-        "LIGUE1,LIGUE2,FRA_CDF,"
+        "LIGUE1,LIGUE2,FRA_NAT,FRA_CDF,"
         # Portugal + Cup
         "POR_LIGA,POR_TACA,"
         # Netherlands + Cup
         "NED_ERED,NED_EERST,NED_KNVB,"
         # Belgium + Cup
-        "BEL_PRO,BEL_CUP,"
+        "BEL_PRO,"
         # Norway + Cup
         "NOR_ELI,NOR_CUP,"
         # Denmark + Cup

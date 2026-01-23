@@ -65,6 +65,7 @@ LEAGUE_MAP = {
     # France 🇫🇷
     "LIGUE1": 61, "Ligue 1": 61,
     "LIGUE2": 62, "Ligue 2": 62,
+    "FRA_NAT": 63, "France National": 63,
     "FRA_CDF": 66, "Coupe de France": 66,
 
     # Portugal 🇵🇹
@@ -86,7 +87,7 @@ LEAGUE_MAP = {
 
     # Denmark 🇩🇰
     "DEN_SL": 119, "Superliga": 119,
-    "DEN_CUP": 63, "DBU Pokalen": 63,
+    
 
     # Sweden 🇸🇪
     "SWE_ALLS": 113, "Allsvenskan": 113,
