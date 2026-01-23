@@ -159,25 +159,36 @@ def _split_player_and_line(value_str: str) -> Tuple[str, Optional[float]]:
 # API call (player odds)
 # ---------------------------------------------------------------------
 def fetch_player_odds_raw_for_fixture(db: Session, fixture_id: int) -> dict:
-    fx = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
+    """
+    Debug helper: returns the *raw* provider response (with status/errors),
+    for this fixture's odds call.
+    """
+    fx: Fixture | None = db.query(Fixture).filter(Fixture.id == fixture_id).one_or_none()
     if not fx or not fx.provider_fixture_id:
-        return {"error": "fixture missing provider_fixture_id"}
+        return {"ok": False, "error": "fixture missing provider_fixture_id"}
 
     provider_fixture_id = int(fx.provider_fixture_id)
     url = f"{BASE_URL}/odds"
-    params = {"fixture": provider_fixture_id, "type": "player"}
+
+    # ✅ IMPORTANT: API-Football v3 odds does NOT accept type=player
+    params = {"fixture": provider_fixture_id}
+
+    # Use the meta helper so you can see provider errors clearly
+    from .apifootball import _get_meta
     return _get_meta(url, params)
-    
+
+
 def fetch_player_odds_for_fixture(provider_fixture_id: int) -> List[Dict[str, Any]]:
+    """
+    Fetch odds for a fixture (no type param), then we will extract player markets from the response.
+    """
     url = f"{BASE_URL}/odds"
-    params = {"fixture": provider_fixture_id, "type": "player"}
-    payload = _get(url, params) or {}
 
-    if isinstance(payload, list):
-        return payload
+    # ✅ IMPORTANT: no type=player
+    payload = _get(url, {"fixture": provider_fixture_id}) or []
 
-    resp = payload.get("response") or []
-    return resp if isinstance(resp, list) else []
+    # NOTE: your apifootball._get already returns the JSON 'response' array as a list
+    return payload if isinstance(payload, list) else []
 
 
 # ---------------------------------------------------------------------
