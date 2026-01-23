@@ -206,35 +206,80 @@ def _upsert_player_odds(
     last_seen: datetime,
 ):
     """
-    Important behaviour:
-      - if the existing row has player_id NULL and we now have a resolved id -> upgrade it.
+    Upsert by NAME-key (fixture_id, player_name, market, line, bookmaker)
+    and upgrade player_id from NULL -> resolved id when available.
+
+    If both exist (a legacy NULL-id row AND a resolved-id row), keep the resolved-id row.
     """
-    q = (
+
+    # -------------------------
+    # 1) Find row by NAME-key
+    # -------------------------
+    q_name = (
         db.query(PlayerOdds)
         .filter(PlayerOdds.fixture_id == fixture_id)
         .filter(PlayerOdds.player_name == player_name)
         .filter(PlayerOdds.market == market)
         .filter(PlayerOdds.bookmaker == bookmaker)
     )
-
     if line is None:
-        q = q.filter(PlayerOdds.line.is_(None))
+        q_name = q_name.filter(PlayerOdds.line.is_(None))
     else:
-        q = q.filter(PlayerOdds.line == float(line))
+        q_name = q_name.filter(PlayerOdds.line == float(line))
 
-    row = q.one_or_none()
+    row_name = q_name.one_or_none()
 
-    if row:
-        row.price = float(price)
-        row.last_seen = last_seen
+    # -------------------------
+    # 2) Find row by PID-key (only if player_id resolved)
+    # -------------------------
+    row_pid = None
+    if player_id:
+        q_pid = (
+            db.query(PlayerOdds)
+            .filter(PlayerOdds.fixture_id == fixture_id)
+            .filter(PlayerOdds.player_id == int(player_id))
+            .filter(PlayerOdds.market == market)
+            .filter(PlayerOdds.bookmaker == bookmaker)
+        )
+        if line is None:
+            q_pid = q_pid.filter(PlayerOdds.line.is_(None))
+        else:
+            q_pid = q_pid.filter(PlayerOdds.line == float(line))
 
-        # ✅ upgrade NULL -> actual id
-        if (row.player_id is None or int(row.player_id or 0) == 0) and player_id:
-            row.player_id = int(player_id)
+        row_pid = q_pid.one_or_none()
 
-        db.add(row)
-        return row
+    # -------------------------
+    # 3) If we have BOTH rows, prefer the PID row, delete legacy NULL row
+    # -------------------------
+    if row_name and row_pid and row_name.id != row_pid.id:
+        # keep pid-row; if pid-row name empty/odd, optionally update it
+        row_pid.price = float(price)
+        row_pid.last_seen = last_seen
 
+        # if pid-row has no name but name-row does, you can copy it (optional)
+        if (not row_pid.player_name) and row_name.player_name:
+            row_pid.player_name = row_name.player_name
+
+        db.delete(row_name)
+        db.add(row_pid)
+        return row_pid
+
+    # -------------------------
+    # 4) If name-row exists, update it + upgrade NULL->pid
+    # -------------------------
+    if row_name:
+        row_name.price = float(price)
+        row_name.last_seen = last_seen
+
+        if (row_name.player_id is None or int(row_name.player_id or 0) == 0) and player_id:
+            row_name.player_id = int(player_id)
+
+        db.add(row_name)
+        return row_name
+
+    # -------------------------
+    # 5) Else create new row
+    # -------------------------
     row = PlayerOdds(
         fixture_id=fixture_id,
         player_id=int(player_id) if player_id else None,
@@ -247,7 +292,6 @@ def _upsert_player_odds(
     )
     db.add(row)
     return row
-
 
 # -----------------------------
 # Main endpoint (existing)
