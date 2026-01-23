@@ -9,97 +9,82 @@ import math
 from sqlalchemy.orm import Session
 
 from ..models import PlayerOdds, Fixture, PlayerSeasonStats
-from .apifootball import _get, BASE_URL, _get_meta
-from .player_model import prob_over_xpoint5, fair_odds as _fair_odds
-
+from .apifootball import _get, BASE_URL, _get_meta, get_fixture_players
+from .player_model import prob_over_xpoint5
 
 # ---------------------------------------------------------------------
-# Market mapping / normalization
+# Bet ID allowlist (API-Football odds -> bets[].id)
+# We ingest ONLY these IDs for player markets.
+#
+# NOTE: As you said, the vast majority of player shots / SOT etc are coming
+# from Player Singles (215) and Player Triples (213) buckets — so those must
+# be included and handled carefully.
 # ---------------------------------------------------------------------
 
-# canonical internal keys (what we store in PlayerOdds.market)
-# NOTE: we keep these lowercase and stable.
-MARKET_ALIASES: Dict[str, str] = {
-    # shots
-    "shots on target": "sot",
-    "player shots on target": "sot",
-    "sot": "sot",
-
-    "shots": "shots",
-    "player shots": "shots",
-
-    # fouls
-    "fouls": "fouls",
-    "player fouls": "fouls",
+BET_ID_MAP: Dict[int, Dict[str, Any]] = {
+    # scorers
+    92:  {"market": "anytime_goalscorer", "line": None},
+    93:  {"market": "first_goalscorer",   "line": None},
+    94:  {"market": "last_goalscorer",    "line": None},
+    218: {"market": "anytime_goalscorer", "line": None},  # away variant
+    219: {"market": "first_goalscorer",   "line": None},  # away variant
+    226: {"market": "last_goalscorer",    "line": None},  # away variant
 
     # cards
-    "yellow cards": "yellow",
-    "player to be booked": "yellow",
-    "red cards": "red",
+    102: {"market": "yellow", "line": 0.5},  # player to be booked
+    251: {"market": "yellow", "line": 0.5},  # duplicate variant
+    103: {"market": "red",    "line": 0.5},  # player to be sent off
 
-    # passing / assists
-    "player assists": "assists",
-    "assists": "assists",
+    # assists / score or assist
+    212: {"market": "assists",          "line": None},
+    255: {"market": "assists",          "line": None},  # home variant
+    256: {"market": "assists",          "line": None},  # away variant
+    257: {"market": "score_or_assist",  "line": None},
+    258: {"market": "score_or_assist",  "line": None},  # home variant
+    259: {"market": "score_or_assist",  "line": None},  # away variant
 
-    # scorers
-    "anytime goal scorer": "anytime_goalscorer",
-    "first goal scorer": "first_goalscorer",
-    "last goal scorer": "last_goalscorer",
+    # buckets (critical)
+    215: {"market": "player_singles", "line": "from_value"},
+    213: {"market": "player_triples", "line": "from_value"},
+    # optional if you want
+    # 214: {"market": "player_doubles", "line": "from_value"},
+
+    # shots / SOT totals (some books provide direct, some via buckets)
+    242: {"market": "sot",   "line": "from_value"},
+    264: {"market": "sot",   "line": "from_value"},
+    265: {"market": "shots", "line": "from_value"},
+
+    240: {"market": "shots", "line": "from_value"},
+    241: {"market": "shots", "line": "from_value"},
+
+    269: {"market": "sot",   "line": "from_value"},
+    270: {"market": "shots", "line": "from_value"},
+    275: {"market": "sot",   "line": "from_value"},
+    276: {"market": "shots", "line": "from_value"},
+
+    # fouls / tackles
+    266: {"market": "fouls",   "line": "from_value"},
+    271: {"market": "fouls",   "line": "from_value"},
+    277: {"market": "fouls",   "line": "from_value"},
+    272: {"market": "tackles", "line": "from_value"},
+    278: {"market": "tackles", "line": "from_value"},
 }
 
-BUCKET_MARKETS: Dict[str, str] = {
-    "player singles": "player_singles",
-    "player doubles": "player_doubles",
-    "player triples": "player_triples",
-}
+# ---------------------------------------------------------------------
+# Parsing helpers
+# ---------------------------------------------------------------------
 
-# finds 4.5 or -0.5 anywhere (handles "Bastoni -0.5", "Bastoni 4.5", etc)
-_LINE_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
+_LINE_RE = re.compile(r"(-?\d+(?:\.\d+)?)")  # finds 4.5 or -0.5 anywhere
 
-# some props are "line-less" (line is meaningless)
 NO_LINE_MARKETS = {
     "anytime_goalscorer",
     "first_goalscorer",
     "last_goalscorer",
-    "assists",  # depends on provider; treat as line-less for now
+    "assists",
+    "score_or_assist",
 }
 
-
-def _canon_market(name: str | None) -> Optional[str]:
-    """
-    Make this defensive:
-      - case-insensitive
-      - tolerate extra whitespace
-      - accept partial matches for common variants
-    """
-    if not name:
-        return None
-
-    s = " ".join(str(name).strip().split()).lower()  # normalize whitespace + case
-
-    # exact hits
-    if s in MARKET_ALIASES:
-        return MARKET_ALIASES[s]
-    if s in BUCKET_MARKETS:
-        return BUCKET_MARKETS[s]
-
-    # fuzzy matches (API-Football can vary)
-    if "shots on target" in s:
-        return "sot"
-    if s.endswith("shots") or "player shots" in s:
-        return "shots"
-    if "foul" in s:
-        return "fouls"
-    if "to be booked" in s or "yellow" in s:
-        return "yellow"
-    if "anytime goal" in s:
-        return "anytime_goalscorer"
-    if "first goal" in s:
-        return "first_goalscorer"
-    if "last goal" in s:
-        return "last_goalscorer"
-
-    return None
+BUCKET_MARKETS = {"player_singles", "player_doubles", "player_triples"}
 
 
 def _safe_float(x, default: Optional[float] = None) -> Optional[float]:
@@ -136,10 +121,7 @@ def _parse_line(raw: Any) -> Optional[float]:
 
 def _split_player_and_line(value_str: str) -> Tuple[str, Optional[float]]:
     """
-    Typical API-Football 'values' for bucket markets look like:
-      "Alessandro Bastoni 4.5"
-      "Alessandro Bastoni -0.5"
-
+    Bucket markets often look like: "Alessandro Bastoni 4.5" or "Bastoni -0.5".
     We pull first numeric token as line and remove it from name.
     """
     if not value_str:
@@ -155,9 +137,23 @@ def _split_player_and_line(value_str: str) -> Tuple[str, Optional[float]]:
     return player, line
 
 
+def _norm_name(s: str) -> str:
+    """
+    Normalize names so odds strings match fixture roster strings:
+    - lowercase
+    - collapse spaces
+    - remove periods
+    """
+    s = (s or "").strip().lower()
+    s = s.replace(".", " ")
+    s = re.sub(r"\s{2,}", " ", s)
+    return s
+
+
 # ---------------------------------------------------------------------
-# API call (player odds)
+# API call (odds)
 # ---------------------------------------------------------------------
+
 def fetch_player_odds_raw_for_fixture(db: Session, fixture_id: int) -> dict:
     """
     Debug helper: returns the *raw* provider response (with status/errors),
@@ -169,26 +165,56 @@ def fetch_player_odds_raw_for_fixture(db: Session, fixture_id: int) -> dict:
 
     provider_fixture_id = int(fx.provider_fixture_id)
     url = f"{BASE_URL}/odds"
-
-    # ✅ IMPORTANT: API-Football v3 odds does NOT accept type=player
-    params = {"fixture": provider_fixture_id}
-
-    # Use the meta helper so you can see provider errors clearly
-    from .apifootball import _get_meta
+    params = {"fixture": provider_fixture_id}  # ✅ no type=player
     return _get_meta(url, params)
 
 
 def fetch_player_odds_for_fixture(provider_fixture_id: int) -> List[Dict[str, Any]]:
     """
-    Fetch odds for a fixture (no type param), then we will extract player markets from the response.
+    Fetch odds for a fixture (no type param), then extract player markets by bet.id allowlist.
     """
     url = f"{BASE_URL}/odds"
-
-    # ✅ IMPORTANT: no type=player
     payload = _get(url, {"fixture": provider_fixture_id}) or []
-
-    # NOTE: your apifootball._get already returns the JSON 'response' array as a list
     return payload if isinstance(payload, list) else []
+
+
+# ---------------------------------------------------------------------
+# Fixture roster mapping: name -> player_id
+# ---------------------------------------------------------------------
+
+def _fixture_player_name_map(provider_fixture_id: int) -> Dict[str, int]:
+    """
+    Call API-Football /fixtures/players and build a map {normalized_name: player_id}.
+    This solves cases where odds payload doesn't include player.id and only provides a name.
+    """
+    try:
+        j = get_fixture_players(int(provider_fixture_id)) or {}
+        resp = j.get("response") or []
+        if not isinstance(resp, list):
+            return {}
+    except Exception:
+        return {}
+
+    out: Dict[str, int] = {}
+    for team_block in resp:
+        players = team_block.get("players") or []
+        if not isinstance(players, list):
+            continue
+        for p in players:
+            pinfo = p.get("player") or {}
+            pid = _safe_int(pinfo.get("id"))
+            name = (pinfo.get("name") or "").strip()
+            if pid and name:
+                out[_norm_name(name)] = int(pid)
+    return out
+
+
+def _resolve_player_id(player_id: Optional[int], player_name: str, name_map: Dict[str, int]) -> Optional[int]:
+    if player_id:
+        return player_id
+    if not player_name:
+        return None
+    return name_map.get(_norm_name(player_name))
 
 
 # ---------------------------------------------------------------------
@@ -267,8 +293,6 @@ def _per90_from_cached(db: Session, player_id: int, season: Optional[int], stat_
         "sot":   [("shots", "on"), ("shots_on",)],
 
         "fouls": [("fouls", "committed"), ("fouls_committed",)],
-        "drawn_fouls": [("fouls", "drawn"), ("fouls_drawn",)],
-
         "tackles": [("tackles", "total"), ("tackles_total",)],
         "interceptions": [("tackles", "interceptions"), ("interceptions",)],
 
@@ -289,16 +313,10 @@ def _per90_from_cached(db: Session, player_id: int, season: Optional[int], stat_
 
 
 def _expected_minutes_from_cached(db: Session, player_id: int, season: Optional[int]) -> int:
-    """
-    Best-effort expected minutes for the match.
-    If you have season totals: avg minutes per appearance.
-    If not: default 80.
-    """
     payload = _get_latest_player_stats(db, player_id, season=season)
     if payload is None:
         return 80
 
-    # walk blocks to find games.minutes and games.appearences if present
     stats_list = payload if isinstance(payload, list) else payload.get("statistics") or payload.get("response") or []
     if not isinstance(stats_list, list):
         return 80
@@ -320,6 +338,123 @@ def _expected_minutes_from_cached(db: Session, player_id: int, season: Optional[
     return 80
 
 
+def _player_position_from_cached(db: Session, player_id: int, season: Optional[int]) -> Optional[str]:
+    """
+    Best-effort infer position from cached PlayerSeasonStats.
+    Returns: goalkeeper/defender/midfielder/attacker or None.
+    """
+    payload = _get_latest_player_stats(db, player_id, season=season)
+    if payload is None:
+        return None
+
+    stats_list = payload if isinstance(payload, list) else payload.get("statistics") or payload.get("response") or []
+    if not isinstance(stats_list, list):
+        return None
+
+    for blk in stats_list:
+        if not isinstance(blk, dict):
+            continue
+        s = blk.get("statistics") if "statistics" in blk else blk
+        games = s.get("games") or {}
+        pos = (games.get("position") or "").strip().lower()
+        if not pos:
+            continue
+
+        if "goal" in pos:
+            return "goalkeeper"
+        if "def" in pos:
+            return "defender"
+        if "mid" in pos:
+            return "midfielder"
+        if "att" in pos or "forw" in pos or "strik" in pos:
+            return "attacker"
+
+        return pos
+
+    return None
+
+
+def _bucket_priors(position: Optional[str], line: float) -> Dict[str, float]:
+    """
+    Priors for bucket meaning, based on position + line magnitude.
+    These are "soft" weights used to prevent silly inferences.
+    """
+    pos = (position or "").strip().lower()
+
+    # baseline (roughly even-ish)
+    w = {
+        "shots": 0.20,
+        "sot": 0.12,
+        "fouls": 0.20,
+        "tackles": 0.18,
+        "passes": 0.18,
+        "interceptions": 0.12,
+        "key_passes": 0.10,
+    }
+
+    # position nudges
+    if pos == "defender":
+        w["tackles"] += 0.22
+        w["interceptions"] += 0.10
+        w["fouls"] += 0.10
+        w["shots"] -= 0.12
+        w["sot"] -= 0.06
+        w["key_passes"] -= 0.04
+    elif pos == "midfielder":
+        w["passes"] += 0.18
+        w["key_passes"] += 0.08
+        w["tackles"] += 0.06
+        w["shots"] += 0.02
+        w["sot"] += 0.01
+    elif pos == "attacker":
+        w["shots"] += 0.26
+        w["sot"] += 0.14
+        w["fouls"] -= 0.06
+        w["tackles"] -= 0.10
+        w["passes"] -= 0.06
+        w["interceptions"] -= 0.06
+    elif pos == "goalkeeper":
+        # buckets for keepers are basically never meaningful for these props
+        w["shots"] -= 0.20
+        w["sot"] -= 0.10
+        w["passes"] += 0.10  # some keeper pass markets exist, but rare here
+        w["tackles"] -= 0.10
+        w["fouls"] -= 0.10
+
+    # line magnitude nudges (very rough):
+    # - high lines are more plausible for passes
+    # - medium for tackles/fouls
+    # - low for shots/sot
+    if line >= 35:
+        w["passes"] += 0.35
+        w["shots"] -= 0.10
+        w["sot"] -= 0.06
+        w["fouls"] -= 0.04
+        w["tackles"] -= 0.05
+    elif line >= 15:
+        w["passes"] += 0.18
+        w["tackles"] += 0.06
+        w["interceptions"] += 0.04
+        w["shots"] -= 0.06
+        w["sot"] -= 0.04
+    elif line >= 3:
+        w["tackles"] += 0.10
+        w["fouls"] += 0.10
+        w["shots"] += 0.02
+    else:
+        # line 0.5 / 1.5 / 2.5 etc
+        w["shots"] += 0.10
+        w["sot"] += 0.06
+
+    # clamp to positive
+    for k in list(w.keys()):
+        w[k] = max(0.001, float(w[k]))
+
+    # normalize to sum=1
+    s = sum(w.values())
+    return {k: v / s for k, v in w.items()}
+
+
 def _infer_bucket_stat(
     db: Session,
     fixture: Fixture,
@@ -330,7 +465,7 @@ def _infer_bucket_stat(
 ) -> Optional[str]:
     """
     Infer which stat a bucket market corresponds to by matching model probability
-    to the bookmaker implied probability.
+    to bookmaker implied probability, plus position/line priors.
     """
     if not player_id:
         return None
@@ -338,18 +473,21 @@ def _infer_bucket_stat(
     season = fixture.kickoff_utc.year if fixture.kickoff_utc else None
     expected_minutes = _expected_minutes_from_cached(db, player_id, season=season)
 
-    candidates = ["shots", "sot", "fouls", "tackles", "passes", "interceptions", "key_passes"]
-
     implied = 1.0 / float(price) if price and price > 0 else None
     if implied is None:
         return None
 
-    best_key = None
-    best_err = 1e9
-
     x_half = float(line)
     if x_half < -0.5:
         return None
+
+    candidates = ["shots", "sot", "fouls", "tackles", "passes", "interceptions", "key_passes"]
+
+    pos = _player_position_from_cached(db, player_id, season=season)
+    pri = _bucket_priors(pos, x_half)
+
+    best_key = None
+    best_score = 1e9
 
     for stat_key in candidates:
         per90 = _per90_from_cached(db, player_id, season=season, stat_key=stat_key)
@@ -359,20 +497,42 @@ def _infer_bucket_stat(
         p_model = prob_over_xpoint5(per90=per90, expected_minutes=expected_minutes, x_half=x_half)
         p_model = max(1e-6, min(1 - 1e-6, float(p_model)))
 
-        # compare probability distance (more stable than odds distance)
-        err = abs(p_model - implied)
+        # primary fit term: absolute probability error
+        fit_err = abs(p_model - float(implied))
 
-        if err < best_err:
-            best_err = err
+        # prior penalty: lower is better
+        # (if prior is tiny, penalty is bigger)
+        prior = float(pri.get(stat_key, 1e-6))
+        prior_penalty = -math.log(max(prior, 1e-9))  # 0..large
+
+        # combine: fit dominates, prior gently nudges
+        # tuneable weights
+        score = (fit_err * 1.0) + (prior_penalty * 0.12)
+
+        if score < best_score:
+            best_score = score
             best_key = stat_key
 
-    # confidence gate (tune later)
+    # sanity gate:
     if best_key is None:
         return None
 
-    # if we're still miles away, don't guess
-    if best_err > 0.22 and price < 10:
-        return None
+    # also block if fit is miles off (don’t force priors to guess)
+    # approximate “fit” by removing priors influence:
+    # if we have a good best_score but fit itself likely huge, avoid
+    # (simple version: implied price not too long, but still far)
+    if price < 10:
+        # find best candidate fit only
+        best_fit = 1e9
+        for stat_key in candidates:
+            per90 = _per90_from_cached(db, player_id, season=season, stat_key=stat_key)
+            if per90 is None:
+                continue
+            p_model = prob_over_xpoint5(per90=per90, expected_minutes=expected_minutes, x_half=x_half)
+            p_model = max(1e-6, min(1 - 1e-6, float(p_model)))
+            best_fit = min(best_fit, abs(p_model - float(implied)))
+        if best_fit > 0.22:
+            return None
 
     return best_key
 
@@ -385,6 +545,10 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
     rows: List[Dict[str, Any]] = []
     if not isinstance(api_response, list):
         return rows
+
+    # build fixture roster map once (used only if odds values lack player.id)
+    provider_fixture_id = int(fixture.provider_fixture_id) if fixture.provider_fixture_id else None
+    name_map: Dict[str, int] = _fixture_player_name_map(provider_fixture_id) if provider_fixture_id else {}
 
     for fx_block in api_response:
         bookmakers = fx_block.get("bookmakers") or fx_block.get("bookmaker") or []
@@ -400,10 +564,13 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
                 continue
 
             for bet in bets:
+                bet_id = _safe_int(bet.get("id"))
+                cfg = BET_ID_MAP.get(bet_id)
+                if not cfg:
+                    continue  # ✅ only ingest known player bet IDs
+
+                canonical_market = cfg["market"]
                 raw_market = (bet.get("name") or "").strip()
-                market = _canon_market(raw_market)
-                if not market:
-                    continue
 
                 values = bet.get("values") or []
                 if not isinstance(values, list):
@@ -415,8 +582,6 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
                         continue
 
                     pinfo = v.get("player") or {}
-                    player_id = _safe_int(pinfo.get("id") or v.get("id") or v.get("player_id"))
-
                     embedded = (v.get("value") or v.get("participant") or v.get("player_name") or "").strip()
                     nested_name = (pinfo.get("name") or "").strip()
 
@@ -433,18 +598,28 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
                     if not player_name:
                         continue
 
-                    if line is None:
-                        line = _parse_line(v.get("handicap") or v.get("line"))
+                    # resolve player_id:
+                    pid0 = _safe_int(pinfo.get("id") or v.get("id") or v.get("player_id"))
+                    player_id = _resolve_player_id(pid0, player_name, name_map)
 
-                    # keep None for line-less markets
-                    if market in NO_LINE_MARKETS:
+                    # apply config line policy
+                    cfg_line = cfg.get("line")
+
+                    if canonical_market in NO_LINE_MARKETS or cfg_line is None:
                         line = None
+                    elif cfg_line == 0.5:
+                        line = 0.5
+                    else:
+                        # "from_value" -> keep parsed line; fallback to 0.0
+                        if line is None:
+                            line = _parse_line(v.get("handicap") or v.get("line"))
+                        if line is None:
+                            line = 0.0
 
-                    canonical_market = market
                     inferred_from_bucket = None
 
-                    # infer bucket stats -> replace market with inferred canonical stat key
-                    if market in {"player_singles", "player_doubles", "player_triples"} and line is not None:
+                    # bucket inference: singles/triples/doubles often hide shots/SOT/fouls/tackles lines
+                    if canonical_market in BUCKET_MARKETS and line is not None:
                         inferred = _infer_bucket_stat(
                             db=db,
                             fixture=fixture,
@@ -454,8 +629,8 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
                             price=float(price),
                         )
                         if inferred:
-                            inferred_from_bucket = market
-                            canonical_market = inferred  # e.g. "shots" / "fouls" / etc
+                            inferred_from_bucket = canonical_market
+                            canonical_market = inferred  # e.g. "shots"/"sot"/"fouls"/...
 
                     rows.append(
                         {
@@ -466,7 +641,8 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
                             "bookmaker": bookmaker,
                             "price": float(price),
                             "raw_market": raw_market,
-                            "bucket": inferred_from_bucket,  # helps debug/audit inference
+                            "bucket": inferred_from_bucket,
+                            "bet_id": bet_id,
                         }
                     )
 
@@ -519,7 +695,7 @@ def ingest_player_odds_for_fixture(db: Session, fixture_id: int) -> int:
                     player_id=r.get("player_id"),
                     player_name=r["player_name"],
                     market=r["market"],
-                    line=r["line"],               # can be None
+                    line=r["line"],  # can be None
                     bookmaker=r["bookmaker"],
                     price=r["price"],
                     last_seen=now,
@@ -528,5 +704,7 @@ def ingest_player_odds_for_fixture(db: Session, fixture_id: int) -> int:
             upserts += 1
 
     db.commit()
-    print(f"[player_props] upserted={upserts} fixture_id={fixture_id} provider_fixture_id={provider_fixture_id}")
+    print(
+        f"[player_props] upserted={upserts} fixture_id={fixture_id} provider_fixture_id={provider_fixture_id}"
+    )
     return upserts
