@@ -8,8 +8,8 @@ import math
 
 from sqlalchemy.orm import Session
 
-from ..models import PlayerOdds, Fixture, PlayerSeasonStats
-from .apifootball import _get, BASE_URL, _get_meta, get_fixture_players, get_fixture
+from ..models import PlayerOdds, Fixture
+from .apifootball import _get, BASE_URL, _get_meta, get_fixture
 from .player_cache import get_team_season_players_cached
 from .player_model import prob_over_xpoint5
 
@@ -70,8 +70,6 @@ BET_ID_MAP: Dict[int, Dict[str, Any]] = {
 # ---------------------------------------------------------------------
 
 _LINE_RE = re.compile(r"(-?\d+(?:\.\d+)?)")  # finds 4.5 or -0.5 anywhere
-_SPACE_RE = re.compile(r"\s+")
-_DASH_LINE_RE = re.compile(r"\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*$")
 
 NO_LINE_MARKETS = {
     "anytime_goalscorer",
@@ -172,7 +170,7 @@ def _split_first_last(full: str) -> Tuple[Optional[str], Optional[str]]:
     return first or None, last or None
 
 
-def _fixture_season_from_provider(db: Session, fixture: Fixture) -> Optional[int]:
+def _fixture_season_from_provider(fixture: Fixture) -> Optional[int]:
     if not fixture.provider_fixture_id:
         return None
     try:
@@ -184,6 +182,7 @@ def _fixture_season_from_provider(db: Session, fixture: Fixture) -> Optional[int
         return int(season) if season else None
     except Exception:
         return None
+
 
 # ---------------------------------------------------------------------
 # API call (odds)
@@ -338,117 +337,107 @@ def _resolve_player_id_from_alias(
 
 
 # ---------------------------------------------------------------------
-# Player stats helpers (from cached PlayerSeasonStats.stats_json)
+# ✅ Season-cache stats for inference (REPLACES PlayerSeasonStats dependency)
 # ---------------------------------------------------------------------
 
-def _get_latest_player_stats(db: Session, player_id: int, season: Optional[int] = None) -> Optional[dict]:
-    q = db.query(PlayerSeasonStats).filter(PlayerSeasonStats.player_id == player_id)
-    if season is not None:
-        q = q.filter(PlayerSeasonStats.season == season)
-    row = q.order_by(PlayerSeasonStats.updated_at.desc()).first()
-    if not row or not row.stats_json:
+def _get_player_row_from_season_cache(
+    db: Session,
+    fixture: Fixture,
+    player_id: int,
+    season: Optional[int],
+) -> Optional[dict]:
+    """
+    Find this player in cached season roster/stats (get_team_season_players_cached).
+    Returns the first matching player row (includes 'statistics' blocks).
+    """
+    if not (fixture.provider_fixture_id and season and player_id):
         return None
-    return row.stats_json
+
+    try:
+        pfx = int(fixture.provider_fixture_id)
+        fjson = get_fixture(pfx) or {}
+        core = (fjson.get("response") or [None])[0] or {}
+        teams = core.get("teams") or {}
+        home_id = int(((teams.get("home") or {}).get("id")) or 0)
+        away_id = int(((teams.get("away") or {}).get("id")) or 0)
+        if not (home_id and away_id):
+            return None
+
+        rows = (get_team_season_players_cached(db, home_id, season) or []) + (
+            get_team_season_players_cached(db, away_id, season) or []
+        )
+
+        for r in rows:
+            pl = (r.get("player") or {}) or {}
+            if int(pl.get("id") or 0) == int(player_id):
+                return r
+    except Exception:
+        return None
+
+    return None
 
 
-def _sum_minutes_and_stat(stats_json: Any, stat_path_candidates: List[Tuple[str, ...]]) -> Tuple[float, float]:
+def _per90_from_season_cache(
+    db: Session,
+    fixture: Fixture,
+    player_id: int,
+    season: Optional[int],
+    stat_key: str,
+) -> Optional[float]:
+    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
+    if not row:
+        return None
+
     minutes = 0.0
     total = 0.0
 
-    stats_list = None
-    if isinstance(stats_json, list):
-        stats_list = stats_json
-    elif isinstance(stats_json, dict):
-        stats_list = stats_json.get("statistics") or stats_json.get("response") or stats_json.get("stats")
-
-    if not isinstance(stats_list, list):
-        return 0.0, 0.0
-
-    for blk in stats_list:
-        if not isinstance(blk, dict):
+    for s in (row.get("statistics") or []):
+        games = s.get("games") or {}
+        mins = float(games.get("minutes") or 0.0)
+        if mins <= 0:
             continue
-        s = blk.get("statistics") if "statistics" in blk else blk
+        minutes += mins
 
-        m = None
-        try:
-            m = (s.get("games") or {}).get("minutes")
-        except Exception:
-            m = None
-        if m is None:
-            m = s.get("minutes")
-        m = _safe_float(m, 0.0) or 0.0
-        minutes += m
+        if stat_key == "shots":
+            total += float(((s.get("shots") or {}).get("total")) or 0.0)
+        elif stat_key == "sot":
+            total += float(((s.get("shots") or {}).get("on")) or 0.0)
+        elif stat_key == "fouls":
+            total += float(((s.get("fouls") or {}).get("committed")) or 0.0)
+        elif stat_key == "tackles":
+            total += float(((s.get("tackles") or {}).get("total")) or 0.0)
+        elif stat_key == "passes":
+            total += float(((s.get("passes") or {}).get("total")) or 0.0)
+        elif stat_key == "interceptions":
+            total += float(((s.get("tackles") or {}).get("interceptions")) or 0.0)
+        elif stat_key == "key_passes":
+            total += float(((s.get("passes") or {}).get("key")) or 0.0)
+        else:
+            return None
 
-        found = None
-        for path in stat_path_candidates:
-            cur = s
-            ok = True
-            for key in path:
-                if not isinstance(cur, dict) or key not in cur:
-                    ok = False
-                    break
-                cur = cur[key]
-            if ok:
-                found = cur
-                break
-
-        if found is None:
-            continue
-
-        if isinstance(found, dict):
-            found = found.get("total") or found.get("value")
-
-        total += (_safe_float(found, 0.0) or 0.0)
-
-    return minutes, total
-
-
-def _per90_from_cached(db: Session, player_id: int, season: Optional[int], stat_key: str) -> Optional[float]:
-    payload = _get_latest_player_stats(db, player_id, season=season)
-    if payload is None:
+    if minutes <= 0:
         return None
 
-    STAT_PATHS: Dict[str, List[Tuple[str, ...]]] = {
-        "shots": [("shots", "total"), ("shots_total",)],
-        "sot":   [("shots", "on"), ("shots_on",)],
-
-        "fouls": [("fouls", "committed"), ("fouls_committed",)],
-        "tackles": [("tackles", "total"), ("tackles_total",)],
-        "interceptions": [("tackles", "interceptions"), ("interceptions",)],
-
-        "passes": [("passes", "total"), ("passes_total",)],
-        "key_passes": [("passes", "key"), ("key_passes",)],
-    }
-
-    paths = STAT_PATHS.get(stat_key)
-    if not paths:
-        return None
-
-    mins, tot = _sum_minutes_and_stat(payload, paths)
-    if mins <= 0:
-        return None
-
-    return float((tot / mins) * 90.0)
+    return float((total / minutes) * 90.0)
 
 
-def _expected_minutes_from_cached(db: Session, player_id: int, season: Optional[int]) -> int:
-    payload = _get_latest_player_stats(db, player_id, season=season)
-    if payload is None:
-        return 80
-
-    stats_list = payload if isinstance(payload, list) else payload.get("statistics") or payload.get("response") or []
-    if not isinstance(stats_list, list):
+def _expected_minutes_from_season_cache(
+    db: Session,
+    fixture: Fixture,
+    player_id: int,
+    season: Optional[int],
+) -> int:
+    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
+    if not row:
         return 80
 
     mins_total = 0.0
     apps_total = 0.0
-    for blk in stats_list:
-        if not isinstance(blk, dict):
-            continue
-        s = blk.get("statistics") if "statistics" in blk else blk
+
+    for s in (row.get("statistics") or []):
         games = s.get("games") or {}
-        mins_total += (_safe_float(games.get("minutes"), 0.0) or 0.0)
-        apps_total += (_safe_float(games.get("appearences") or games.get("appearances"), 0.0) or 0.0)
+        mins_total += float(games.get("minutes") or 0.0)
+        apps_total += float(games.get("appearences") or games.get("appearances") or 0.0)
 
     if apps_total > 0 and mins_total > 0:
         avg = mins_total / apps_total
@@ -457,41 +446,30 @@ def _expected_minutes_from_cached(db: Session, player_id: int, season: Optional[
     return 80
 
 
-# ---------------------------------------------------------------------
-# Bucket inference (your existing logic) — unchanged
-# ---------------------------------------------------------------------
-
-def _player_position_from_cached(db: Session, player_id: int, season: Optional[int]) -> Optional[str]:
-    payload = _get_latest_player_stats(db, player_id, season=season)
-    if payload is None:
+def _player_position_from_season_cache(
+    db: Session,
+    fixture: Fixture,
+    player_id: int,
+    season: Optional[int],
+) -> Optional[str]:
+    row = _get_player_row_from_season_cache(db, fixture, player_id, season)
+    if not row:
         return None
 
-    stats_list = payload if isinstance(payload, list) else payload.get("statistics") or payload.get("response") or []
-    if not isinstance(stats_list, list):
-        return None
-
-    for blk in stats_list:
-        if not isinstance(blk, dict):
-            continue
-        s = blk.get("statistics") if "statistics" in blk else blk
+    for s in (row.get("statistics") or []):
         games = s.get("games") or {}
         pos = (games.get("position") or "").strip().lower()
-        if not pos:
-            continue
+        if pos:
+            return pos
 
-        if "goal" in pos:
-            return "goalkeeper"
-        if "def" in pos:
-            return "defender"
-        if "mid" in pos:
-            return "midfielder"
-        if "att" in pos or "forw" in pos or "strik" in pos:
-            return "attacker"
+    pos = ((row.get("player") or {}) or {}).get("position") or ""
+    pos = str(pos).strip().lower() if pos else ""
+    return pos or None
 
-        return pos
 
-    return None
-
+# ---------------------------------------------------------------------
+# Bucket inference (same logic, just uses season-cache data now)
+# ---------------------------------------------------------------------
 
 def _bucket_priors(position: Optional[str], line: float) -> Dict[str, float]:
     pos = (position or "").strip().lower()
@@ -565,12 +543,12 @@ def _infer_bucket_stat(
     player_name: str,
     line: float,
     price: float,
-    season: Optional[int],   # ✅ NEW
+    season: Optional[int],
 ) -> Optional[str]:
     if not player_id:
         return None
 
-    expected_minutes = _expected_minutes_from_cached(db, player_id, season=season)
+    expected_minutes = _expected_minutes_from_season_cache(db, fixture, player_id, season)
 
     implied = 1.0 / float(price) if price and price > 0 else None
     if implied is None:
@@ -582,14 +560,14 @@ def _infer_bucket_stat(
 
     candidates = ["shots", "sot", "fouls", "tackles", "passes", "interceptions", "key_passes"]
 
-    pos = _player_position_from_cached(db, player_id, season=season)
+    pos = _player_position_from_season_cache(db, fixture, player_id, season)
     pri = _bucket_priors(pos, x_half)
 
     best_key = None
     best_score = 1e9
 
     for stat_key in candidates:
-        per90 = _per90_from_cached(db, player_id, season=season, stat_key=stat_key)
+        per90 = _per90_from_season_cache(db, fixture, player_id, season, stat_key)
         if per90 is None:
             continue
 
@@ -612,7 +590,7 @@ def _infer_bucket_stat(
     if price < 10:
         best_fit = 1e9
         for stat_key in candidates:
-            per90 = _per90_from_cached(db, player_id, season=season, stat_key=stat_key)
+            per90 = _per90_from_season_cache(db, fixture, player_id, season, stat_key)
             if per90 is None:
                 continue
             p_model = prob_over_xpoint5(per90=per90, expected_minutes=expected_minutes, x_half=x_half)
@@ -636,7 +614,7 @@ def _extract_player_rows(db: Session, fixture: Fixture, api_response: List[dict]
     alias_map: Dict[str, int] = _build_fixture_player_index(db, fixture.id)
 
     # ✅ Use actual league season (not kickoff year)
-    season = _fixture_season_from_provider(db, fixture)
+    season = _fixture_season_from_provider(fixture)
 
     for fx_block in api_response:
         bookmakers = fx_block.get("bookmakers") or fx_block.get("bookmaker") or []
